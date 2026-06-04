@@ -1,0 +1,7 @@
+node_modules
+.next
+.env*.local
+.tools
+npm-debug.log*
+.dev-server*.log
+.tunnel*.log
