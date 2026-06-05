@@ -28,7 +28,7 @@
   - `src/app/page.tsx`: 首页，负责接收用户的学习目标与基础，并触发生成课程大纲。
   - `src/app/courses/`: 动态课程页。这里实现了 README 中提到的“三栏稳定阅读界面”，左侧大纲，中间教材正文，右侧划线问答讨论区。
   - `src/components/MarkdownContent.tsx`: 富文本渲染组件，专门负责将大模型生成的 Markdown + LaTeX 公式转换为漂亮的页面视图（基于 `react-markdown` 和 `rehype-katex`）。
-  - `src/lib/ai.ts`: 负责与 `@google/generative-ai` 交互的核心逻辑，代码中锁定了使用 `gemini-3.1-pro-preview`。
+  - `src/lib/ai.ts`: 负责与 OpenAI-compatible API 交互的核心逻辑，代码中锁定了使用 `kimi-k2.6-full`。
   - `src/lib/mock.ts`: 在用户未配置 `AI_API_KEY` 时的本地替身（Mock）数据，让项目在无网络/无 Key 时也能体验主流程。
   - `src/lib/storage.ts`: 本地持久化逻辑，用于保存用户的课程记录和历史对话，防止刷新丢失。
 - **技术特点**: 这是一个使用 Next.js App Router 的 AI 应用，大量依赖 `zod` 做数据结构校验，整体状态闭环做得很轻量且自洽。
