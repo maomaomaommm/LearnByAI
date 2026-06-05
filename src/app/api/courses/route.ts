@@ -17,7 +17,10 @@ export async function POST(request: Request) {
   if (!hasAI()) return NextResponse.json(createMockCourse(input));
 
   const generated = parseJson<CourseGeneration>(
-    await generateText(buildCoursePlannerPrompt(input)),
+    await generateText(buildCoursePlannerPrompt(input), {
+      temperature: 0.35,
+      maxTokens: 4096,
+    }),
   );
   const course: Course = {
     id: crypto.randomUUID(),
@@ -37,13 +40,17 @@ export async function POST(request: Request) {
     try {
       const draft = preRepairMarkdown(await generateText(
         buildChapterWriterPrompt(course, course.chapters[0], { chapterIndex: 0 }),
+        {
+          temperature: 0.45,
+          maxTokens: 24576,
+        },
       ));
 
       try {
         course.chapters[0].content = postRepairMarkdown(
           await generateText(buildFormatGuardPrompt(draft), {
             temperature: 0.1,
-            maxTokens: 32768,
+            maxTokens: 24576,
           }),
         );
         course.chapters[0].review =

@@ -50,6 +50,10 @@ export async function POST(request: Request) {
       chapterIndex: input.chapterIndex,
       chapters: input.chapters,
     }),
+    {
+      temperature: 0.45,
+      maxTokens: 24576,
+    },
   ));
   let formatted = draft;
   let review = "正文已生成；Format Guard 暂时超时，已保留本地格式预修复版本。";
@@ -58,7 +62,7 @@ export async function POST(request: Request) {
     formatted = postRepairMarkdown(
       await generateText(buildFormatGuardPrompt(draft), {
         temperature: 0.1,
-        maxTokens: 32768,
+        maxTokens: 24576,
       }),
     );
     review = "已通过 Format Guard 完成 Markdown、公式、代码块与标题格式修复。";
