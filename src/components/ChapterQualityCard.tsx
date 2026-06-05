@@ -1,5 +1,14 @@
 import { CheckCircle, AlertTriangle, XCircle, Loader2 } from "lucide-react";
-import type { ChapterStatus } from "@/lib/maol/types";
+
+type ChapterStatus =
+  | "pending"
+  | "gathering"
+  | "writing"
+  | "polishing"
+  | "reviewing"
+  | "ready"
+  | "needs-review"
+  | "failed";
 
 interface ChapterQualityCardProps {
   title: string;
