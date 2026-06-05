@@ -6,14 +6,19 @@ const API_BASE_URL = (process.env.AI_API_BASE_URL ?? "https://api.yzccc.cloud/v1
   "",
 );
 
-// Product policy: this application is intentionally restricted to Gemini 3.1 Pro.
 export const MODEL = "gemini-3.1-pro-preview";
 
 export function hasAI() {
   return Boolean(API_KEY);
 }
 
-export async function generateText(prompt: string) {
+export async function generateText(
+  prompt: string,
+  options?: {
+    maxTokens?: number;
+    temperature?: number;
+  },
+) {
   if (!API_KEY) throw new Error("AI_API_KEY is not configured");
 
   let lastError = "";
@@ -27,15 +32,15 @@ export async function generateText(prompt: string) {
       body: JSON.stringify({
         model: MODEL,
         messages: [{ role: "user", content: prompt }],
-        temperature: 0.45,
-        max_tokens: 24576,
+        temperature: options?.temperature ?? 0.45,
+        max_tokens: options?.maxTokens ?? 32768,
       }),
     });
 
     if (response.ok) {
       const data = await response.json();
       const text = data.choices?.[0]?.message?.content;
-      if (!text) throw new Error("Gemini 3.1 Pro returned an empty response");
+      if (!text) throw new Error(`${MODEL} returned an empty response`);
       return text as string;
     }
 
@@ -44,7 +49,7 @@ export async function generateText(prompt: string) {
     await new Promise((resolve) => setTimeout(resolve, 1200 * (attempt + 1)));
   }
 
-  throw new Error(`Gemini 3.1 Pro request failed: ${lastError}`);
+  throw new Error(`${MODEL} request failed: ${lastError}`);
 }
 
 export function parseJson<T>(text: string): T {

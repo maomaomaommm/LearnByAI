@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 import { generateText, hasAI } from "@/lib/ai";
 import { createMockChapter } from "@/lib/mock";
+import { buildChapterWriterPrompt } from "@/lib/prompts/chapterWriter";
+import { buildFormatGuardPrompt, postRepairMarkdown, preRepairMarkdown } from "@/lib/prompts/formatGuard";
+import { Chapter, Course } from "@/lib/types";
 
 export async function POST(request: Request) {
   const input = await request.json();
@@ -11,46 +14,64 @@ export async function POST(request: Request) {
     });
   }
 
-  const prompt = `你是 LearnByAI 的教材作者。请严格按照 Textbook Authoring Skill 写一章中文教材。
+  const course = {
+    id: "request-course",
+    topic: input.topic,
+    goal: input.goal,
+    background: input.background,
+    preference: input.preference,
+    weeklyHours: input.weeklyHours ?? 0,
+    profile: "",
+    courseBible: input.courseBible ?? {
+      targetLearner: input.background,
+      finalOutcomes: [input.goal],
+      teachingStyle: input.preference,
+      prerequisites: [],
+      globalNarrative: "",
+      terminology: [],
+      chapterDependencies: [],
+    },
+    chapters: input.chapters ?? [],
+    createdAt: new Date().toISOString(),
+  } satisfies Course;
 
-【硬性要求】
-- 输出 Markdown，公式用 LaTeX：行内 $...$，块级 $$...$$。
-- 数学排版必须遵守：
-  1. 复杂公式、分段函数、cases、align、矩阵一律使用独立块级公式。
-  2. 块级公式前后必须各有一个空行。
-  3. 禁止把中文正文、标题、列表或下一节内容写在 $$...$$ 同一行。
-  4. 禁止使用 \\[...\\] 或 \\(...\\)，统一使用 $$...$$ 和 $...$。
-  5. 如果公式很长，优先拆成多行解释，不要塞进行内公式。
-- 本章内容必须明显丰富，目标为 8,000 到 12,000 中文字符。
-- 不要写成博客文章，要写成研究生教材章节。
-- 至少包含 4 个知识单元，每个知识单元都要有：直觉解释、正式定义或命题、公式/推导、例子、常见误区。
-- 必须包含至少 1 个代码或实践案例、1 组练习题、1 个开放式项目任务。
-- 必须写清楚与上一章的联系，以及如何为下一章铺垫。
-- 不要输出审核过程，不要输出 JSON。
+  const chapter = {
+    id: input.id ?? "request-chapter",
+    title: input.title,
+    description: input.description ?? "",
+    purpose: input.purpose,
+    connectionFromPrevious: input.connectionFromPrevious,
+    setupForNext: input.setupForNext,
+    time: input.time,
+  } satisfies Chapter;
 
-【课程信息】
-主题：${input.topic}
-学习目标：${input.goal}
-学习者基础：${input.background}
-讲解偏好：${input.preference}
+  const draft = preRepairMarkdown(await generateText(
+    buildChapterWriterPrompt(course, chapter, {
+      chapterIndex: input.chapterIndex,
+      chapters: input.chapters,
+    }),
+    {
+      temperature: 0.45,
+      maxTokens: 24576,
+    },
+  ));
+  let formatted = draft;
+  let review = "正文已生成；Format Guard 暂时超时，已保留本地格式预修复版本。";
 
-【Course Bible】
-${JSON.stringify(input.courseBible ?? {}, null, 2)}
-
-【课程章节列表】
-${JSON.stringify(input.chapters ?? [], null, 2)}
-
-【当前章】
-标题：${input.title}
-本章任务：${input.purpose ?? input.description}
-与上一章的联系：${input.connectionFromPrevious}
-为下一章铺垫：${input.setupForNext}
-预计学习时间：${JSON.stringify(input.time)}
-
-请输出完整章节。`;
+  try {
+    formatted = postRepairMarkdown(
+      await generateText(buildFormatGuardPrompt(draft), {
+        temperature: 0.1,
+        maxTokens: 24576,
+      }),
+    );
+    review = "已通过 Format Guard 完成 Markdown、公式、代码块与标题格式修复。";
+  } catch {
+    formatted = draft;
+  }
 
   return NextResponse.json({
-    content: await generateText(prompt),
-    review: "已按 Course Bible 完成结构、连续性、术语与公式一致性检查。",
+    content: formatted,
+    review,
   });
 }

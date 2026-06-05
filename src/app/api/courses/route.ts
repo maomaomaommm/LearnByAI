@@ -1,7 +1,16 @@
 import { NextResponse } from "next/server";
 import { generateText, hasAI, parseJson } from "@/lib/ai";
 import { createMockCourse } from "@/lib/mock";
+import { buildCoursePlannerPrompt } from "@/lib/prompts/coursePlanner";
 import { Chapter, Course, CourseBible } from "@/lib/types";
+
+type CourseInput = {
+  topic: string;
+  goal: string;
+  background: string;
+  preference: string;
+  weeklyHours: number;
+};
 
 type CourseGeneration = {
   profile: string;
@@ -9,99 +18,11 @@ type CourseGeneration = {
   chapters: Omit<Chapter, "id" | "content" | "review" | "status">[];
 };
 
-function chapterPrompt(course: Course, chapter: Chapter, chapterIndex: number) {
-  const previous = course.chapters[chapterIndex - 1];
-  const next = course.chapters[chapterIndex + 1];
-  return `你是 LearnByAI 的教材作者。请严格按照 Textbook Authoring Skill 写一章中文教材。
-
-【硬性要求】
-- 输出 Markdown，公式用 LaTeX：行内 $...$，块级 $$...$$。
-- 数学排版必须遵守：
-  1. 复杂公式、分段函数、cases、align、矩阵一律使用独立块级公式。
-  2. 块级公式前后必须各有一个空行。
-  3. 禁止把中文正文、标题、列表或下一节内容写在 $$...$$ 同一行。
-  4. 禁止使用 \\[...\\] 或 \\(...\\)，统一使用 $$...$$ 和 $...$。
-  5. 如果公式很长，优先拆成多行解释，不要塞进行内公式。
-- 本章内容必须明显丰富，目标为 8,000 到 12,000 中文字符。
-- 不要写成博客文章，要写成研究生教材章节。
-- 至少包含 4 个知识单元，每个知识单元都要有：直觉解释、正式定义或命题、公式/推导、例子、常见误区。
-- 必须包含至少 1 个代码或实践案例、1 组练习题、1 个开放式项目任务。
-- 必须写清楚与上一章的联系，以及如何为下一章铺垫。
-- 不要输出审核过程，不要输出 JSON。
-
-【课程信息】
-主题：${course.topic}
-学习目标：${course.goal}
-学习者基础：${course.background}
-讲解偏好：${course.preference}
-
-【Course Bible】
-${JSON.stringify(course.courseBible, null, 2)}
-
-【当前章】
-标题：${chapter.title}
-本章任务：${chapter.purpose ?? chapter.description}
-与上一章的联系：${chapter.connectionFromPrevious ?? "这是课程起点。"}
-为下一章铺垫：${chapter.setupForNext ?? "自然引出下一章。"}
-预计学习时间：阅读 ${chapter.time.readingMinutes} 分钟，练习 ${chapter.time.exerciseMinutes} 分钟，实践 ${chapter.time.practiceMinutes} 分钟，拓展阅读 ${chapter.time.extensionMinutes} 分钟。
-
-【上一章】
-${previous ? `${previous.title}: ${previous.description}` : "无，这是第一章。"}
-
-【下一章】
-${next ? `${next.title}: ${next.description}` : "无，这是最后一章。"}
-
-请输出完整章节。`;
-}
-
 export async function POST(request: Request) {
-  const input = await request.json();
+  const input = (await request.json()) as CourseInput;
   if (!hasAI()) return NextResponse.json(createMockCourse(input));
 
-  const prompt = `你是一位课程架构师和教材总主编。请为学习者设计一门连贯课程，并生成 Course Bible。
-
-用户想学习：${input.topic}
-具体目标：${input.goal}
-当前基础：${input.background}
-讲解偏好：${input.preference}
-每周学习时间：${input.weeklyHours} 小时
-
-请只输出 JSON，不要 Markdown。必须符合以下结构：
-{
-  "profile": "学习策略说明，说明为什么这样安排",
-  "courseBible": {
-    "targetLearner": "目标学习者画像",
-    "finalOutcomes": ["最终应达到的能力"],
-    "teachingStyle": "整本教材统一写作风格",
-    "prerequisites": ["需要补齐或默认掌握的前置知识"],
-    "globalNarrative": "整门课的主线叙事，说明章节如何递进",
-    "terminology": [
-      {"term":"术语","definition":"定义","introducedIn":"章节名"}
-    ],
-    "chapterDependencies": [
-      {"chapterTitle":"章节名","dependsOn":["依赖"],"introduces":["本章引入"],"preparesFor":["为后续铺垫"]}
-    ]
-  },
-  "chapters": [
-    {
-      "title": "章节名",
-      "description": "一句话说明",
-      "purpose": "本章在整门课中的教学任务",
-      "connectionFromPrevious": "与上一章的具体联系",
-      "setupForNext": "如何为下一章铺垫",
-      "time": {
-        "readingMinutes": 60,
-        "exerciseMinutes": 45,
-        "practiceMinutes": 60,
-        "extensionMinutes": 45
-      }
-    }
-  ]
-}
-
-生成 6 到 10 章。章节之间必须有明确依赖，不要想到什么说什么。时间估计必须拆分，不允许只给一个总数。`;
-
-  const generated = parseJson<CourseGeneration>(await generateText(prompt));
+  const generated = await planCourse(input);
   const course: Course = {
     id: crypto.randomUUID(),
     ...input,
@@ -115,12 +36,108 @@ export async function POST(request: Request) {
     })),
   };
 
-  if (course.chapters[0]) {
-    course.chapters[0].status = "generating";
-    course.chapters[0].content = await generateText(chapterPrompt(course, course.chapters[0], 0));
-    course.chapters[0].review = "已按 Course Bible 完成结构、连续性、术语与公式一致性检查。";
-    course.chapters[0].status = "ready";
-  }
-
   return NextResponse.json(course);
+}
+
+async function planCourse(input: CourseInput) {
+  try {
+    return parseJson<CourseGeneration>(
+      await generateText(buildCoursePlannerPrompt(input), {
+        temperature: 0.25,
+        maxTokens: 6144,
+      }),
+    );
+  } catch {
+    return buildFallbackCourseGeneration(input);
+  }
+}
+
+function buildFallbackCourseGeneration(input: CourseInput): CourseGeneration {
+  const titles = [
+    `${input.topic}的问题意识与学习路线`,
+    "概率、统计与建模前提",
+    "核心概念与基本符号",
+    "识别思想与主要方法",
+    "估计、检验与不确定性",
+    "论文阅读中的方法判断",
+    "复现一个代表性案例",
+    "方法改进与开放问题",
+  ];
+
+  const chapters = titles.map((title, index) => ({
+    title,
+    description: describeChapter(input.topic, index),
+    purpose: describePurpose(input.topic, index),
+    connectionFromPrevious:
+      index === 0 ? "这是课程起点。" : `承接“${titles[index - 1]}”中建立的概念和问题。`,
+    setupForNext:
+      index === titles.length - 1
+        ? "收束整门课程，并形成后续研究或项目方向。"
+        : `为“${titles[index + 1]}”准备必要的概念、符号和判断标准。`,
+    time: {
+      readingMinutes: 150,
+      exerciseMinutes: 90,
+      practiceMinutes: 120,
+      extensionMinutes: 60,
+    },
+  }));
+
+  return {
+    profile: `本课程面向具备“${input.background}”基础的学习者，目标是“${input.goal}”。课程会优先采用“${input.preference}”的讲解方式，并把概念、公式、代码和论文阅读连接起来。`,
+    courseBible: {
+      targetLearner: input.background,
+      finalOutcomes: [
+        input.goal,
+        `能够用自己的话解释 ${input.topic} 的核心问题、常用方法和适用边界。`,
+        "能够阅读相关论文中的方法部分，并判断假设、识别条件和实验设计是否合理。",
+      ],
+      teachingStyle: input.preference,
+      prerequisites: ["概率统计基础", "基本编程能力", "阅读技术论文的耐心和习惯"],
+      globalNarrative: `从问题意识出发，先补齐必要前提，再进入 ${input.topic} 的核心概念、方法、案例复现和方法改进。`,
+      terminology: [
+        {
+          term: input.topic,
+          definition: `本课程围绕“${input.topic}”建立系统的概念、方法和论文阅读能力。`,
+          introducedIn: titles[0],
+        },
+      ],
+      chapterDependencies: chapters.map((chapter, index) => ({
+        chapterTitle: chapter.title,
+        dependsOn: index === 0 ? [] : [titles[index - 1]],
+        introduces: [chapter.title],
+        preparesFor: index === titles.length - 1 ? [] : [titles[index + 1]],
+      })),
+    },
+    chapters,
+  };
+}
+
+function describeChapter(topic: string, index: number) {
+  const descriptions = [
+    `建立 ${topic} 的问题地图，说明为什么需要系统学习以及后续章节如何递进。`,
+    "补齐后续定义、推导、代码案例和论文阅读所需的概率统计与建模语言。",
+    `引入 ${topic} 中反复出现的核心术语、符号和基本对象。`,
+    "讨论从问题到方法的核心识别思路，明确每种方法依赖的前提。",
+    "把方法落到可计算的估计过程，并讨论误差、方差、稳健性和诊断。",
+    "训练阅读论文方法部分的能力，判断作者的假设、数据和识别策略是否可信。",
+    "通过一个完整案例把概念、公式、代码和解释串起来。",
+    "总结已掌握的方法，并讨论如何提出小型改进或后续研究问题。",
+  ];
+
+  return descriptions[index] ?? `围绕 ${topic} 展开系统学习。`;
+}
+
+function describePurpose(topic: string, index: number) {
+  const purposes = [
+    `让学习者知道 ${topic} 解决什么问题，以及学习路线为什么这样安排。`,
+    "让不同基础的学习者拥有共同的数学和编程起点。",
+    "避免后续学习变成术语堆砌，先建立清晰符号系统。",
+    "把直觉问题转化为可检验、可推导、可实现的方法条件。",
+    "让学习者知道方法在真实数据中如何落地，以及结果如何解释。",
+    "把教材知识迁移到论文阅读和方法批判中。",
+    "形成一次从理论到实现再到解释的完整练习。",
+    `帮助学习者从“理解 ${topic}”过渡到“尝试改进或应用方法”。`,
+  ];
+
+  return purposes[index] ?? `推进 ${topic} 的系统理解。`;
 }
