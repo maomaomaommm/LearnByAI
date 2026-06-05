@@ -6,6 +6,7 @@ import { FormEvent, MouseEvent, useCallback, useEffect, useState } from "react";
 import { MarkdownContent } from "@/components/MarkdownContent";
 import { createMockAnswer } from "@/lib/mock";
 import { getAnnotations, getCourse, saveAnnotation, saveCourse } from "@/lib/storage";
+import { formatMinutes, totalMinutes } from "@/lib/time";
 import { Annotation, Course } from "@/lib/types";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { ArrowLeft, ChevronLeft, ChevronRight, Menu, X, Clock, MessageSquareQuote, Bot } from "lucide-react";
