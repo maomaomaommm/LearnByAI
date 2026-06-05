@@ -1,25 +1,60 @@
 # LearnByAI
 
-一份会根据学习者目标与基础生成，并允许在原文位置展开独立讨论的个人教材 MVP。
+LearnByAI is an MVP for generating personalized, coherent learning materials.
 
-## 本地运行
+The current product flow is:
+
+1. The learner enters a topic, goal, background, preferred teaching style, and weekly study time.
+2. The system generates a Course Bible and a course outline.
+3. The first chapter is generated automatically.
+4. The learner reads the chapter in a stable reader.
+5. The learner can select text or double-click a paragraph and ask AI questions in the right sidebar.
+
+The project is intentionally small and local-first right now. Course data and annotations are stored in browser `localStorage`.
+
+## Quick Start
 
 ```bash
 npm install
 npm run dev
 ```
 
-打开 `http://localhost:3000`。
+Open:
 
-未配置模型密钥时，应用使用内置示例内容，完整交互仍可运行。复制 `.env.example` 为
-`.env.local` 并填写 `AI_API_KEY` 后，课程、教材和原文问答会切换为 Gemini 生成。
+```text
+http://localhost:3000
+```
 
-应用在代码层锁定使用 `gemini-3.1-pro-preview`，不会自动回退到其他模型。
+For a stable test run after building:
 
-## 当前范围
+```bash
+npm run build
+npm run start
+```
 
-- 根据目标、基础与偏好生成课程目录
-- 按章节生成并审核 Markdown + LaTeX 教材
-- 三栏稳定阅读界面
-- 选中文字或双击段落，在右侧展开多轮讨论
-- 本地保存课程、教材与原文讨论
+## Environment
+
+Copy `.env.example` to `.env.local`:
+
+```bash
+cp .env.example .env.local
+```
+
+Set:
+
+```env
+AI_API_KEY=your_api_key
+AI_API_BASE_URL=https://api.yzccc.cloud/v1
+```
+
+The model is locked in code to:
+
+```text
+gemini-3.1-pro-preview
+```
+
+Never commit `.env.local`.
+
+## More Docs
+
+See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for the development guide, architecture, API routes, data flow, and collaboration workflow.
