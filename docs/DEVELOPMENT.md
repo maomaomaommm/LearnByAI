@@ -241,9 +241,20 @@ If a chapter has no content, opening it triggers `POST /api/chapters`.
 
 The important prompts live in:
 
-- `src/app/api/courses/route.ts`
-- `src/app/api/chapters/route.ts`
-- `src/app/api/annotations/route.ts`
+- `src/lib/prompts/textbookSkill.ts`
+- `src/lib/prompts/forbiddenPhrases.ts`
+- `src/lib/prompts/coursePlanner.ts`
+- `src/lib/prompts/chapterWriter.ts`
+- `src/lib/prompts/chapterReviewer.ts`
+- `src/lib/prompts/annotationTutor.ts`
+
+API routes should call prompt builders instead of embedding long prompts inline:
+
+```ts
+const prompt = buildCoursePlannerPrompt(input);
+const prompt = buildChapterWriterPrompt(course, chapter);
+const prompt = buildAnnotationTutorPrompt(input);
+```
 
 Current generation constraints:
 
@@ -255,6 +266,42 @@ Current generation constraints:
 - Generate textbook-style chapters, not blog posts.
 - Each chapter must connect to previous and next chapters.
 - Each chapter should include intuition, definitions, formulas, examples, common mistakes, exercises, and a project task.
+
+### Textbook Skill
+
+`textbookSkill.ts` is the central product skill. It defines:
+
+- textbook writing principles,
+- language style rules,
+- forbidden AI-flavored phrases,
+- chapter structure,
+- chapter continuity requirements,
+- Markdown and LaTeX formatting rules,
+- content depth standards,
+- reviewer rubric.
+
+When changing how textbooks should sound or be structured, start there.
+
+### Style Guide
+
+The product should avoid marketing, motivational, and exaggerated language. The target voice is a careful graduate-level instructor: specific, calm, and direct.
+
+Forbidden phrases are listed in:
+
+```text
+src/lib/prompts/forbiddenPhrases.ts
+```
+
+Examples of discouraged style:
+
+- "revolutionary"
+- "unlock"
+- "change the world"
+- "are you ready"
+- "I will accompany you"
+- "ultimate guide"
+
+The model should explain why something matters instead of simply calling it important.
 
 ## 9. Markdown and Math Rendering
 
