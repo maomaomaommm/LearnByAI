@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { generateText, hasAI } from "@/lib/ai";
 import { createMockChapter } from "@/lib/mock";
 import { buildChapterWriterPrompt } from "@/lib/prompts/chapterWriter";
+import { buildFormatGuardPrompt, postRepairMarkdown, preRepairMarkdown } from "@/lib/prompts/formatGuard";
 import { Chapter, Course } from "@/lib/types";
 
 export async function POST(request: Request) {
@@ -44,13 +45,21 @@ export async function POST(request: Request) {
     time: input.time,
   } satisfies Chapter;
 
+  const draft = preRepairMarkdown(await generateText(
+    buildChapterWriterPrompt(course, chapter, {
+      chapterIndex: input.chapterIndex,
+      chapters: input.chapters,
+    }),
+  ));
+  const formatted = postRepairMarkdown(
+    await generateText(buildFormatGuardPrompt(draft), {
+      temperature: 0.1,
+      maxTokens: 32768,
+    }),
+  );
+
   return NextResponse.json({
-    content: await generateText(
-      buildChapterWriterPrompt(course, chapter, {
-        chapterIndex: input.chapterIndex,
-        chapters: input.chapters,
-      }),
-    ),
-    review: "已按 Course Bible 完成结构、连续性、术语与公式一致性检查。",
+    content: formatted,
+    review: "已通过 Format Guard 完成 Markdown、公式、代码块与标题格式修复。",
   });
 }

@@ -13,7 +13,13 @@ export function hasAI() {
   return Boolean(API_KEY);
 }
 
-export async function generateText(prompt: string) {
+export async function generateText(
+  prompt: string,
+  options?: {
+    maxTokens?: number;
+    temperature?: number;
+  },
+) {
   if (!API_KEY) throw new Error("AI_API_KEY is not configured");
 
   let lastError = "";
@@ -27,8 +33,8 @@ export async function generateText(prompt: string) {
       body: JSON.stringify({
         model: MODEL,
         messages: [{ role: "user", content: prompt }],
-        temperature: 0.45,
-        max_tokens: 32768,
+        temperature: options?.temperature ?? 0.45,
+        max_tokens: options?.maxTokens ?? 32768,
       }),
     });
 
