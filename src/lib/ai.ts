@@ -6,7 +6,7 @@ const API_BASE_URL = (process.env.AI_API_BASE_URL ?? "https://api.yzccc.cloud/v1
   "",
 );
 
-export const MODEL = "gemini-3.1-pro-preview";
+export const MODEL = "kimi-k2.6-full";
 
 export function hasAI() {
   return Boolean(API_KEY);
