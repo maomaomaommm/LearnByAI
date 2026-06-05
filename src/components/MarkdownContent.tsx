@@ -15,7 +15,7 @@ export function MarkdownContent({ content }: { content: string }) {
   );
 }
 
-function normalizeMath(content: string) {
+export function normalizeMath(content: string) {
   const normalizedDelimiters = content
     .replace(/\r\n/g, "\n")
     .replace(/\\\[/g, "\n$$\n")
@@ -36,8 +36,12 @@ function normalizeMath(content: string) {
       continue;
     }
 
-    if (trimmed.startsWith("$ ") && !trimmed.startsWith("$$")) {
-      const math = trimmed.slice(1).trim().replace(/\$$/, "").trim();
+    if (isBareDisplayMathLine(trimmed)) {
+      const math = trimmed
+        .replace(/^\$\s*/u, "")
+        .replace(/\s*\$$/u, "")
+        .replace(/\\perp!+\\perp/g, "\\perp\\!\\!\\!\\perp")
+        .trim();
       repaired.push("", "$$", math, "$$", "");
       if (nextTrimmed === "$") index += 1;
       continue;
@@ -59,4 +63,14 @@ function normalizeMath(content: string) {
     .replace(/\$\$\s*/g, "\n$$\n")
     .replace(/\s*\$\$/g, "\n$$\n")
     .replace(/\n{3,}/g, "\n\n");
+}
+
+function isBareDisplayMathLine(trimmed: string) {
+  if (!trimmed.startsWith("$") || trimmed.startsWith("$$")) return false;
+  if (/[\u4e00-\u9fff]/u.test(trimmed)) return false;
+
+  const math = trimmed.replace(/^\$\s*/u, "").replace(/\s*\$$/u, "").trim();
+  if (!math) return false;
+
+  return /\\|=|[{}_^]|[A-Za-z]\s*\(|\b(mid|sum|prod|frac|tau|beta|gamma|epsilon)\b/.test(math);
 }

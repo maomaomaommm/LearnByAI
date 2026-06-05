@@ -28,7 +28,7 @@ export async function generateText(prompt: string) {
         model: MODEL,
         messages: [{ role: "user", content: prompt }],
         temperature: 0.45,
-        max_tokens: 24576,
+        max_tokens: 32768,
       }),
     });
 

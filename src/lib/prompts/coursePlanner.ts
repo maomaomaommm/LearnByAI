@@ -46,14 +46,14 @@ export function buildCoursePlannerPrompt(input: CoursePlannerInput) {
       "connectionFromPrevious": "与上一章的具体联系",
       "setupForNext": "如何为下一章铺垫",
       "time": {
-        "readingMinutes": 60,
-        "exerciseMinutes": 45,
-        "practiceMinutes": 60,
-        "extensionMinutes": 45
+        "readingMinutes": 150,
+        "exerciseMinutes": 90,
+        "practiceMinutes": 120,
+        "extensionMinutes": 60
       }
     }
   ]
 }
 
-生成 6 到 10 章。章节之间必须有明确依赖，不要想到什么说什么。时间估计必须拆分，不允许只给一个总数。`;
+生成 6 到 10 章。章节之间必须有明确依赖，不要想到什么说什么。时间估计必须拆分，不允许只给一个总数。每章正文会明显变长，单章总学习时间通常应为 6 到 9 小时，除非该章只是过渡章节。`;
 }
