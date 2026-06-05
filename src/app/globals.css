@@ -339,6 +339,34 @@ a {
   background: #eeeae2;
 }
 
+.article pre,
+.message pre {
+  overflow-x: auto;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #191f1c;
+  color: #f8f3e8;
+  line-height: 1.55;
+}
+
+.article pre code,
+.message pre code {
+  padding: 0;
+  background: transparent;
+  color: inherit;
+}
+
+.message h1,
+.message h2,
+.message h3 {
+  margin: 12px 0 8px;
+}
+
+.message p {
+  margin: 0 0 10px;
+}
+
 .discussion {
   display: flex;
   flex-direction: column;

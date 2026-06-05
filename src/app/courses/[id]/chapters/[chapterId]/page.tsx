@@ -3,16 +3,10 @@
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { FormEvent, MouseEvent, useEffect, useState } from "react";
-import ReactMarkdown from "react-markdown";
-import rehypeKatex from "rehype-katex";
-import remarkGfm from "remark-gfm";
-import remarkMath from "remark-math";
-import {
-  getAnnotations,
-  getCourse,
-  saveAnnotation,
-  saveCourse,
-} from "@/lib/storage";
+import { MarkdownContent } from "@/components/MarkdownContent";
+import { createMockAnswer } from "@/lib/mock";
+import { getAnnotations, getCourse, saveAnnotation, saveCourse } from "@/lib/storage";
+import { formatMinutes, totalMinutes } from "@/lib/time";
 import { Annotation, Course } from "@/lib/types";
 
 const quickQuestions = ["解释得更简单", "给我一个具体例子", "展示推导过程", "质疑这段内容"];
@@ -37,22 +31,44 @@ export default function ReaderPage() {
     setCourse(stored);
     setAnnotations(getAnnotations(chapterId));
     const current = stored.chapters.find((item) => item.id === chapterId);
+    const currentIndex = stored.chapters.findIndex((item) => item.id === chapterId);
     if (current?.content) {
       setContent(current.content);
-      setReview("已完成结构、术语与公式一致性检查");
+      setReview(current.review ?? "已完成结构、术语与公式一致性检查。");
       setLoading(false);
       return;
     }
+
+    if (!current) return;
+    current.status = "generating";
+    saveCourse(stored);
 
     fetch("/api/chapters", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         topic: stored.topic,
-        title: current?.title,
+        title: current.title,
+        description: current.description,
+        purpose: current.purpose,
+        connectionFromPrevious: current.connectionFromPrevious,
+        setupForNext: current.setupForNext,
+        time: current.time,
         goal: stored.goal,
         background: stored.background,
         preference: stored.preference,
+        courseBible: stored.courseBible,
+        chapters: stored.chapters.map((item) => ({
+          id: item.id,
+          title: item.title,
+          description: item.description,
+          purpose: item.purpose,
+          connectionFromPrevious: item.connectionFromPrevious,
+          setupForNext: item.setupForNext,
+          time: item.time,
+          status: item.status,
+        })),
+        chapterIndex: currentIndex,
       }),
     })
       .then((response) => response.json())
@@ -60,10 +76,17 @@ export default function ReaderPage() {
         if (!data.content) throw new Error("Chapter generation failed");
         setContent(data.content);
         setReview(data.review);
-        if (current) current.content = data.content;
+        current.content = data.content;
+        current.review = data.review;
+        current.status = "ready";
         saveCourse(stored);
+        setCourse({ ...stored });
       })
-      .catch(() => setGenerationError("Gemini 3.1 Pro 暂时无法生成本章，请刷新页面重试。"))
+      .catch(() => {
+        current.status = "failed";
+        saveCourse(stored);
+        setGenerationError("Gemini 3.1 Pro 暂时无法生成本章，请刷新页面重试。");
+      })
       .finally(() => setLoading(false));
   }, [chapterId, id]);
 
@@ -78,7 +101,7 @@ export default function ReaderPage() {
 
   function captureParagraph(event: MouseEvent<HTMLElement>) {
     const target = event.target as HTMLElement;
-    const block = target.closest("p, li, blockquote");
+    const block = target.closest("p, li, blockquote, h2, h3");
     const text = block?.textContent?.trim() ?? "";
     if (text.length > 2) {
       setSelectedText(text);
@@ -118,7 +141,7 @@ export default function ReaderPage() {
       const data = await response.json();
       answer = data.answer;
     } catch {
-      answer = "Gemini 3.1 Pro 暂时无法回答这个问题，请稍后重试。";
+      answer = createMockAnswer(annotation.selectedText, question);
     }
 
     annotation.messages.push({ id: crypto.randomUUID(), role: "assistant", content: answer });
@@ -153,6 +176,8 @@ export default function ReaderPage() {
             key={item.id}
           >
             {index + 1}. {item.title}
+            <br />
+            <span>{item.status === "ready" ? "可阅读" : "待生成"}</span>
           </Link>
         ))}
         <div className="sidebar-title">本章讨论 · {annotations.length}</div>
@@ -181,17 +206,22 @@ export default function ReaderPage() {
           onMouseUp={captureSelection}
           title="选中文字或双击段落，在右侧展开讨论"
         >
+          <div className="profile">
+            <strong>本章学习时间：{formatMinutes(totalMinutes(chapter.time))}</strong>
+            <p>
+              阅读 {chapter.time.readingMinutes} 分钟 · 练习 {chapter.time.exerciseMinutes} 分钟 ·
+              实践 {chapter.time.practiceMinutes} 分钟 · 拓展阅读{" "}
+              {chapter.time.extensionMinutes} 分钟
+            </p>
+            <p>承接：{chapter.connectionFromPrevious ?? "这是课程起点。"}</p>
+            <p>铺垫：{chapter.setupForNext ?? "自然引出下一章。"}</p>
+          </div>
           {loading ? (
-            <p className="muted">AI 正在根据你的基础编写本章，并进行一次独立检查…</p>
+            <p className="muted">Gemini 3.1 Pro 正在根据 Course Bible 编写本章，并进行一次连续性检查…</p>
           ) : generationError ? (
             <p style={{ color: "#a33" }}>{generationError}</p>
           ) : (
-            <ReactMarkdown
-              remarkPlugins={[remarkGfm, remarkMath]}
-              rehypePlugins={[rehypeKatex]}
-            >
-              {content}
-            </ReactMarkdown>
+            <MarkdownContent content={content} />
           )}
         </article>
       </section>
@@ -199,17 +229,15 @@ export default function ReaderPage() {
       <aside className="discussion">
         <div className="discussion-header">
           <h3>原文讨论</h3>
-          <span className="muted">问题留在它产生的位置</span>
+          <span className="muted">支持 Markdown、公式和代码</span>
         </div>
         {selectedText || active ? (
           <>
-            <div className="selection-box">
-              “{active?.selectedText ?? selectedText}”
-            </div>
+            <div className="selection-box">“{active?.selectedText ?? selectedText}”</div>
             <div className="messages">
               {active?.messages.map((message) => (
                 <div className={`message ${message.role}`} key={message.id}>
-                  {message.content}
+                  <MarkdownContent content={message.content} />
                 </div>
               ))}
               {answering && <div className="message">正在思考这段原文与你的问题…</div>}
@@ -234,7 +262,7 @@ export default function ReaderPage() {
           <div className="empty-discussion">
             在教材中选中任意一段文字，
             <br />
-            然后在这里展开独立讨论。
+            或双击段落，在这里展开独立讨论。
           </div>
         )}
       </aside>

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import { getCourse } from "@/lib/storage";
+import { formatMinutes, totalMinutes } from "@/lib/time";
 import { Course } from "@/lib/types";
 
 export default function CoursePage() {
@@ -27,13 +28,37 @@ export default function CoursePage() {
         </Link>
       </header>
       <main className="shell page">
-        <div className="eyebrow">Your personal syllabus</div>
+        <div className="eyebrow">Course Bible generated</div>
         <h1 className="page-title">{course.topic}</h1>
         <p className="muted">{course.goal}</p>
         <div className="profile">
-          <strong>为你设计的学习策略</strong>
+          <strong>学习策略</strong>
           <p>{course.profile}</p>
         </div>
+
+        <section className="card form-card" style={{ marginBottom: 28 }}>
+          <h2>Course Bible</h2>
+          <p>{course.courseBible.globalNarrative}</p>
+          <div className="form-grid">
+            <div>
+              <strong>最终能力</strong>
+              <ul>
+                {course.courseBible.finalOutcomes.map((item) => (
+                  <li key={item}>{item}</li>
+                ))}
+              </ul>
+            </div>
+            <div>
+              <strong>前置知识</strong>
+              <ul>
+                {course.courseBible.prerequisites.map((item) => (
+                  <li key={item}>{item}</li>
+                ))}
+              </ul>
+            </div>
+          </div>
+        </section>
+
         <h2>课程目录</h2>
         <div className="chapter-list">
           {course.chapters.map((chapter, index) => (
@@ -46,8 +71,14 @@ export default function CoursePage() {
               <div>
                 <h3>{chapter.title}</h3>
                 <p>{chapter.description}</p>
+                {chapter.connectionFromPrevious && (
+                  <p style={{ marginTop: 8 }}>承接：{chapter.connectionFromPrevious}</p>
+                )}
               </div>
-              <span className="muted">{chapter.minutes} 分钟 →</span>
+              <span className="muted">
+                {chapter.status === "ready" ? "可阅读" : "待生成"} ·{" "}
+                {formatMinutes(totalMinutes(chapter.time))} →
+              </span>
             </Link>
           ))}
         </div>

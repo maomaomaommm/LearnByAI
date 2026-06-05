@@ -16,32 +16,40 @@ export function hasAI() {
 export async function generateText(prompt: string) {
   if (!API_KEY) throw new Error("AI_API_KEY is not configured");
 
-  const response = await fetch(`${API_BASE_URL}/chat/completions`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${API_KEY}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model: MODEL,
-      messages: [{ role: "user", content: prompt }],
-      temperature: 0.45,
-      max_tokens: 16384,
-    }),
-  });
+  let lastError = "";
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const response = await fetch(`${API_BASE_URL}/chat/completions`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: MODEL,
+        messages: [{ role: "user", content: prompt }],
+        temperature: 0.45,
+        max_tokens: 24576,
+      }),
+    });
 
-  if (!response.ok) {
-    const details = await response.text();
-    throw new Error(`Gemini 3.1 Pro request failed: ${response.status} ${details}`);
+    if (response.ok) {
+      const data = await response.json();
+      const text = data.choices?.[0]?.message?.content;
+      if (!text) throw new Error("Gemini 3.1 Pro returned an empty response");
+      return text as string;
+    }
+
+    lastError = `${response.status} ${await response.text()}`;
+    if (![429, 500, 502, 503, 504].includes(response.status)) break;
+    await new Promise((resolve) => setTimeout(resolve, 1200 * (attempt + 1)));
   }
 
-  const data = await response.json();
-  const text = data.choices?.[0]?.message?.content;
-  if (!text) throw new Error("Gemini 3.1 Pro returned an empty response");
-  return text as string;
+  throw new Error(`Gemini 3.1 Pro request failed: ${lastError}`);
 }
 
 export function parseJson<T>(text: string): T {
-  const cleaned = text.replace(/^```json\s*/i, "").replace(/\s*```$/, "");
+  const fenced = text.match(/```json\s*([\s\S]*?)```/i);
+  const object = text.match(/\{[\s\S]*\}/);
+  const cleaned = fenced?.[1] ?? object?.[0] ?? text;
   return JSON.parse(cleaned) as T;
 }
