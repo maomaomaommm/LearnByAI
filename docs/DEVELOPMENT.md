@@ -26,7 +26,7 @@ Current MVP capabilities:
 - Markdown rendering: `react-markdown`
 - Math rendering: `remark-math` + `rehype-katex`
 - AI provider: OpenAI-compatible chat completions endpoint
-- Current model: `mimo-v2.5-pro`
+- Current model: `gemini-3.1-pro-preview`
 - Storage: browser `localStorage`
 
 ## 3. Setup
@@ -114,7 +114,7 @@ src/
 
 Key files:
 
-- `src/lib/ai.ts`: AI provider wrapper. The model is locked to `mimo-v2.5-pro`.
+- `src/lib/ai.ts`: AI provider wrapper. The model is locked to `gemini-3.1-pro-preview`.
 - `src/app/api/courses/route.ts`: creates Course Bible, outline, and first chapter.
 - `src/app/api/chapters/route.ts`: generates later chapters on demand.
 - `src/app/api/annotations/route.ts`: answers anchored questions.

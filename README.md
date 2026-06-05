@@ -50,7 +50,7 @@ AI_API_BASE_URL=https://api.yzccc.cloud/v1
 The model is locked in code to:
 
 ```text
-mimo-v2.5-pro
+gemini-3.1-pro-preview
 ```
 
 Never commit `.env.local`.

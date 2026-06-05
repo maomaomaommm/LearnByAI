@@ -6,7 +6,7 @@ const API_BASE_URL = (process.env.AI_API_BASE_URL ?? "https://api.yzccc.cloud/v1
   "",
 );
 
-export const MODEL = "mimo-v2.5-pro";
+export const MODEL = "gemini-3.1-pro-preview";
 
 export function hasAI() {
   return Boolean(API_KEY);

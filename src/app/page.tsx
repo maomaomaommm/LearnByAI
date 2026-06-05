@@ -21,8 +21,8 @@ export default function Home() {
       { at: 0, label: "分析你的目标与基础" },
       { at: 12, label: "生成 Course Bible" },
       { at: 28, label: "规划章节依赖关系" },
-      { at: 45, label: "编写第一章教材" },
-      { at: 72, label: "检查章节连续性与公式格式" },
+      { at: 45, label: "生成章节依赖关系" },
+      { at: 72, label: "整理 Course Bible" },
       { at: 88, label: "保存课程并准备跳转" },
     ];
 
@@ -90,13 +90,13 @@ export default function Home() {
             <em>真正连贯</em>的个人课程
           </h1>
           <p className="hero-copy">
-            系统会先生成 Course Bible，再自动编写第一章教材。每一章都知道自己承接什么、引出什么，右侧讨论也支持公式、代码和 Markdown。
+            系统会先生成 Course Bible 和章节路线。进入课程后，每一章会按需生成，并知道自己承接什么、引出什么；右侧讨论也支持公式、代码和 Markdown。
           </p>
         </section>
 
         <form className={`card form-card ${loading ? "loading" : ""}`} onSubmit={createCourse}>
           <h2>创建你的第一门课程</h2>
-          <p>会同时生成课程总纲和第一章，可能需要 1–3 分钟。</p>
+          <p>会先生成课程总纲和章节路线，章节内容进入课程后再按需生成。</p>
           <div className="field">
             <label htmlFor="topic">你想学习什么？</label>
             <input id="topic" name="topic" defaultValue="因果推断" required />
@@ -139,7 +139,7 @@ export default function Home() {
             </div>
           </div>
           <button className="button" type="submit">
-            {loading ? "正在生成课程总纲与第一章…" : "生成我的课程"}
+            {loading ? "正在生成课程总纲…" : "生成我的课程"}
           </button>
           {loading && (
             <div className="progress-card" aria-live="polite">
@@ -150,7 +150,7 @@ export default function Home() {
               <div className="progress-track">
                 <div className="progress-fill" style={{ width: `${progress}%` }} />
               </div>
-              <p>正在调用 AI 模型。第一章会一起生成并经过格式检查，所以这一步可能需要几分钟。</p>
+              <p>正在调用 AI 模型生成课程总纲。章节正文会在进入课程后按需生成，避免首页长请求超时。</p>
             </div>
           )}
           {error && <p style={{ color: "#a33", marginTop: 12 }}>{error}</p>}
