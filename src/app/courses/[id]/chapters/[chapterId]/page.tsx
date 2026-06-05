@@ -1,18 +1,20 @@
 "use client";
 
 import Link from "next/link";
-import { useParams } from "next/navigation";
-import { FormEvent, MouseEvent, useEffect, useState } from "react";
+import { useParams, useRouter } from "next/navigation";
+import { FormEvent, MouseEvent, useCallback, useEffect, useState } from "react";
 import { MarkdownContent } from "@/components/MarkdownContent";
 import { createMockAnswer } from "@/lib/mock";
 import { getAnnotations, getCourse, saveAnnotation, saveCourse } from "@/lib/storage";
-import { formatMinutes, totalMinutes } from "@/lib/time";
 import { Annotation, Course } from "@/lib/types";
+import { ThemeToggle } from "@/components/ThemeToggle";
+import { ArrowLeft, ChevronLeft, ChevronRight, Menu, X, Clock, MessageSquareQuote, Bot } from "lucide-react";
 
 const quickQuestions = ["解释得更简单", "给我一个具体例子", "展示推导过程", "质疑这段内容"];
 
 export default function ReaderPage() {
   const { id, chapterId } = useParams<{ id: string; chapterId: string }>();
+  const router = useRouter();
   const [course, setCourse] = useState<Course>();
   const [content, setContent] = useState("");
   const [review, setReview] = useState("");
@@ -23,7 +25,13 @@ export default function ReaderPage() {
   const [answering, setAnswering] = useState(false);
   const [generationError, setGenerationError] = useState("");
 
+  const [tocOpen, setTocOpen] = useState(true);
+  const [tutorOpen, setTutorOpen] = useState(true);
+
   const chapter = course?.chapters.find((item) => item.id === chapterId);
+  const currentIndex = course?.chapters.findIndex((c) => c.id === chapterId) ?? -1;
+  const prevChapter = currentIndex > 0 && course ? course.chapters[currentIndex - 1] : null;
+  const nextChapter = currentIndex < (course?.chapters.length ?? 0) - 1 && course ? course.chapters[currentIndex + 1] : null;
 
   useEffect(() => {
     const stored = getCourse(id);
@@ -31,7 +39,7 @@ export default function ReaderPage() {
     setCourse(stored);
     setAnnotations(getAnnotations(chapterId));
     const current = stored.chapters.find((item) => item.id === chapterId);
-    const currentIndex = stored.chapters.findIndex((item) => item.id === chapterId);
+    const currIdx = stored.chapters.findIndex((item) => item.id === chapterId);
     if (current?.content) {
       setContent(current.content);
       setReview(current.review ?? "已完成结构、术语与公式一致性检查。");
@@ -68,7 +76,7 @@ export default function ReaderPage() {
           time: item.time,
           status: item.status,
         })),
-        chapterIndex: currentIndex,
+        chapterIndex: currIdx,
       }),
     })
       .then((response) => response.json())
@@ -85,17 +93,32 @@ export default function ReaderPage() {
       .catch(() => {
         current.status = "failed";
         saveCourse(stored);
-        setGenerationError("AI 模型暂时无法生成本章，请刷新页面重试。");
+        setGenerationError("Gemini 3.1 Pro 暂时无法生成本章，请刷新页面重试。");
       })
       .finally(() => setLoading(false));
   }, [chapterId, id]);
+
+  const handleTextSelect = useCallback((text: string) => {
+    if (text.length > 2) {
+      setSelectedText(text);
+      setActive(undefined);
+      setTutorOpen(true);
+    }
+  }, []);
+
+  const handleParagraphDoubleClick = useCallback((text: string) => {
+    if (text.length > 2) {
+      setSelectedText(text);
+      setActive(undefined);
+      setTutorOpen(true);
+    }
+  }, []);
 
   function captureSelection(event: MouseEvent<HTMLElement>) {
     const selection = window.getSelection();
     const text = selection?.toString().trim() ?? "";
     if (text.length > 2 && event.currentTarget.contains(selection?.anchorNode ?? null)) {
-      setSelectedText(text);
-      setActive(undefined);
+      handleTextSelect(text);
     }
   }
 
@@ -104,8 +127,7 @@ export default function ReaderPage() {
     const block = target.closest("p, li, blockquote, h2, h3");
     const text = block?.textContent?.trim() ?? "";
     if (text.length > 2) {
-      setSelectedText(text);
-      setActive(undefined);
+      handleParagraphDoubleClick(text);
     }
   }
 
@@ -160,112 +182,255 @@ export default function ReaderPage() {
     input.value = "";
   }
 
-  if (!course || !chapter) return <main className="shell page">正在打开教材…</main>;
+  if (!course || !chapter) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-background text-muted-foreground font-mono">
+        LOADING COURSE DATA...
+      </div>
+    );
+  }
 
   return (
-    <main className="reader-layout">
-      <aside className="reader-sidebar">
-        <Link href="/" className="brand">
-          Learn<span>By</span>AI
-        </Link>
-        <div className="sidebar-title">课程目录</div>
-        {course.chapters.map((item, index) => (
-          <Link
-            className={`sidebar-chapter ${item.id === chapterId ? "active" : ""}`}
-            href={`/courses/${id}/chapters/${item.id}`}
-            key={item.id}
-          >
-            {index + 1}. {item.title}
-            <br />
-            <span>{item.status === "ready" ? "可阅读" : "待生成"}</span>
-          </Link>
-        ))}
-        <div className="sidebar-title">本章讨论 · {annotations.length}</div>
-        {annotations.map((annotation) => (
-          <button
-            className={`sidebar-chapter ${active?.id === annotation.id ? "active" : ""}`}
-            key={annotation.id}
-            onClick={() => {
-              setActive(annotation);
-              setSelectedText("");
-            }}
-          >
-            “{annotation.selectedText.slice(0, 28)}…”
-          </button>
-        ))}
+    <div className="flex h-screen overflow-hidden bg-background">
+      {/* TOC Sidebar */}
+      <aside className={`shrink-0 border-r border-border bg-card transition-all duration-300 ${tocOpen ? "w-64" : "w-0 overflow-hidden"}`}>
+        <div className="flex h-full flex-col">
+          <div className="flex items-center justify-between border-b border-border px-4 py-4">
+            <Link href="/" className="font-mono text-sm font-bold text-foreground tracking-widest uppercase">
+              Learn<span className="text-muted-foreground">By</span>AI
+            </Link>
+            <button onClick={() => setTocOpen(false)} className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground transition-colors">
+              <X size={14} />
+            </button>
+          </div>
+          <div className="flex-1 overflow-y-auto py-2">
+            <div className="px-4 py-2 text-[10px] font-mono font-bold text-muted-foreground uppercase tracking-widest">
+              课程目录
+            </div>
+            {course.chapters.map((ch, idx) => {
+              const isActive = ch.id === chapterId;
+              return (
+                <button
+                  key={ch.id}
+                  onClick={() => router.push(`/courses/${id}/chapters/${ch.id}`)}
+                  className={`w-full px-4 py-3 text-left transition-colors ${
+                    isActive ? "border-l-2 border-foreground bg-foreground/5" : "border-l-2 border-transparent hover:bg-muted/30"
+                  }`}
+                >
+                  <div className="flex items-start gap-2">
+                    <span className={`font-mono text-xs ${isActive ? "text-foreground" : "text-muted-foreground"}`}>{String(idx + 1).padStart(2, '0')}.</span>
+                    <span className={`text-xs ${isActive ? "font-medium text-foreground" : "text-muted-foreground"}`}>{ch.title}</span>
+                  </div>
+                  <div className="mt-1 pl-6 text-[10px] font-mono text-muted-foreground uppercase">
+                    {ch.status === "ready" ? "READY" : "PENDING"}
+                  </div>
+                </button>
+              );
+            })}
+
+            <div className="mt-6 px-4 py-2 text-[10px] font-mono font-bold text-muted-foreground uppercase tracking-widest">
+              本章讨论档案 · {annotations.length}
+            </div>
+            {annotations.map((annotation) => (
+              <button
+                key={annotation.id}
+                onClick={() => {
+                  setActive(annotation);
+                  setSelectedText("");
+                  setTutorOpen(true);
+                }}
+                className={`w-full px-4 py-2 text-left transition-colors ${
+                  active?.id === annotation.id ? "bg-muted/50 text-foreground" : "text-muted-foreground hover:bg-muted/30 hover:text-foreground"
+                }`}
+              >
+                <div className="text-xs line-clamp-2 leading-relaxed">
+                  &quot;{annotation.selectedText}&quot;
+                </div>
+              </button>
+            ))}
+          </div>
+        </div>
       </aside>
 
-      <section className="reader-main">
-        <div className="reader-toolbar">
-          <Link href={`/courses/${id}`}>← 返回课程目录</Link>
-          <span>{loading ? "正在编写并审核教材…" : `✓ ${review}`}</span>
-        </div>
-        <article
-          className="article"
-          onDoubleClick={captureParagraph}
-          onMouseUp={captureSelection}
-          title="选中文字或双击段落，在右侧展开讨论"
-        >
-          <div className="profile">
-            <strong>本章学习时间：{formatMinutes(totalMinutes(chapter.time))}</strong>
-            <p>
-              阅读 {chapter.time.readingMinutes} 分钟 · 练习 {chapter.time.exerciseMinutes} 分钟 ·
-              实践 {chapter.time.practiceMinutes} 分钟 · 拓展阅读{" "}
-              {chapter.time.extensionMinutes} 分钟
-            </p>
-            <p>承接：{chapter.connectionFromPrevious ?? "这是课程起点。"}</p>
-            <p>铺垫：{chapter.setupForNext ?? "自然引出下一章。"}</p>
+      {/* Main Content */}
+      <main className="flex-1 overflow-y-auto bg-background">
+        {/* Toolbar */}
+        <div className="sticky top-0 z-30 flex items-center justify-between border-b border-border bg-background/95 px-6 py-3 backdrop-blur">
+          <div className="flex items-center gap-3">
+            {!tocOpen && (
+              <button onClick={() => setTocOpen(true)} className="rounded p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground transition-colors">
+                <Menu size={16} />
+              </button>
+            )}
+            <button onClick={() => router.push(`/courses/${id}`)} className="rounded p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground transition-colors">
+              <ArrowLeft size={16} />
+            </button>
+            <span className="font-mono text-xs font-medium text-muted-foreground hidden md:inline-block">{course.topic}</span>
           </div>
-          {loading ? (
-            <p className="muted">AI 模型正在根据 Course Bible 编写本章，并进行格式检查…</p>
-          ) : generationError ? (
-            <p style={{ color: "#a33" }}>{generationError}</p>
-          ) : (
-            <MarkdownContent content={content} />
-          )}
-        </article>
-      </section>
-
-      <aside className="discussion">
-        <div className="discussion-header">
-          <h3>原文讨论</h3>
-          <span className="muted">支持 Markdown、公式和代码</span>
-        </div>
-        {selectedText || active ? (
-          <>
-            <div className="selection-box">“{active?.selectedText ?? selectedText}”</div>
-            <div className="messages">
-              {active?.messages.map((message) => (
-                <div className={`message ${message.role}`} key={message.id}>
-                  <MarkdownContent content={message.content} />
-                </div>
-              ))}
-              {answering && <div className="message">正在思考这段原文与你的问题…</div>}
-            </div>
-            <form className="question-box" onSubmit={submitQuestion}>
-              <div className="quick-actions">
-                {quickQuestions.map((question) => (
-                  <button type="button" key={question} onClick={() => void ask(question)}>
-                    {question}
-                  </button>
-                ))}
-              </div>
-              <div className="question-input">
-                <input name="question" placeholder="针对这段内容继续提问…" autoComplete="off" />
-                <button className="button" disabled={answering} type="submit">
-                  询问
+          <div className="flex items-center gap-4">
+            <ThemeToggle />
+            <span className="flex items-center gap-1.5 font-mono text-xs text-muted-foreground">
+              <Clock size={12} />
+              {formatMinutes(totalMinutes(chapter.time))}
+            </span>
+            <div className="h-4 w-px bg-border" />
+            <div className="flex items-center gap-1">
+              {prevChapter && (
+                <button onClick={() => router.push(`/courses/${id}/chapters/${prevChapter.id}`)} className="rounded p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground transition-colors">
+                  <ChevronLeft size={16} />
                 </button>
+              )}
+              {nextChapter && (
+                <button onClick={() => router.push(`/courses/${id}/chapters/${nextChapter.id}`)} className="rounded p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground transition-colors">
+                  <ChevronRight size={16} />
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Content */}
+        <div className="mx-auto max-w-3xl px-6 py-12 lg:px-8">
+          <div className="mb-12 border-l-2 border-foreground bg-muted/20 p-6">
+            <h1 className="mb-4 text-3xl font-bold tracking-tight text-foreground md:text-4xl">{chapter.title}</h1>
+            <div className="flex flex-wrap items-center gap-4 font-mono text-xs text-muted-foreground">
+              <span>{loading ? "GENERATING..." : `✓ ${review}`}</span>
+            </div>
+            <div className="mt-4 text-sm text-muted-foreground leading-relaxed border-t border-border/50 pt-4">
+              <p>承接：{chapter.connectionFromPrevious ?? "这是课程起点。"}</p>
+              <p className="mt-1">铺垫：{chapter.setupForNext ?? "自然引出下一章。"}</p>
+            </div>
+          </div>
+
+          {loading ? (
+            <div className="rounded-lg border border-dashed border-border py-24 text-center">
+              <Clock size={32} className="mx-auto mb-4 animate-pulse text-muted-foreground/50" />
+              <p className="font-mono text-sm text-muted-foreground">AI IS WRITING THE TEXTBOOK...</p>
+              <p className="mt-2 text-xs text-muted-foreground/60">Gemini 3.1 Pro 正在根据 Course Bible 编写本章</p>
+            </div>
+          ) : generationError ? (
+            <div className="rounded-lg border border-destructive/30 bg-destructive/5 py-12 text-center text-destructive">
+              <p className="font-mono text-sm">{generationError}</p>
+            </div>
+          ) : (
+            <article 
+              className="prose prose-invert max-w-none text-foreground prose-headings:font-bold prose-headings:tracking-tight prose-a:text-primary prose-code:font-mono prose-code:text-sm prose-pre:border prose-pre:border-border"
+              onDoubleClick={captureParagraph}
+              onMouseUp={captureSelection}
+              title="选中文字或双击段落，在右侧展开讨论"
+            >
+              <MarkdownContent content={content} />
+            </article>
+          )}
+
+          {/* Chapter Nav */}
+          <div className="mt-16 flex flex-col gap-4 border-t border-border pt-8 sm:flex-row sm:items-center sm:justify-between">
+            {prevChapter ? (
+              <button onClick={() => router.push(`/courses/${id}/chapters/${prevChapter.id}`)} className="flex flex-1 items-center gap-3 rounded-lg border border-border bg-card p-4 text-left transition-colors hover:border-foreground/30 hover:bg-muted/20">
+                <ChevronLeft size={20} className="text-muted-foreground" />
+                <div>
+                  <div className="font-mono text-[10px] text-muted-foreground uppercase tracking-wider">上一章</div>
+                  <div className="text-sm font-medium text-foreground">{prevChapter.title}</div>
+                </div>
+              </button>
+            ) : <div className="flex-1" />}
+            
+            {nextChapter ? (
+              <button onClick={() => router.push(`/courses/${id}/chapters/${nextChapter.id}`)} className="flex flex-1 items-center justify-end gap-3 rounded-lg border border-border bg-card p-4 text-right transition-colors hover:border-foreground/30 hover:bg-muted/20">
+                <div>
+                  <div className="font-mono text-[10px] text-muted-foreground uppercase tracking-wider">下一章</div>
+                  <div className="text-sm font-medium text-foreground">{nextChapter.title}</div>
+                </div>
+                <ChevronRight size={20} className="text-muted-foreground" />
+              </button>
+            ) : <div className="flex-1" />}
+          </div>
+        </div>
+      </main>
+
+      {/* Tutor Sidebar (Terminal Style) */}
+      <aside className={`shrink-0 border-l border-border bg-muted/30 flex flex-col transition-all duration-300 ${tutorOpen ? "w-80 lg:w-[400px]" : "w-0 overflow-hidden"}`}>
+        <div className="flex items-center justify-between border-b border-border bg-card px-4 py-3">
+          <div className="flex items-center gap-2">
+            <Bot size={14} className="text-primary" />
+            <span className="font-mono text-[11px] font-medium text-primary uppercase tracking-wider">Tutor Terminal</span>
+          </div>
+          <button onClick={() => setTutorOpen(false)} className="rounded p-1 text-muted-foreground hover:text-foreground">
+            <X size={14} />
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-4 scrollbar-thin scrollbar-thumb-border scrollbar-track-transparent">
+          {selectedText || active ? (
+            <div className="space-y-6">
+              <div className="border-l-2 border-primary pl-3">
+                <p className="font-mono text-[10px] text-muted-foreground mb-1">TARGET_TEXT</p>
+                <div className="text-sm leading-relaxed text-foreground italic">
+                  &quot;{active?.selectedText ?? selectedText}&quot;
+                </div>
               </div>
+
+              <div className="space-y-4">
+                {active?.messages.map((message) => (
+                  <div key={message.id} className="flex flex-col gap-1">
+                    <span className={`font-mono text-[10px] ${message.role === "user" ? "text-primary" : "text-muted-foreground"}`}>
+                      {message.role === "user" ? "> USER" : "> TUTOR_AI"}
+                    </span>
+                    <div className={`prose prose-invert prose-sm max-w-none ${message.role === "user" ? "text-foreground" : "text-muted-foreground"}`}>
+                      <MarkdownContent content={message.content} />
+                    </div>
+                  </div>
+                ))}
+                {answering && (
+                  <div className="flex items-center gap-2 text-primary">
+                    <span className="font-mono text-[10px] animate-pulse">PROCESSING...</span>
+                  </div>
+                )}
+              </div>
+            </div>
+          ) : (
+            <div className="flex h-full flex-col items-center justify-center text-center text-muted-foreground">
+              <MessageSquareQuote size={32} className="mb-4 opacity-50" />
+              <p className="font-mono text-xs leading-relaxed max-w-[200px]">
+                SELECT TEXT OR DOUBLE-CLICK PARAGRAPH TO INITIATE INQUIRY
+              </p>
+            </div>
+          )}
+        </div>
+
+        {(selectedText || active) && (
+          <div className="border-t border-border bg-card p-4">
+            <div className="mb-3 flex flex-wrap gap-2">
+              {quickQuestions.map((q) => (
+                <button
+                  key={q}
+                  onClick={() => ask(q)}
+                  disabled={answering}
+                  className="rounded border border-border bg-background px-2 py-1 font-mono text-[10px] text-muted-foreground hover:border-primary hover:text-primary disabled:opacity-50 transition-colors"
+                >
+                  {q}
+                </button>
+              ))}
+            </div>
+            <form onSubmit={submitQuestion} className="relative flex items-center">
+              <span className="absolute left-3 font-mono text-[12px] text-primary">{">"}</span>
+              <input
+                name="question"
+                placeholder="INPUT QUERY..."
+                autoComplete="off"
+                disabled={answering}
+                className="w-full bg-background border border-border py-2 pl-7 pr-3 font-mono text-[12px] text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none disabled:opacity-50"
+              />
             </form>
-          </>
-        ) : (
-          <div className="empty-discussion">
-            在教材中选中任意一段文字，
-            <br />
-            或双击段落，在这里展开独立讨论。
           </div>
         )}
       </aside>
-    </main>
+
+      {!tutorOpen && (
+        <button onClick={() => setTutorOpen(true)} className="fixed right-0 top-1/2 z-40 flex h-12 w-12 -translate-y-1/2 items-center justify-center rounded-l-md border border-r-0 border-border bg-card text-muted-foreground shadow-lg hover:text-foreground transition-colors" title="展开终端">
+          <MessageSquareQuote size={18} />
+        </button>
+      )}
+    </div>
   );
 }

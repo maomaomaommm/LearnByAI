@@ -5,3 +5,6 @@ node_modules
 npm-debug.log*
 .dev-server*.log
 .tunnel*.log
+
+Kimi_Agent_LearnByAI/
+Kimi_Agent_LearnByAI.zip
