@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import { saveCourse } from "@/lib/storage";
 import { Course } from "@/lib/types";
 
@@ -10,11 +10,42 @@ export default function Home() {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [progress, setProgress] = useState(0);
+  const [progressStage, setProgressStage] = useState("准备生成");
+
+  useEffect(() => {
+    if (!loading) return;
+
+    const startedAt = Date.now();
+    const stages = [
+      { at: 0, label: "分析你的目标与基础" },
+      { at: 12, label: "生成 Course Bible" },
+      { at: 28, label: "规划章节依赖关系" },
+      { at: 45, label: "编写第一章教材" },
+      { at: 72, label: "检查章节连续性与公式格式" },
+      { at: 88, label: "保存课程并准备跳转" },
+    ];
+
+    const timer = window.setInterval(() => {
+      const elapsed = (Date.now() - startedAt) / 1000;
+      const nextProgress = Math.min(95, Math.round(100 * (1 - Math.exp(-elapsed / 95))));
+      setProgress(nextProgress);
+      const currentStage = stages
+        .slice()
+        .reverse()
+        .find((stage) => nextProgress >= stage.at);
+      if (currentStage) setProgressStage(currentStage.label);
+    }, 800);
+
+    return () => window.clearInterval(timer);
+  }, [loading]);
 
   async function createCourse(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setLoading(true);
     setError("");
+    setProgress(3);
+    setProgressStage("分析你的目标与基础");
     const values = Object.fromEntries(new FormData(event.currentTarget));
     const input = {
       topic: String(values.topic),
@@ -32,6 +63,8 @@ export default function Home() {
       });
       if (!response.ok) throw new Error(await response.text());
       const course: Course = await response.json();
+      setProgress(100);
+      setProgressStage("生成完成，正在打开课程");
       saveCourse(course);
       router.push(`/courses/${course.id}`);
     } catch {
@@ -108,6 +141,18 @@ export default function Home() {
           <button className="button" type="submit">
             {loading ? "正在生成课程总纲与第一章…" : "生成我的课程"}
           </button>
+          {loading && (
+            <div className="progress-card" aria-live="polite">
+              <div className="progress-top">
+                <strong>{progressStage}</strong>
+                <span>{progress}%</span>
+              </div>
+              <div className="progress-track">
+                <div className="progress-fill" style={{ width: `${progress}%` }} />
+              </div>
+              <p>正在调用 Gemini 3.1 Pro。第一章会一起生成，所以这一步可能需要几分钟。</p>
+            </div>
+          )}
           {error && <p style={{ color: "#a33", marginTop: 12 }}>{error}</p>}
         </form>
       </main>
