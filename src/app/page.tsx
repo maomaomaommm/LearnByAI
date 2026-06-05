@@ -68,7 +68,7 @@ export default function Home() {
       saveCourse(course);
       router.push(`/courses/${course.id}`);
     } catch {
-      setError("Gemini 3.1 Pro 暂时无法生成课程，请稍后重试。");
+      setError("AI 模型暂时无法生成课程，请稍后重试。");
       setLoading(false);
     }
   }
@@ -150,7 +150,7 @@ export default function Home() {
               <div className="progress-track">
                 <div className="progress-fill" style={{ width: `${progress}%` }} />
               </div>
-              <p>正在调用 Gemini 3.1 Pro。第一章会一起生成，所以这一步可能需要几分钟。</p>
+              <p>正在调用 AI 模型。第一章会一起生成并经过格式检查，所以这一步可能需要几分钟。</p>
             </div>
           )}
           {error && <p style={{ color: "#a33", marginTop: 12 }}>{error}</p>}

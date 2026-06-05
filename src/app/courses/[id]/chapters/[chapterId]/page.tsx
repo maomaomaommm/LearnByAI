@@ -85,7 +85,7 @@ export default function ReaderPage() {
       .catch(() => {
         current.status = "failed";
         saveCourse(stored);
-        setGenerationError("Gemini 3.1 Pro 暂时无法生成本章，请刷新页面重试。");
+        setGenerationError("AI 模型暂时无法生成本章，请刷新页面重试。");
       })
       .finally(() => setLoading(false));
   }, [chapterId, id]);
@@ -217,7 +217,7 @@ export default function ReaderPage() {
             <p>铺垫：{chapter.setupForNext ?? "自然引出下一章。"}</p>
           </div>
           {loading ? (
-            <p className="muted">Gemini 3.1 Pro 正在根据 Course Bible 编写本章，并进行一次连续性检查…</p>
+            <p className="muted">AI 模型正在根据 Course Bible 编写本章，并进行格式检查…</p>
           ) : generationError ? (
             <p style={{ color: "#a33" }}>{generationError}</p>
           ) : (
