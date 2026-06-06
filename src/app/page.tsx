@@ -51,7 +51,7 @@ function HeroSection() {
             </span>
           </div>
 
-          <h1 className="mb-6 font-mono text-4xl font-bold leading-tight tracking-tight text-foreground md:text-5xl lg:text-6xl">
+          <h1 className="mb-6 font-heading text-4xl font-bold leading-tight tracking-tight text-foreground md:text-5xl lg:text-6xl">
             LearnByAI
           </h1>
 
@@ -141,7 +141,7 @@ function CapabilitiesSection() {
           transition={{ duration: 0.5 }}
           className="mb-16 text-center"
         >
-          <h2 className="mb-3 font-mono text-2xl font-bold text-foreground md:text-3xl">
+          <h2 className="mb-3 font-heading text-2xl font-bold text-foreground md:text-3xl">
             三大核心能力
           </h2>
           <p className="text-sm text-muted-foreground">
@@ -236,7 +236,7 @@ function ProcessSection() {
           viewport={{ once: true }}
           className="mb-16 text-center"
         >
-          <h2 className="mb-3 font-mono text-2xl font-bold text-foreground md:text-3xl">
+          <h2 className="mb-3 font-heading text-2xl font-bold text-foreground md:text-3xl">
             课程生成流程
           </h2>
           <p className="text-sm text-muted-foreground">
@@ -293,7 +293,7 @@ function CTASection() {
         viewport={{ once: true }}
         className="mx-auto max-w-2xl text-center"
       >
-        <h2 className="mb-4 font-mono text-2xl font-bold text-foreground md:text-3xl">
+        <h2 className="mb-4 font-heading text-2xl font-bold text-foreground md:text-3xl">
           开始你的个性化学习之旅
         </h2>
         <p className="mb-8 text-sm text-muted-foreground">
