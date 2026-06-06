@@ -43,8 +43,10 @@ async function planCourse(input: CourseInput) {
   try {
     return parseJson<CourseGeneration>(
       await generateText(buildCoursePlannerPrompt(input), {
+        maxAttempts: 1,
         temperature: 0.25,
-        maxTokens: 6144,
+        maxTokens: 4096,
+        timeoutMs: 60_000,
       }),
     );
   } catch {
