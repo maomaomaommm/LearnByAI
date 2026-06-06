@@ -11,7 +11,9 @@ const config: Config = {
   theme: {
     extend: {
       fontFamily: {
-        mono: ["'IBM Plex Mono'", "monospace"],
+        sans: ["var(--font-inter)", "sans-serif"],
+        heading: ["var(--font-outfit)", "sans-serif"],
+        mono: ["var(--font-jb-mono)", "monospace"],
       },
       colors: {
         border: "hsl(var(--border))",
