@@ -36,7 +36,7 @@ export async function POST(request: Request) {
       userId,
       activeAgent: "ARCHITECT",
       status: "pending",
-      message: "Course planning queued.",
+      message: "课程大纲规划已进入队列。",
     });
     const linkedCourse = await saveServerCourse({ ...course, generationJobId: job.id }, request);
     const persistedJob = await saveServerGenerationJob(job, request);
@@ -73,13 +73,13 @@ function createPendingCourse(input: CourseInput, userId: string): Course {
     id: crypto.randomUUID(),
     userId,
     ...input,
-    profile: "Course planning is queued.",
+    profile: "课程规划队列中。",
     courseBible: {
       targetLearner: input.background,
       finalOutcomes: [input.goal],
       teachingStyle: input.preference,
       prerequisites: [],
-      globalNarrative: "Course planning is queued.",
+      globalNarrative: "课程规划队列中。",
       terminology: [],
       chapterDependencies: [],
     },

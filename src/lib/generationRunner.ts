@@ -20,10 +20,35 @@ export async function runCourseGenerationJob(input: {
   jobId: string;
   request?: Request;
   courseSnapshot?: Course;
+  retry?: boolean;
 }) {
   const persistedJob = await getServerGenerationJob(input.jobId, input.request);
   let job = getGenerationJob(input.jobId) ?? (persistedJob ? upsertGenerationJob(persistedJob) : undefined);
   const allowedSnapshot = (await canUseCourseSnapshot(input.courseSnapshot, input.request)) ? input.courseSnapshot : undefined;
+
+  if (!job && allowedSnapshot?.generationJobId === input.jobId) {
+    const now = new Date().toISOString();
+    job = upsertGenerationJob({
+      id: input.jobId,
+      type: "course",
+      courseId: allowedSnapshot.id,
+      userId: allowedSnapshot.userId,
+      activeAgent: "ARCHITECT",
+      status: input.retry ? "retrying" : "queued",
+      events: [
+        {
+          id: crypto.randomUUID(),
+          agent: "ARCHITECT",
+          status: input.retry ? "retrying" : "queued",
+          message: "Recovered course planning job from local course snapshot.",
+          createdAt: now,
+        },
+      ],
+      createdAt: now,
+      updatedAt: now,
+    });
+    await saveServerGenerationJob(job, input.request);
+  }
 
   if (!job) {
     return {
@@ -36,18 +61,30 @@ export async function runCourseGenerationJob(input: {
   if (job.type !== "course" || !job.courseId) {
     return { job } as const;
   }
+  const courseId = job.courseId;
 
-  if (job.status === "succeeded") {
-    const course = await getServerCourse(job.courseId, input.request);
+  if (job.status === "succeeded" && !input.retry) {
+    const course = await getServerCourse(courseId, input.request);
     return { job, course } as const;
   }
 
-  if (job.status === "running") {
-    const course = await getServerCourse(job.courseId, input.request);
+  if (job.status === "running" && !input.retry) {
+    const course = await getServerCourse(courseId, input.request);
     return { job, course } as const;
   }
 
-  const course = (await getServerCourse(job.courseId, input.request)) ?? allowedSnapshot;
+  if (input.retry) {
+    const retryingJob = patchGenerationJob(job.id, {
+      status: "retrying",
+      error: undefined,
+    });
+    if (retryingJob) {
+      await saveServerGenerationJob(retryingJob, input.request);
+      job = retryingJob;
+    }
+  }
+
+  const course = (await getServerCourse(courseId, input.request)) ?? allowedSnapshot;
   if (!course) {
     const failedJob = failGenerationJob(job.id, "Course snapshot unavailable for course planning job.");
     if (failedJob) await saveServerGenerationJob(failedJob, input.request);
@@ -66,7 +103,7 @@ export async function runCourseGenerationJob(input: {
   const resumedJob = appendJobEvent(job.id, {
     agent: "ARCHITECT",
     status: "running",
-    message: "Course planning resumed in background.",
+    message: "课程大纲规划在后台恢复执行。",
   });
   if (resumedJob) await saveServerGenerationJob(resumedJob, input.request);
 
@@ -131,10 +168,10 @@ export async function runCourseGenerationJob(input: {
       course: plannedCourse,
     } as const;
   } catch (error) {
-    const failedJob = failGenerationJob(job.id, safeErrorMessage(error, "Course planning failed."));
+    const failedJob = failGenerationJob(job.id, safeErrorMessage(error, "课程大纲规划失败。"));
     if (failedJob) await saveServerGenerationJob(failedJob, input.request);
     return {
-      error: "Course planning failed",
+      error: "课程大纲规划失败",
       status: 500,
       job: getGenerationJob(job.id) ?? failedJob ?? job,
       course,
