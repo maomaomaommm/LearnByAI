@@ -5,7 +5,7 @@ import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import { getCourse, saveCourse } from "@/lib/storage";
 import { formatMinutes, totalMinutes } from "@/lib/time";
-import { Course, ExportJob, GenerationJob, JobStatus } from "@/lib/types";
+import { AgentEvent, Course, ExportJob, GenerationJob, JobStatus } from "@/lib/types";
 import { MarkdownContent } from "@/components/MarkdownContent";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { Target, Lightbulb, GraduationCap, ArrowLeft, FileText, ChevronRight, Clock, Download } from "lucide-react";
@@ -19,6 +19,8 @@ export default function CourseOverviewPage() {
   const [exportError, setExportError] = useState("");
   const [backgroundJob, setBackgroundJob] = useState("");
   const [jobStatus, setJobStatus] = useState<Record<string, JobStatus>>({});
+  const [jobErrors, setJobErrors] = useState<Record<string, string>>({});
+  const [jobEvents, setJobEvents] = useState<Record<string, AgentEvent[]>>({});
 
   useEffect(() => {
     const stored = getCourse(id);
@@ -70,21 +72,40 @@ export default function CourseOverviewPage() {
       const entries = await Promise.all(
         jobIds.map(async (jobId) => {
           const response = await apiFetch(`/api/generation-jobs/${jobId}`);
-          if (!response.ok) return undefined;
+          if (!response.ok) {
+            const data = (await response.json().catch(() => ({}))) as { error?: string };
+            return {
+              id: jobId,
+              status: "failed" as JobStatus,
+              error: data.error ?? "Generation job was not found. If the dev server restarted, retry this job.",
+              events: [] as AgentEvent[],
+            } as const;
+          }
           const data = (await response.json()) as { job?: GenerationJob };
-          return data.job ? ([jobId, data.job.status] as const) : undefined;
+          return data.job
+            ? ({ id: jobId, status: data.job.status, error: data.job.error, events: data.job.events ?? [] } as const)
+            : undefined;
         }),
       );
       if (!cancelled) {
+        const jobs = entries.filter((entry): entry is NonNullable<typeof entry> => Boolean(entry));
         setJobStatus((current) => ({
           ...current,
-          ...Object.fromEntries(entries.filter(Boolean) as [string, JobStatus][]),
+          ...Object.fromEntries(jobs.map((entry) => [entry.id, entry.status])),
         }));
-        if (entries.some((entry) => entry?.[1] === "succeeded")) {
+        setJobErrors((current) => ({
+          ...current,
+          ...Object.fromEntries(jobs.filter((entry) => entry.error).map((entry) => [entry.id, entry.error as string])),
+        }));
+        setJobEvents((current) => ({
+          ...current,
+          ...Object.fromEntries(jobs.map((entry) => [entry.id, entry.events])),
+        }));
+        if (jobs.some((entry) => entry.status === "succeeded")) {
           const response = await apiFetch(`/api/courses/${id}`);
           if (response.ok) {
             const data = (await response.json()) as { course?: Course };
-            if (data.course && !cancelled) {
+            if (data.course && !cancelled && data.course.updatedAt !== course.updatedAt) {
               setCourse(data.course);
               saveCourse(data.course);
             }
@@ -121,6 +142,33 @@ export default function CourseOverviewPage() {
       };
       setCourse(nextCourse);
       saveCourse(nextCourse);
+    }
+    setBackgroundJob("");
+  }
+
+  async function retryCoursePlanning(generationJobId?: string) {
+    if (!course || !generationJobId) return;
+    setBackgroundJob(generationJobId);
+    setJobErrors((current) => ({ ...current, [generationJobId]: "" }));
+    const response = await apiFetch(`/api/generation-jobs/${generationJobId}`, {
+      method: "POST",
+      body: JSON.stringify({ courseId: course.id, course, retry: true }),
+    });
+    const data = await response.json().catch(() => undefined);
+    if (!response.ok) {
+      setJobStatus((current) => ({ ...current, [generationJobId]: "failed" }));
+      setJobErrors((current) => ({ ...current, [generationJobId]: data?.error ?? "重新规划课程大纲失败。" }));
+      setBackgroundJob("");
+      return;
+    }
+    if (data?.course) {
+      setCourse(data.course);
+      saveCourse(data.course);
+    }
+    if (data?.job) {
+      setJobStatus((current) => ({ ...current, [generationJobId]: data.job.status }));
+      if (data.job.error) setJobErrors((current) => ({ ...current, [generationJobId]: data.job.error }));
+      if (data.job.events) setJobEvents((current) => ({ ...current, [generationJobId]: data.job.events }));
     }
     setBackgroundJob("");
   }
@@ -164,9 +212,12 @@ export default function CourseOverviewPage() {
   }
 
   const coursePlanningStatus = course.generationJobId ? jobStatus[course.generationJobId] : undefined;
+  const coursePlanningEvents = course.generationJobId ? (jobEvents[course.generationJobId] ?? []) : [];
   const isCoursePlanning =
     course.chapters.length === 0 ||
     coursePlanningStatus === "pending" ||
+    coursePlanningStatus === "queued" ||
+    coursePlanningStatus === "retrying" ||
     coursePlanningStatus === "running";
 
   return (
@@ -218,12 +269,45 @@ export default function CourseOverviewPage() {
         {isCoursePlanning ? (
           <div className="rounded-lg border border-border bg-card p-8">
             <div className="mb-3 font-mono text-xs uppercase tracking-widest text-muted-foreground">
-              JOB: {(coursePlanningStatus ?? "pending").toUpperCase()}
+              任务状态: {(coursePlanningStatus ?? "pending").toUpperCase()}
             </div>
-            <h2 className="font-mono text-lg font-semibold text-foreground">ARCHITECT is planning this course</h2>
+            <h2 className="font-mono text-lg font-semibold text-foreground">ARCHITECT 正在为您规划课程大纲</h2>
             <p className="mt-3 max-w-2xl text-sm leading-relaxed text-muted-foreground">
-              Course Bible and chapter outline are being generated in the background. This page will refresh when planning finishes.
+              Course Bible（课程全局设定）和各章节大纲正在后台生成中。生成完成后本页面将自动刷新。
             </p>
+            {course.generationJobId && jobErrors[course.generationJobId] && (
+              <div className="mt-5 rounded-md border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
+                {jobErrors[course.generationJobId]}
+              </div>
+            )}
+            {coursePlanningEvents.length > 0 && (
+              <ol className="mt-5 space-y-2 rounded-md border border-border bg-background p-4 text-xs text-muted-foreground">
+                {coursePlanningEvents.slice(-6).map((event) => (
+                  <li key={event.id} className="flex flex-col gap-1 sm:flex-row sm:items-center sm:gap-3">
+                    <span className="font-mono uppercase text-foreground">{event.agent}</span>
+                    <span className="font-mono uppercase">{event.status}</span>
+                    <span className="min-w-0 flex-1">{event.message}</span>
+                    <time className="font-mono text-[10px] uppercase">
+                      {new Date(event.createdAt).toLocaleTimeString([], {
+                        hour: "2-digit",
+                        minute: "2-digit",
+                        second: "2-digit",
+                      })}
+                    </time>
+                  </li>
+                ))}
+              </ol>
+            )}
+            {course.generationJobId && coursePlanningStatus === "failed" && (
+              <button
+                type="button"
+                onClick={() => void retryCoursePlanning(course.generationJobId)}
+                disabled={backgroundJob === course.generationJobId}
+                className="mt-5 rounded-md border border-border bg-background px-4 py-2 text-xs font-medium text-muted-foreground hover:text-foreground disabled:opacity-50"
+              >
+                {backgroundJob === course.generationJobId ? "正在重试..." : "重新规划课程大纲"}
+              </button>
+            )}
           </div>
         ) : (
         <div className="grid gap-8 lg:grid-cols-[1fr_1fr]">

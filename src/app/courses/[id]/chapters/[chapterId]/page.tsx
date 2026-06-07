@@ -339,7 +339,7 @@ export default function ReaderPage() {
             <div className="rounded-lg border border-dashed border-border py-24 text-center">
               <Clock size={32} className="mx-auto mb-4 animate-pulse text-muted-foreground/50" />
               <p className="font-mono text-sm text-muted-foreground">AI IS WRITING THE TEXTBOOK...</p>
-              <p className="mt-2 text-xs text-muted-foreground/60">Gemini 3.1 Pro 正在根据 Course Bible 编写本章</p>
+              <p className="mt-2 text-xs text-muted-foreground/60">AI 正在根据 Course Bible 编写本章</p>
             </div>
           ) : generationError ? (
             <div className="rounded-lg border border-destructive/30 bg-destructive/5 py-12 text-center text-destructive">
