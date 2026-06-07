@@ -23,19 +23,34 @@ export async function generateText(
 
   let lastError = "";
   for (let attempt = 0; attempt < 3; attempt += 1) {
-    const response = await fetch(`${config.baseUrl}/chat/completions`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${config.apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: config.model,
-        messages: [{ role: "user", content: prompt }],
-        temperature: options?.temperature ?? config.temperature,
-        max_tokens: options?.maxTokens ?? config.maxTokens,
-      }),
-    });
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), config.timeoutMs);
+    let response: Response;
+    try {
+      response = await fetch(`${config.baseUrl}/chat/completions`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${config.apiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: config.model,
+          messages: [{ role: "user", content: prompt }],
+          temperature: options?.temperature ?? config.temperature,
+          max_tokens: options?.maxTokens ?? config.maxTokens,
+        }),
+        signal: controller.signal,
+      });
+    } catch (error) {
+      clearTimeout(timeout);
+      if (error instanceof Error && error.name === "AbortError") {
+        lastError = `request timed out after ${config.timeoutMs}ms`;
+        break;
+      }
+      throw error;
+    } finally {
+      clearTimeout(timeout);
+    }
 
     if (response.ok) {
       const data = await response.json();

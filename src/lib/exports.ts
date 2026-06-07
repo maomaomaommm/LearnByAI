@@ -13,7 +13,11 @@ const UNGENERATED_CHAPTER_TEXT = "This chapter has not been generated yet.";
 export async function createCourseExport(course: Course, format: ExportJob["format"], userId?: string) {
   const now = new Date().toISOString();
   const exportId = crypto.randomUUID();
-  const content = format === "tex" ? toTex(course) : createPdfBytes(toPdfText(course));
+  const exportText = toPdfText(course);
+  if (format === "pdf" && hasNonAscii(exportText)) {
+    throw new Error("PDF export currently supports ASCII text only. Please export TeX for Chinese content.");
+  }
+  const content = format === "tex" ? toTex(course) : createPdfBytes(exportText);
   const job: ExportJob = {
     id: exportId,
     userId,
@@ -185,6 +189,10 @@ function wrapLine(line: string, width: number) {
 function pdfString(value: string) {
   const ascii = value.replace(/[^\x20-\x7E]/g, "?");
   return `(${ascii.replace(/[()\\]/g, "\\$&")})`;
+}
+
+function hasNonAscii(value: string) {
+  return /[^\x00-\x7F]/.test(value);
 }
 
 function sanitize(value: string) {

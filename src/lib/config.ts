@@ -14,6 +14,7 @@ export function getBaseAIConfig() {
     model: process.env.AI_MODEL ?? DEFAULT_AI_MODEL,
     temperature: readNumber(process.env.AI_TEMPERATURE, 0.45),
     maxTokens: readNumber(process.env.AI_MAX_TOKENS, 32768),
+    timeoutMs: readNumber(process.env.AI_TIMEOUT_MS, 120_000),
   };
 }
 
@@ -28,6 +29,7 @@ export function getAgentConfig(agent: AgentName) {
     model: process.env[`${prefix}_MODEL`] || base.model,
     temperature: readNumber(process.env[`${prefix}_TEMPERATURE`], base.temperature),
     maxTokens: readNumber(process.env[`${prefix}_MAX_TOKENS`], base.maxTokens),
+    timeoutMs: readNumber(process.env[`${prefix}_TIMEOUT_MS`], base.timeoutMs),
   };
 }
 
