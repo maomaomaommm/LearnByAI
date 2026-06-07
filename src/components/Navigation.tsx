@@ -19,6 +19,7 @@ export function Navigation() {
     { label: "首页", href: "/" },
     { label: "我的课程", href: "/courses" },
     { label: "创建课程", href: "/create" },
+    { label: "登录", href: "/login" },
     { label: "关于", href: "/about" },
   ];
 

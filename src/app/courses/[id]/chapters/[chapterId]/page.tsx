@@ -4,10 +4,11 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { FormEvent, MouseEvent, useCallback, useEffect, useState } from "react";
 import { MarkdownContent } from "@/components/MarkdownContent";
-import { createMockAnswer } from "@/lib/mock";
+import { apiFetch } from "@/lib/clientApi";
+import { publicSafeErrorMessage } from "@/lib/publicSafeError";
 import { getAnnotations, getCourse, saveAnnotation, saveCourse } from "@/lib/storage";
 import { formatMinutes, totalMinutes } from "@/lib/time";
-import { Annotation, Course } from "@/lib/types";
+import { Annotation, ChapterGenerateResponse, Course, Section } from "@/lib/types";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { ArrowLeft, ChevronLeft, ChevronRight, Menu, X, Clock, MessageSquareQuote, Bot } from "lucide-react";
 
@@ -18,6 +19,7 @@ export default function ReaderPage() {
   const router = useRouter();
   const [course, setCourse] = useState<Course>();
   const [content, setContent] = useState("");
+  const [sections, setSections] = useState<Section[]>([]);
   const [review, setReview] = useState("");
   const [selectedText, setSelectedText] = useState("");
   const [annotations, setAnnotations] = useState<Annotation[]>([]);
@@ -34,70 +36,89 @@ export default function ReaderPage() {
   const prevChapter = currentIndex > 0 && course ? course.chapters[currentIndex - 1] : null;
   const nextChapter = currentIndex < (course?.chapters.length ?? 0) - 1 && course ? course.chapters[currentIndex + 1] : null;
 
-  useEffect(() => {
-    const stored = getCourse(id);
-    if (!stored) return;
-    setCourse(stored);
-    setAnnotations(getAnnotations(chapterId));
+  const ensureChapterContent = useCallback(async (stored: Course) => {
     const current = stored.chapters.find((item) => item.id === chapterId);
-    const currIdx = stored.chapters.findIndex((item) => item.id === chapterId);
-    if (current?.content) {
-      setContent(current.content);
+    if (!current) {
+      setLoading(false);
+      return;
+    }
+
+    if (current.content || current.sections?.length) {
+      const nextContent = current.content ?? current.sections?.map((section) => section.content).join("\n\n") ?? "";
+      setContent(nextContent);
+      setSections(current.sections ?? []);
       setReview(current.review ?? "已完成结构、术语与公式一致性检查。");
       setLoading(false);
       return;
     }
 
-    if (!current) return;
     current.status = "generating";
     saveCourse(stored);
+    setCourse({ ...stored });
 
-    fetch("/api/chapters", {
+    apiFetch(`/api/chapters/${current.id}/generate`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        topic: stored.topic,
-        title: current.title,
-        description: current.description,
-        purpose: current.purpose,
-        connectionFromPrevious: current.connectionFromPrevious,
-        setupForNext: current.setupForNext,
-        time: current.time,
-        goal: stored.goal,
-        background: stored.background,
-        preference: stored.preference,
-        courseBible: stored.courseBible,
-        chapters: stored.chapters.map((item) => ({
-          id: item.id,
-          title: item.title,
-          description: item.description,
-          purpose: item.purpose,
-          connectionFromPrevious: item.connectionFromPrevious,
-          setupForNext: item.setupForNext,
-          time: item.time,
-          status: item.status,
-        })),
-        chapterIndex: currIdx,
-      }),
+      body: JSON.stringify({ courseId: stored.id, course: stored }),
     })
-      .then((response) => response.json())
-      .then((data) => {
+      .then(async (response) => {
+        const data = (await response.json()) as ChapterGenerateResponse & { error?: string };
+        if (!response.ok) throw new Error(data.error ?? "Chapter generation failed");
+        return data;
+      })
+      .then((data: ChapterGenerateResponse) => {
         if (!data.content) throw new Error("Chapter generation failed");
         setContent(data.content);
+        setSections(data.sections ?? []);
         setReview(data.review);
         current.content = data.content;
+        current.sections = data.sections;
         current.review = data.review;
-        current.status = "ready";
+        current.qualityReport = data.qualityReport;
+        current.generationJobId = data.job?.id;
+        current.status = data.qualityReport?.status === "failed" ? "failed" : "ready";
         saveCourse(stored);
         setCourse({ ...stored });
       })
-      .catch(() => {
+      .catch((error) => {
         current.status = "failed";
         saveCourse(stored);
-        setGenerationError("Gemini 3.1 Pro 暂时无法生成本章，请刷新页面重试。");
+        setGenerationError(publicSafeErrorMessage(error, "Chapter generation failed. Please refresh and try again."));
       })
       .finally(() => setLoading(false));
-  }, [chapterId, id]);
+  }, [chapterId]);
+
+  useEffect(() => {
+    const stored = getCourse(id);
+    if (stored) setCourse(stored);
+    setAnnotations(getAnnotations(chapterId));
+
+    apiFetch(`/api/annotations?chapterId=${chapterId}`)
+      .then((response) => (response.ok ? response.json() : undefined))
+      .then((data) => {
+        if (data?.annotations) {
+          data.annotations.forEach((annotation: Annotation) => saveAnnotation(annotation));
+          setAnnotations(getAnnotations(chapterId));
+        }
+      })
+      .catch(() => undefined);
+
+    apiFetch(`/api/courses/${id}`)
+      .then((response) => (response.ok ? response.json() : undefined))
+      .then((data) => {
+        const courseData = (data?.course as Course | undefined) ?? stored;
+        if (!courseData) {
+          setLoading(false);
+          return;
+        }
+        saveCourse(courseData);
+        setCourse(courseData);
+        void ensureChapterContent(courseData);
+      })
+      .catch(() => {
+        if (stored) void ensureChapterContent(stored);
+        else setLoading(false);
+      });
+  }, [chapterId, ensureChapterContent, id]);
 
   const handleTextSelect = useCallback((text: string) => {
     if (text.length > 2) {
@@ -139,6 +160,7 @@ export default function ReaderPage() {
       active ??
       ({
         id: crypto.randomUUID(),
+        courseId: course.id,
         chapterId,
         selectedText,
         question,
@@ -150,28 +172,38 @@ export default function ReaderPage() {
     setActive({ ...annotation });
 
     let answer: string;
+    let savedAnnotation: Annotation | undefined;
     try {
-      const response = await fetch("/api/annotations", {
+      const response = await apiFetch("/api/annotations", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           topic: course.topic,
           selectedText: annotation.selectedText,
           question,
           history: annotation.messages,
+          sectionId: annotation.sectionId,
+          annotation,
         }),
       });
       const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error ?? "Tutor request failed.");
+      }
       answer = data.answer;
-    } catch {
-      answer = createMockAnswer(annotation.selectedText, question);
+      savedAnnotation = data.annotation;
+    } catch (error) {
+      answer = publicSafeErrorMessage(error, "Tutor request failed.");
     }
 
-    annotation.messages.push({ id: crypto.randomUUID(), role: "assistant", content: answer });
-    saveAnnotation(annotation);
+    if (savedAnnotation) {
+      saveAnnotation(savedAnnotation);
+    } else {
+      annotation.messages.push({ id: crypto.randomUUID(), role: "assistant", content: answer });
+      saveAnnotation(annotation);
+    }
     const next = getAnnotations(chapterId);
     setAnnotations(next);
-    setActive({ ...annotation });
+    setActive({ ...(savedAnnotation ?? annotation) });
     setAnswering(false);
   }
 
@@ -320,7 +352,17 @@ export default function ReaderPage() {
               onMouseUp={captureSelection}
               title="选中文字或双击段落，在右侧展开讨论"
             >
-              <MarkdownContent content={content} />
+              {sections.length > 0 ? (
+                <div className="space-y-8">
+                  {sections.map((section) => (
+                    <section key={section.id} data-section-id={section.id}>
+                      <MarkdownContent content={section.content} />
+                    </section>
+                  ))}
+                </div>
+              ) : (
+                <MarkdownContent content={content} />
+              )}
             </article>
           )}
 

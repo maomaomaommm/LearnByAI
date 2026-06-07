@@ -5,8 +5,10 @@ import { FormEvent, useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { ArrowRight, BookOpen, Target, User, Clock, GraduationCap, Loader2, Route, Zap, FileCheck, ArrowLeft } from "lucide-react";
 import Link from "next/link";
+import { apiFetch } from "@/lib/clientApi";
+import { publicSafeErrorMessage } from "@/lib/publicSafeError";
 import { saveCourse } from "@/lib/storage";
-import { Course } from "@/lib/types";
+import { Course, CourseCreateResponse } from "@/lib/types";
 
 export default function CreateCoursePage() {
   const router = useRouter();
@@ -59,22 +61,25 @@ export default function CreateCoursePage() {
     };
 
     try {
-      const response = await fetch("/api/courses", {
+      const response = await apiFetch("/api/courses", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify(input),
       });
       
-      if (!response.ok) throw new Error(await response.text());
-      const course: Course = await response.json();
+      if (!response.ok) {
+        const data = (await response.json().catch(() => undefined)) as { error?: string } | undefined;
+        throw new Error(data?.error ?? "Course creation failed.");
+      }
+      const data = (await response.json()) as Course | CourseCreateResponse;
+      const course: Course = "course" in data ? data.course : data;
       
       setProgress(100);
       setProgressStage("生成完成，正在打开课程");
       saveCourse(course);
       
       router.push(`/courses/${course.id}`);
-    } catch {
-      setError("Gemini 3.1 Pro 暂时无法生成课程，请稍后重试。");
+    } catch (error) {
+      setError(publicSafeErrorMessage(error, "Course creation failed. Please try again."));
       setLoading(false);
     }
   }

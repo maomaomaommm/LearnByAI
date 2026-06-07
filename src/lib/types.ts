@@ -1,3 +1,11 @@
+export type EntityStatus = "pending" | "queued" | "generating" | "ready" | "failed";
+
+export type JobStatus = "pending" | "queued" | "running" | "retrying" | "succeeded" | "failed";
+
+export type AgentName = "ASSISTANT" | "ARCHITECT" | "AUTHOR" | "POLISHER" | "REVIEWER" | "TUTOR";
+
+export type QualityStatus = "passed" | "warning" | "failed";
+
 export type Chapter = {
   id: string;
   title: string;
@@ -7,9 +15,23 @@ export type Chapter = {
   connectionFromPrevious?: string;
   setupForNext?: string;
   time: StudyTime;
-  status?: "pending" | "generating" | "ready" | "failed";
+  status?: EntityStatus;
   content?: string;
   review?: string;
+  sections?: Section[];
+  qualityReport?: QualityReport;
+  generationJobId?: string;
+};
+
+export type Section = {
+  id: string;
+  chapterId: string;
+  title: string;
+  purpose: string;
+  content: string;
+  status: EntityStatus;
+  order: number;
+  qualityReport?: QualityReport;
 };
 
 export type StudyTime = {
@@ -40,6 +62,7 @@ export type CourseBible = {
 
 export type Course = {
   id: string;
+  userId?: string;
   topic: string;
   goal: string;
   background: string;
@@ -48,6 +71,76 @@ export type Course = {
   profile: string;
   courseBible: CourseBible;
   chapters: Chapter[];
+  createdAt: string;
+  updatedAt?: string;
+  generationJobId?: string;
+};
+
+export type QualityIssue = {
+  check: string;
+  severity: "info" | "warning" | "error";
+  message: string;
+  suggestion?: string;
+  source?: "TQH" | "REVIEWER";
+};
+
+export type QualityReport = {
+  id: string;
+  targetType: "course" | "chapter" | "section" | "answer";
+  targetId: string;
+  score: number;
+  status: QualityStatus;
+  issues: QualityIssue[];
+  createdAt: string;
+};
+
+export type AgentEvent = {
+  id: string;
+  agent: AgentName;
+  status: JobStatus;
+  message: string;
+  createdAt: string;
+};
+
+export type GenerationJob = {
+  id: string;
+  userId?: string;
+  courseId?: string;
+  chapterId?: string;
+  type: "course" | "chapter" | "annotation" | "export";
+  status: JobStatus;
+  activeAgent?: AgentName;
+  events: AgentEvent[];
+  error?: string;
+  resultId?: string;
+  lockedBy?: string;
+  lockedUntil?: string;
+  attempts?: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type ExportJob = {
+  id: string;
+  userId?: string;
+  courseId: string;
+  format: "pdf" | "tex";
+  status: JobStatus;
+  fileName?: string;
+  storagePath?: string;
+  storageProvider?: "local" | "supabase";
+  content?: string;
+  contentType?: string;
+  encoding?: "utf8" | "base64";
+  error?: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type UsageEvent = {
+  id: string;
+  userId?: string;
+  action: "create_course" | "generate_chapter" | "ask_tutor" | "export";
   createdAt: string;
 };
 
@@ -59,9 +152,25 @@ export type Message = {
 
 export type Annotation = {
   id: string;
+  userId?: string;
+  courseId?: string;
   chapterId: string;
+  sectionId?: string;
   selectedText: string;
   question: string;
   messages: Message[];
   createdAt: string;
+};
+
+export type CourseCreateResponse = {
+  course: Course;
+  job?: GenerationJob;
+};
+
+export type ChapterGenerateResponse = {
+  content: string;
+  sections: Section[];
+  review: string;
+  qualityReport: QualityReport;
+  job?: GenerationJob;
 };

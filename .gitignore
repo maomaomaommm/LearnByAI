@@ -1,10 +1,13 @@
 node_modules
 .next
+.env
 .env*.local
 .tools
 npm-debug.log*
 .dev-server*.log
 .tunnel*.log
+playwright-report/
+test-results/
 
 Kimi_Agent_LearnByAI/
 Kimi_Agent_LearnByAI.zip
