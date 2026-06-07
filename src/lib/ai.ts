@@ -1,55 +1,56 @@
 import "server-only";
 
-const API_KEY = process.env.AI_API_KEY;
-const API_BASE_URL = (process.env.AI_API_BASE_URL ?? "https://api.yzccc.cloud/v1").replace(
-  /\/$/,
-  "",
-);
+import { getAgentConfig, getBaseAIConfig } from "./config";
+import { safeErrorMessage } from "./safeError";
+import { AgentName } from "./types";
 
-export const MODEL = "gemini-3.1-pro-preview";
+export const MODEL = getBaseAIConfig().model;
 
 export function hasAI() {
-  return Boolean(API_KEY);
+  return Boolean(getBaseAIConfig().apiKey);
 }
 
 export async function generateText(
   prompt: string,
   options?: {
+    agent?: AgentName;
     maxTokens?: number;
     temperature?: number;
   },
 ) {
-  if (!API_KEY) throw new Error("AI_API_KEY is not configured");
+  const config = options?.agent ? getAgentConfig(options.agent) : getBaseAIConfig();
+  if (!config.apiKey) throw new Error("AI_API_KEY is not configured");
 
   let lastError = "";
   for (let attempt = 0; attempt < 3; attempt += 1) {
-    const response = await fetch(`${API_BASE_URL}/chat/completions`, {
+    const response = await fetch(`${config.baseUrl}/chat/completions`, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${API_KEY}`,
+        Authorization: `Bearer ${config.apiKey}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: MODEL,
+        model: config.model,
         messages: [{ role: "user", content: prompt }],
-        temperature: options?.temperature ?? 0.45,
-        max_tokens: options?.maxTokens ?? 32768,
+        temperature: options?.temperature ?? config.temperature,
+        max_tokens: options?.maxTokens ?? config.maxTokens,
       }),
     });
 
     if (response.ok) {
       const data = await response.json();
       const text = data.choices?.[0]?.message?.content;
-      if (!text) throw new Error(`${MODEL} returned an empty response`);
+      if (!text) throw new Error(`${config.model} returned an empty response`);
       return text as string;
     }
 
-    lastError = `${response.status} ${await response.text()}`;
+    const body = await response.text();
+    lastError = `${response.status} ${safeErrorMessage(body, response.statusText || "provider error")}`;
     if (![429, 500, 502, 503, 504].includes(response.status)) break;
     await new Promise((resolve) => setTimeout(resolve, 1200 * (attempt + 1)));
   }
 
-  throw new Error(`${MODEL} request failed: ${lastError}`);
+  throw new Error(`${config.model} request failed: ${lastError}`);
 }
 
 export function parseJson<T>(text: string): T {

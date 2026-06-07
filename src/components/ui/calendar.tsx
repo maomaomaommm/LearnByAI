@@ -130,7 +130,7 @@ function Calendar({
         ),
         hidden: cn("invisible", defaultClassNames.hidden),
         ...classNames,
-      }}
+      } as React.ComponentProps<typeof DayPicker>["classNames"] & Record<string, string>}
       components={{
         Root: ({ className, rootRef, ...props }) => {
           return (

@@ -3,18 +3,157 @@
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
-import { getCourse } from "@/lib/storage";
+import { getCourse, saveCourse } from "@/lib/storage";
 import { formatMinutes, totalMinutes } from "@/lib/time";
-import { Course } from "@/lib/types";
+import { Course, ExportJob, GenerationJob, JobStatus } from "@/lib/types";
 import { MarkdownContent } from "@/components/MarkdownContent";
 import { ThemeToggle } from "@/components/ThemeToggle";
-import { Target, Lightbulb, GraduationCap, ArrowLeft, FileText, ChevronRight, Clock } from "lucide-react";
+import { Target, Lightbulb, GraduationCap, ArrowLeft, FileText, ChevronRight, Clock, Download } from "lucide-react";
+import { apiFetch } from "@/lib/clientApi";
+import { publicSafeErrorMessage } from "@/lib/publicSafeError";
 
 export default function CourseOverviewPage() {
   const { id } = useParams<{ id: string }>();
   const [course, setCourse] = useState<Course>();
+  const [exporting, setExporting] = useState<ExportJob["format"] | "">("");
+  const [exportError, setExportError] = useState("");
+  const [backgroundJob, setBackgroundJob] = useState("");
+  const [jobStatus, setJobStatus] = useState<Record<string, JobStatus>>({});
 
-  useEffect(() => setCourse(getCourse(id)), [id]);
+  useEffect(() => {
+    const stored = getCourse(id);
+    if (stored) setCourse(stored);
+
+    apiFetch(`/api/courses/${id}`)
+      .then((response) => (response.ok ? response.json() : undefined))
+      .then((data) => {
+        if (data?.course) {
+          setCourse(data.course);
+          saveCourse(data.course);
+        }
+      })
+      .catch(() => {
+        if (!stored) setCourse(undefined);
+      });
+  }, [id]);
+
+  useEffect(() => {
+    if (!course || backgroundJob) return;
+    const queued = course.chapters.find((chapter) => chapter.status === "queued" && chapter.generationJobId);
+    if (!queued?.generationJobId) return;
+
+    setBackgroundJob(queued.generationJobId);
+    apiFetch(`/api/generation-jobs/${queued.generationJobId}`, {
+      method: "POST",
+      body: JSON.stringify({ courseId: course.id, course }),
+    })
+      .then((response) => (response.ok ? response.json() : undefined))
+      .then((data) => {
+        if (data?.course) {
+          setCourse(data.course);
+          saveCourse(data.course);
+        }
+      })
+      .finally(() => setBackgroundJob(""));
+  }, [backgroundJob, course]);
+
+  useEffect(() => {
+    if (!course) return;
+    const jobIds = [
+      course.generationJobId,
+      ...course.chapters.map((chapter) => chapter.generationJobId),
+    ].filter(Boolean) as string[];
+    if (jobIds.length === 0) return;
+
+    let cancelled = false;
+    const poll = async () => {
+      const entries = await Promise.all(
+        jobIds.map(async (jobId) => {
+          const response = await apiFetch(`/api/generation-jobs/${jobId}`);
+          if (!response.ok) return undefined;
+          const data = (await response.json()) as { job?: GenerationJob };
+          return data.job ? ([jobId, data.job.status] as const) : undefined;
+        }),
+      );
+      if (!cancelled) {
+        setJobStatus((current) => ({
+          ...current,
+          ...Object.fromEntries(entries.filter(Boolean) as [string, JobStatus][]),
+        }));
+        if (entries.some((entry) => entry?.[1] === "succeeded")) {
+          const response = await apiFetch(`/api/courses/${id}`);
+          if (response.ok) {
+            const data = (await response.json()) as { course?: Course };
+            if (data.course && !cancelled) {
+              setCourse(data.course);
+              saveCourse(data.course);
+            }
+          }
+        }
+      }
+    };
+
+    void poll();
+    const timer = window.setInterval(() => void poll(), 2500);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [course, id]);
+
+  async function retryChapter(chapterId: string, generationJobId?: string) {
+    if (!course || !generationJobId) return;
+    setBackgroundJob(generationJobId);
+    const response = await apiFetch(`/api/generation-jobs/${generationJobId}`, {
+      method: "POST",
+      body: JSON.stringify({ courseId: course.id, course, retry: true }),
+    });
+    const data = response.ok ? await response.json() : undefined;
+    if (data?.course) {
+      setCourse(data.course);
+      saveCourse(data.course);
+    } else {
+      const nextCourse = {
+        ...course,
+        chapters: course.chapters.map((chapter) =>
+          chapter.id === chapterId ? { ...chapter, status: "failed" as const } : chapter,
+        ),
+      };
+      setCourse(nextCourse);
+      saveCourse(nextCourse);
+    }
+    setBackgroundJob("");
+  }
+
+  async function exportCourse(format: ExportJob["format"]) {
+    if (!course) return;
+    setExporting(format);
+    setExportError("");
+
+    try {
+      const response = await apiFetch("/api/exports", {
+        method: "POST",
+        body: JSON.stringify({ courseId: course.id, course, format }),
+      });
+      const data = await response.json();
+      if (!response.ok || !data.export) throw new Error(data.error ?? "Export failed");
+      const downloadResponse = await apiFetch(`/api/exports/${data.export.id}`);
+      if (!downloadResponse.ok) throw new Error("Export download failed");
+      const blob = await downloadResponse.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = data.export.fileName ?? `${course.topic}.${format}`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      setExportError(publicSafeErrorMessage(error, "Export failed. Please try again."));
+    } finally {
+      setExporting("");
+    }
+  }
 
   if (!course) {
     return (
@@ -23,6 +162,12 @@ export default function CourseOverviewPage() {
       </div>
     );
   }
+
+  const coursePlanningStatus = course.generationJobId ? jobStatus[course.generationJobId] : undefined;
+  const isCoursePlanning =
+    course.chapters.length === 0 ||
+    coursePlanningStatus === "pending" ||
+    coursePlanningStatus === "running";
 
   return (
     <div className="min-h-screen bg-background">
@@ -39,7 +184,7 @@ export default function CourseOverviewPage() {
           <div className="mb-4 flex items-center justify-between">
             <h1 className="font-mono text-2xl font-bold text-foreground md:text-3xl">{course.topic}</h1>
             <span className="rounded-full bg-primary/10 px-3 py-1 text-xs font-medium text-primary">
-              课程就绪
+              {backgroundJob ? "后台生成中" : course.generationJobId ? "MAOL 已规划" : "课程就绪"}
             </span>
           </div>
           <p className="mb-6 max-w-2xl text-sm leading-relaxed text-muted-foreground">
@@ -52,9 +197,35 @@ export default function CourseOverviewPage() {
             <span className="flex items-center gap-1 rounded-md bg-background px-2.5 py-1.5 border border-border">
               <GraduationCap size={14} className="text-foreground" /> {course.profile.slice(0, 30)}...
             </span>
+            <button
+              onClick={() => exportCourse("pdf")}
+              disabled={Boolean(exporting)}
+              className="inline-flex items-center gap-1 rounded-md border border-border bg-background px-2.5 py-1.5 text-xs text-muted-foreground hover:text-foreground disabled:opacity-50"
+            >
+              <Download size={14} /> {exporting === "pdf" ? "导出中" : "导出 PDF"}
+            </button>
+            <button
+              onClick={() => exportCourse("tex")}
+              disabled={Boolean(exporting)}
+              className="inline-flex items-center gap-1 rounded-md border border-border bg-background px-2.5 py-1.5 text-xs text-muted-foreground hover:text-foreground disabled:opacity-50"
+            >
+              <Download size={14} /> {exporting === "tex" ? "导出中" : "导出 TeX"}
+            </button>
           </div>
+          {exportError && <p className="mt-4 text-sm text-destructive">{exportError}</p>}
         </div>
 
+        {isCoursePlanning ? (
+          <div className="rounded-lg border border-border bg-card p-8">
+            <div className="mb-3 font-mono text-xs uppercase tracking-widest text-muted-foreground">
+              JOB: {(coursePlanningStatus ?? "pending").toUpperCase()}
+            </div>
+            <h2 className="font-mono text-lg font-semibold text-foreground">ARCHITECT is planning this course</h2>
+            <p className="mt-3 max-w-2xl text-sm leading-relaxed text-muted-foreground">
+              Course Bible and chapter outline are being generated in the background. This page will refresh when planning finishes.
+            </p>
+          </div>
+        ) : (
         <div className="grid gap-8 lg:grid-cols-[1fr_1fr]">
           {/* Left: Course Bible */}
           <div className="space-y-6">
@@ -108,13 +279,31 @@ export default function CourseOverviewPage() {
                       <span className="mr-2 text-muted-foreground">{String(index + 1).padStart(2, '0')}.</span>
                       {chapter.title}
                     </h3>
+                    {chapter.generationJobId && jobStatus[chapter.generationJobId] && (
+                      <span className="shrink-0 rounded-full bg-primary/10 px-2.5 py-1 text-[10px] font-medium text-primary">
+                        JOB: {jobStatus[chapter.generationJobId].toUpperCase()}
+                      </span>
+                    )}
                     <span className="shrink-0 rounded-full bg-background px-2.5 py-1 text-[10px] font-medium text-muted-foreground border border-border">
-                      {chapter.status === "ready" ? "可阅读" : "待生成"}
+                      {chapter.status === "ready"
+                        ? "可阅读"
+                        : chapter.status === "failed"
+                          ? "需重试"
+                          : chapter.status === "generating"
+                            ? "生成中"
+                          : chapter.status === "queued"
+                            ? "队列中"
+                            : "待生成"}
                     </span>
                   </div>
                   <p className="mb-4 line-clamp-2 text-sm text-muted-foreground">
                     {chapter.description}
                   </p>
+                  {chapter.qualityReport && (
+                    <div className="mb-3 rounded-md border border-border bg-background px-3 py-2 text-xs text-muted-foreground">
+                      TQH：{chapter.qualityReport.score} / 100 · {chapter.qualityReport.status}
+                    </div>
+                  )}
                   <div className="flex items-center justify-between text-xs text-muted-foreground">
                     <div className="flex items-center gap-4">
                       <span className="flex items-center gap-1">
@@ -126,11 +315,26 @@ export default function CourseOverviewPage() {
                       开始阅读 <ChevronRight size={14} />
                     </span>
                   </div>
+                  {(chapter.status === "failed" || (chapter.generationJobId && jobStatus[chapter.generationJobId] === "failed")) && (
+                    <button
+                      type="button"
+                      onClick={(event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        void retryChapter(chapter.id, chapter.generationJobId);
+                      }}
+                      disabled={backgroundJob === chapter.generationJobId}
+                      className="mt-4 rounded-md border border-border bg-background px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground disabled:opacity-50"
+                    >
+                      {backgroundJob === chapter.generationJobId ? "RETRYING" : "RETRY GENERATION"}
+                    </button>
+                  )}
                 </Link>
               ))}
             </div>
           </div>
         </div>
+        )}
       </div>
     </div>
   );

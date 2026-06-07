@@ -1,22 +1,109 @@
 import { NextResponse } from "next/server";
-import { generateText, hasAI } from "@/lib/ai";
-import { createMockAnswer } from "@/lib/mock";
-import { buildAnnotationTutorPrompt } from "@/lib/prompts/annotationTutor";
+import { requireApiUser } from "@/lib/apiAuth";
+import { askTutor } from "@/lib/maol/client";
+import { withQuotaConsumption } from "@/lib/quota";
+import { safeErrorMessage } from "@/lib/safeError";
+import { getServerCourse, listServerAnnotations, saveServerAnnotation, saveServerGenerationJob } from "@/lib/serverStore";
+import { Annotation, Course } from "@/lib/types";
+
+export async function GET(request: Request) {
+  const auth = await requireApiUser(request);
+  if ("response" in auth) return auth.response;
+
+  const { searchParams } = new URL(request.url);
+  const chapterId = searchParams.get("chapterId");
+  if (!chapterId) {
+    return NextResponse.json({ error: "chapterId is required" }, { status: 400 });
+  }
+
+  return NextResponse.json({ annotations: await listServerAnnotations(chapterId, request) });
+}
 
 export async function POST(request: Request) {
   const input = await request.json();
-  if (!hasAI()) {
-    return NextResponse.json({ answer: createMockAnswer(input.selectedText, input.question) });
-  }
+  const auth = await requireApiUser(request);
+  if ("response" in auth) return auth.response;
 
-  return NextResponse.json({
-    answer: await generateText(
-      buildAnnotationTutorPrompt({
+  const annotationValidation = await validateAnnotationAnchor(input.annotation, request);
+  if ("response" in annotationValidation) return annotationValidation.response;
+
+  const userId = auth.userId;
+  try {
+    const result = await withQuotaConsumption(userId, "ask_tutor", async () => {
+      const response = await askTutor({
         topic: input.topic,
         selectedText: input.selectedText,
         question: input.question,
         history: input.history ?? [],
-      }),
-    ),
-  });
+        onJobUpdate: async (updatedJob) => {
+          await saveServerGenerationJob(updatedJob, request);
+        },
+      });
+      if (response.job) {
+        await saveServerGenerationJob(response.job, request);
+      }
+
+      let annotation: Annotation | undefined;
+      if (annotationValidation.annotation) {
+        const now = new Date().toISOString();
+        annotation = annotationValidation.annotation;
+        annotation.messages = [
+          ...annotation.messages,
+          {
+            id: crypto.randomUUID(),
+            role: "assistant",
+            content: response.answer,
+          },
+        ];
+        annotation.createdAt = annotation.createdAt ?? now;
+        annotation = await saveServerAnnotation(annotation, request);
+      }
+
+      return { ...response, annotation };
+    });
+    if (!result.ok) {
+      return NextResponse.json({ error: result.quota.message }, { status: 429 });
+    }
+
+    return NextResponse.json(result.value);
+  } catch (error) {
+    return NextResponse.json(
+      { error: safeErrorMessage(error, "Tutor answer failed.") },
+      { status: 500 },
+    );
+  }
+}
+
+async function validateAnnotationAnchor(annotationInput: unknown, request: Request) {
+  if (!annotationInput) return {};
+
+  const annotation = annotationInput as Annotation;
+  if (!annotation.courseId) {
+    return { response: NextResponse.json({ error: "Annotation courseId is required" }, { status: 400 }) };
+  }
+
+  const course = await getServerCourse(annotation.courseId, request);
+  if (!course) {
+    return { response: NextResponse.json({ error: "Course not found" }, { status: 404 }) };
+  }
+
+  if (!courseHasChapter(course, annotation.chapterId)) {
+    return { response: NextResponse.json({ error: "Chapter not found" }, { status: 404 }) };
+  }
+
+  if (annotation.sectionId && !courseHasSection(course, annotation.chapterId, annotation.sectionId)) {
+    return { response: NextResponse.json({ error: "Section not found" }, { status: 404 }) };
+  }
+
+  return { annotation };
+}
+
+function courseHasChapter(course: Course, chapterId: string) {
+  return course.chapters.some((chapter) => chapter.id === chapterId);
+}
+
+function courseHasSection(course: Course, chapterId: string, sectionId: string) {
+  return course.chapters
+    .find((chapter) => chapter.id === chapterId)
+    ?.sections?.some((section) => section.id === sectionId) ?? false;
 }

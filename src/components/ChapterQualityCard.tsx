@@ -1,11 +1,11 @@
-import { CheckCircle, AlertTriangle, XCircle, Loader2 } from "lucide-react";
-import type { ChapterStatus } from "@/lib/maol/types";
+import { CheckCircle, XCircle, Loader2 } from "lucide-react";
+import type { EntityStatus } from "@/lib/types";
 
 interface ChapterQualityCardProps {
   title: string;
   description: string;
   estimatedMinutes: number;
-  status: ChapterStatus;
+  status: EntityStatus;
   overallScore?: number | null;
   structureScore?: number | null;
   formatScore?: number | null;
@@ -16,20 +16,13 @@ interface ChapterQualityCardProps {
 }
 
 const statusConfig: Record<
-  ChapterStatus,
+  EntityStatus,
   { label: string; color: string; icon: typeof CheckCircle }
 > = {
   pending: { label: "待生成", color: "text-gray-400", icon: Loader2 },
-  gathering: { label: "收集中", color: "text-amber-400", icon: Loader2 },
-  writing: { label: "写作中", color: "text-blue-400", icon: Loader2 },
-  polishing: { label: "润色中", color: "text-cyan-400", icon: Loader2 },
-  reviewing: { label: "审核中", color: "text-purple-400", icon: Loader2 },
+  queued: { label: "队列中", color: "text-amber-400", icon: Loader2 },
+  generating: { label: "生成中", color: "text-blue-400", icon: Loader2 },
   ready: { label: "已完成", color: "text-green-400", icon: CheckCircle },
-  "needs-review": {
-    label: "需复核",
-    color: "text-orange-400",
-    icon: AlertTriangle,
-  },
   failed: { label: "失败", color: "text-red-400", icon: XCircle },
 };
 
@@ -63,7 +56,7 @@ export function ChapterQualityCard({
         <div className="ml-3 flex items-center gap-1.5">
           <StatusIcon
             size={14}
-            className={`${config.color} ${status === "writing" || status === "gathering" ? "animate-spin" : ""}`}
+            className={`${config.color} ${status === "generating" || status === "queued" ? "animate-spin" : ""}`}
           />
           <span className={`text-xs font-medium ${config.color}`}>
             {config.label}
@@ -145,14 +138,6 @@ export function ChapterQualityCard({
           className="w-full rounded-md bg-primary py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90"
         >
           生成章节
-        </button>
-      )}
-      {status === "needs-review" && (
-        <button
-          onClick={onGenerate}
-          className="w-full rounded-md border border-orange-400/50 bg-orange-400/10 py-1.5 text-xs font-medium text-orange-400 hover:bg-orange-400/20"
-        >
-          重新生成
         </button>
       )}
     </div>
