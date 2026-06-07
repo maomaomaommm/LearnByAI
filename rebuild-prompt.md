@@ -347,7 +347,7 @@ type AgentConfig = {
 # --- GATHERER 搜集者 ---
 GATHERER_API_BASE_URL=https://api.yzccc.cloud/v1
 GATHERER_API_KEY=your_gatherer_key
-GATHERER_MODEL=gemini-3.1-pro-preview
+GATHERER_MODEL=kimi-k2.6-full
 GATHERER_TEMPERATURE=0.3
 GATHERER_MAX_TOKENS=8192
 

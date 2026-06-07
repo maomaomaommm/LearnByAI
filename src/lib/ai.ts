@@ -38,6 +38,7 @@ export async function generateText(
           messages: [{ role: "user", content: prompt }],
           temperature: options?.temperature ?? config.temperature,
           max_tokens: options?.maxTokens ?? config.maxTokens,
+          ...thinkingPayload(config.thinking),
         }),
         signal: controller.signal,
       });
@@ -66,6 +67,11 @@ export async function generateText(
   }
 
   throw new Error(`${config.model} request failed: ${lastError}`);
+}
+
+function thinkingPayload(thinking: "disabled" | "enabled" | "auto") {
+  if (thinking === "auto") return {};
+  return { thinking: { type: thinking } };
 }
 
 export function parseJson<T>(text: string): T {

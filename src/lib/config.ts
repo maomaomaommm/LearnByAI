@@ -15,6 +15,7 @@ export function getBaseAIConfig() {
     temperature: readNumber(process.env.AI_TEMPERATURE, 0.45),
     maxTokens: readNumber(process.env.AI_MAX_TOKENS, 32768),
     timeoutMs: readNumber(process.env.AI_TIMEOUT_MS, 120_000),
+    thinking: readThinking(process.env.AI_THINKING, "disabled"),
   };
 }
 
@@ -30,6 +31,7 @@ export function getAgentConfig(agent: AgentName) {
     temperature: readNumber(process.env[`${prefix}_TEMPERATURE`], base.temperature),
     maxTokens: readNumber(process.env[`${prefix}_MAX_TOKENS`], base.maxTokens),
     timeoutMs: readNumber(process.env[`${prefix}_TIMEOUT_MS`], base.timeoutMs),
+    thinking: readThinking(process.env[`${prefix}_THINKING`], base.thinking),
   };
 }
 
@@ -80,6 +82,11 @@ function readNumber(value: string | undefined, fallback: number) {
   if (!value) return fallback;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function readThinking(value: string | undefined, fallback: "disabled" | "enabled" | "auto") {
+  if (value === "disabled" || value === "enabled" || value === "auto") return value;
+  return fallback;
 }
 
 function trimSlash(value: string) {

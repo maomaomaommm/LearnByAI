@@ -294,6 +294,7 @@ function runReadiness(env) {
     TEMP: process.env.TEMP,
     TMP: process.env.TMP,
     NODE_OPTIONS: process.env.NODE_OPTIONS,
+    LEARNBYAI_SKIP_ENV_FILES: "true",
     ...env,
   };
 

@@ -3,7 +3,9 @@ import { join } from "node:path";
 
 const originalEnvKeys = new Set(Object.keys(process.env));
 
-loadEnvFiles();
+if (process.env.LEARNBYAI_SKIP_ENV_FILES !== "true") {
+  loadEnvFiles();
+}
 
 export function loadEnvFiles(root = process.cwd()) {
   for (const fileName of [".env", ".env.local"]) {
