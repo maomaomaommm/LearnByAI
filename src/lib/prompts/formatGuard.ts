@@ -2,6 +2,9 @@ import { normalizeMath } from "@/lib/markdownMath";
 
 export function preRepairMarkdown(content: string) {
   return normalizeMath(content)
+    .replace(/(^|\n)\$\s*\n([\s\S]*?)\n\$\s*(?=\n|$)/gu, (_match, prefix = "", body = "") => {
+      return `${prefix}$$\n${body.trim()}\n$$`;
+    })
     .replace(/```(\w+)?\s*\n([\s\S]*?)$/u, (_match, language = "", body = "") => {
       return `\`\`\`${language}\n${body}\n\`\`\``;
     })

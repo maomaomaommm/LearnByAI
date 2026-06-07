@@ -42,7 +42,22 @@ function normalizeCourse(course: Course): Course {
         chapter.minutes && (!chapter.time || totalMinutes(chapter.time) !== chapter.minutes)
           ? splitLegacyMinutes(chapter.minutes)
           : chapter.time ?? splitLegacyMinutes(180),
-      status: chapter.status ?? (chapter.content ? "ready" : "pending"),
+      status: chapter.status ?? (chapter.sections?.length || chapter.content ? "ready" : "pending"),
+      sections:
+        chapter.sections ??
+        (chapter.content
+          ? [
+              {
+                id: `${chapter.id}:legacy-section`,
+                chapterId: chapter.id,
+                title: chapter.title,
+                purpose: chapter.purpose ?? chapter.description,
+                content: chapter.content,
+                status: "ready",
+                order: 0,
+              },
+            ]
+          : undefined),
     })),
   };
 }
