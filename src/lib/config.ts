@@ -14,7 +14,7 @@ export function getBaseAIConfig() {
     model: process.env.AI_MODEL ?? DEFAULT_AI_MODEL,
     temperature: readNumber(process.env.AI_TEMPERATURE, 0.45),
     maxTokens: readNumber(process.env.AI_MAX_TOKENS, 32768),
-    timeoutMs: readNumber(process.env.AI_TIMEOUT_MS, 120_000),
+    timeoutMs: readNumber(process.env.AI_TIMEOUT_MS, 900_000),
     thinking: readThinking(process.env.AI_THINKING, "disabled"),
   };
 }

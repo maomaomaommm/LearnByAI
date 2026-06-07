@@ -14,9 +14,6 @@ export async function createCourseExport(course: Course, format: ExportJob["form
   const now = new Date().toISOString();
   const exportId = crypto.randomUUID();
   const exportText = toPdfText(course);
-  if (format === "pdf" && hasNonAscii(exportText)) {
-    throw new Error("PDF export currently supports ASCII text only. Please export TeX for Chinese content.");
-  }
   const content = format === "tex" ? toTex(course) : createPdfBytes(exportText);
   const job: ExportJob = {
     id: exportId,
@@ -142,22 +139,24 @@ function createPdfBytes(text: string) {
   const lines = text
     .replace(/\r/g, "")
     .split("\n")
-    .flatMap((line) => wrapLine(line, 82))
+    .flatMap((line) => wrapLine(line, 42))
     .slice(0, 120);
   const stream = [
     "BT",
     "/F1 10 Tf",
     "50 790 Td",
     "14 TL",
-    ...lines.map((line, index) => `${index === 0 ? "" : "T* "}${pdfString(line)} Tj`),
+    ...lines.map((line, index) => `${index === 0 ? "" : "T* "}${pdfHexString(line)} Tj`),
     "ET",
   ].join("\n");
 
   const objects = [
     "<< /Type /Catalog /Pages 2 0 R >>",
     "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>",
-    "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R >> >> /Contents 7 0 R >>",
+    "<< /Type /Font /Subtype /Type0 /BaseFont /STSong-Light /Encoding /UniGB-UCS2-H /DescendantFonts [5 0 R] >>",
+    "<< /Type /Font /Subtype /CIDFontType0 /BaseFont /STSong-Light /CIDSystemInfo << /Registry (Adobe) /Ordering (GB1) /Supplement 2 >> /FontDescriptor 6 0 R >>",
+    "<< /Type /FontDescriptor /FontName /STSong-Light /Flags 6 /FontBBox [0 -200 1000 900] /ItalicAngle 0 /Ascent 880 /Descent -120 /CapHeight 880 /StemV 80 >>",
     `<< /Length ${Buffer.byteLength(stream, "utf8")} >>\nstream\n${stream}\nendstream`,
   ];
 
@@ -186,13 +185,14 @@ function wrapLine(line: string, width: number) {
   return chunks;
 }
 
-function pdfString(value: string) {
-  const ascii = value.replace(/[^\x20-\x7E]/g, "?");
-  return `(${ascii.replace(/[()\\]/g, "\\$&")})`;
-}
-
-function hasNonAscii(value: string) {
-  return /[^\x00-\x7F]/.test(value);
+function pdfHexString(value: string) {
+  const utf16Le = Buffer.from(value, "utf16le");
+  const utf16Be = Buffer.alloc(utf16Le.length);
+  for (let index = 0; index < utf16Le.length; index += 2) {
+    utf16Be[index] = utf16Le[index + 1];
+    utf16Be[index + 1] = utf16Le[index];
+  }
+  return `<${utf16Be.toString("hex").toUpperCase()}>`;
 }
 
 function sanitize(value: string) {
