@@ -38,6 +38,7 @@ export async function generateText(
           messages: [{ role: "user", content: prompt }],
           temperature: options?.temperature ?? config.temperature,
           max_tokens: options?.maxTokens ?? config.maxTokens,
+          stream: true,
           ...thinkingPayload(config.thinking),
         }),
         signal: controller.signal,
@@ -54,6 +55,36 @@ export async function generateText(
     }
 
     if (response.ok) {
+      if (response.headers.get("content-type")?.includes("text/event-stream")) {
+        let fullText = "";
+        const reader = response.body?.getReader();
+        const decoder = new TextDecoder("utf-8");
+        let buffer = "";
+        if (reader) {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split("\n");
+            buffer = lines.pop() ?? "";
+            for (const line of lines) {
+              const trimmed = line.trim();
+              if (trimmed.startsWith("data: ") && trimmed !== "data: [DONE]") {
+                try {
+                  const parsed = JSON.parse(trimmed.slice(6));
+                  const content = parsed.choices?.[0]?.delta?.content;
+                  if (content) fullText += content;
+                } catch {
+                  // ignore
+                }
+              }
+            }
+          }
+        }
+        if (!fullText) throw new Error(`${config.model} returned an empty stream response`);
+        return fullText;
+      }
+
       const data = await response.json();
       const text = data.choices?.[0]?.message?.content;
       if (!text) throw new Error(`${config.model} returned an empty response`);
