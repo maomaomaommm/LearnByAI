@@ -1,5 +1,6 @@
 import { parseJson } from "../ai";
 import { appendJobEvent, createGenerationJob, completeGenerationJob, failGenerationJob, getGenerationJob, patchGenerationJob } from "../jobs";
+import { ModelOverrides } from "../modelOverrides";
 import { createMockAnswer, createMockChapter, createMockCourse } from "../mock";
 import { buildAnnotationTutorPrompt } from "../prompts/annotationTutor";
 import { buildChapterReviewPrompt } from "../prompts/chapterReviewer";
@@ -27,7 +28,7 @@ export type CourseGeneration = {
   chapters: Omit<Chapter, "id" | "content" | "review" | "status">[];
 };
 
-export async function generateCourse(input: CourseInput): Promise<CourseCreateResponse> {
+export async function generateCourse(input: CourseInput, options: { overrides?: ModelOverrides } = {}): Promise<CourseCreateResponse> {
   const job = createGenerationJob({
     type: "course",
     activeAgent: "ARCHITECT",
@@ -36,7 +37,7 @@ export async function generateCourse(input: CourseInput): Promise<CourseCreateRe
   });
 
   try {
-    const generated = await planCourseOutline(input, job.id);
+    const generated = await planCourseOutline(input, job.id, { overrides: options.overrides });
     const firstChapterJob = createGenerationJob({
       type: "chapter",
       activeAgent: "AUTHOR",
@@ -74,7 +75,7 @@ export async function generateCourse(input: CourseInput): Promise<CourseCreateRe
     return { course, job: getGenerationJob(job.id) };
   } catch (error) {
     failGenerationJob(job.id, safeErrorMessage(error, "Course generation failed."));
-    assertMockFallbackAllowed(error);
+    assertMockFallbackAllowed(error, options.overrides, "ARCHITECT");
     const course = createMockCourse(input);
     course.generationJobId = job.id;
     return { course, job: getGenerationJob(job.id) };
@@ -84,7 +85,7 @@ export async function generateCourse(input: CourseInput): Promise<CourseCreateRe
 export async function generateChapter(
   course: Course,
   chapter: Chapter,
-  options: { jobId?: string; onJobUpdate?: (job: GenerationJob) => Promise<void> | void } = {},
+  options: { jobId?: string; overrides?: ModelOverrides; onJobUpdate?: (job: GenerationJob) => Promise<void> | void } = {},
 ): Promise<ChapterGenerateResponse> {
   const existingJob = options.jobId ? getGenerationJob(options.jobId) : undefined;
   const job = existingJob
@@ -122,6 +123,7 @@ export async function generateChapter(
         }),
         temperature: 0.45,
         maxTokens: 24576,
+        overrides: options.overrides,
         mock: () => createMockChapter(course.topic, chapter.title, course.goal),
         onJobUpdate: options.onJobUpdate,
       }),
@@ -138,17 +140,18 @@ export async function generateChapter(
           prompt: buildFormatGuardPrompt(draft),
           temperature: 0.1,
           maxTokens: 24576,
+          overrides: options.overrides,
           mock: () => draft,
           onJobUpdate: options.onJobUpdate,
         }),
       );
       review = "已通过 Format Guard 完成 Markdown、公式、代码块与标题格式修复。";
     } catch (error) {
-      assertMockFallbackAllowed(error);
+      assertMockFallbackAllowed(error, options.overrides, "POLISHER");
       formatted = draft;
     }
 
-    const quality = await reviewChapter(course, chapter, formatted, job.id, options.onJobUpdate);
+    const quality = await reviewChapter(course, chapter, formatted, job.id, options.onJobUpdate, options.overrides);
     formatted = quality.content;
     const qualityReport = quality.report;
     const sections = markdownToSections(chapter, formatted);
@@ -163,9 +166,9 @@ export async function generateChapter(
     };
   } catch (error) {
     failGenerationJob(job.id, safeErrorMessage(error, "Chapter generation failed."));
-    assertMockFallbackAllowed(error);
+    assertMockFallbackAllowed(error, options.overrides, "AUTHOR");
     const fallback = createMockChapter(course.topic, chapter.title, course.goal);
-    const quality = await reviewChapter(course, chapter, fallback, job.id, options.onJobUpdate);
+    const quality = await reviewChapter(course, chapter, fallback, job.id, options.onJobUpdate, options.overrides);
     const repairedFallback = quality.content;
     const qualityReport = quality.report;
     const sections: Section[] = markdownToSections(chapter, repairedFallback);
@@ -196,6 +199,7 @@ async function reviewChapter(
   content: string,
   jobId: string,
   onJobUpdate?: (job: GenerationJob) => Promise<void> | void,
+  overrides?: ModelOverrides,
 ) {
   const quality = runChapterQualityPipelineWithRepair(chapter, content, postRepairMarkdown);
   const report = quality.report;
@@ -207,6 +211,7 @@ async function reviewChapter(
       prompt: buildChapterReviewPrompt(course, chapter, quality.content),
       temperature: 0.2,
       maxTokens: 4096,
+      overrides,
       onJobUpdate,
       mock: () =>
         JSON.stringify({
@@ -254,7 +259,7 @@ async function reviewChapter(
       },
     };
   } catch (error) {
-    assertMockFallbackAllowed(error);
+    assertMockFallbackAllowed(error, overrides, "REVIEWER");
     return {
       content: quality.content,
       attempts: quality.attempts,
@@ -281,6 +286,7 @@ export async function askTutor(input: {
   selectedText: string;
   question: string;
   history?: { role: "user" | "assistant"; content: string }[];
+  overrides?: ModelOverrides;
   onJobUpdate?: (job: GenerationJob) => Promise<void> | void;
 }) {
   const job = createGenerationJob({
@@ -295,13 +301,14 @@ export async function askTutor(input: {
       agent: "TUTOR",
       jobId: job.id,
       prompt: buildAnnotationTutorPrompt({ ...input, history: input.history ?? [] }),
+      overrides: input.overrides,
       mock: () => createMockAnswer(input.selectedText, input.question),
       onJobUpdate: input.onJobUpdate,
     });
     completeGenerationJob(job.id);
     return { answer, job: getGenerationJob(job.id) };
   } catch (error) {
-    assertMockFallbackAllowed(error);
+    assertMockFallbackAllowed(error, input.overrides, "TUTOR");
     const answer = createMockAnswer(input.selectedText, input.question);
     failGenerationJob(job.id, "Tutor answer failed; returned mock fallback.");
     return { answer, job: getGenerationJob(job.id) };
@@ -311,7 +318,7 @@ export async function askTutor(input: {
 export async function planCourseOutline(
   input: CourseInput,
   jobId: string,
-  options: { onJobUpdate?: (job: GenerationJob) => Promise<void> | void } = {},
+  options: { overrides?: ModelOverrides; onJobUpdate?: (job: GenerationJob) => Promise<void> | void } = {},
 ): Promise<CourseGeneration> {
   const mock = () => {
     const course = createMockCourse(input);
@@ -330,12 +337,13 @@ export async function planCourseOutline(
         prompt: buildCoursePlannerPrompt(input),
         temperature: 0.25,
         maxTokens: 6144,
+        overrides: options.overrides,
         mock,
         onJobUpdate: options.onJobUpdate,
       }),
     );
   } catch (error) {
-    assertMockFallbackAllowed(error);
+    assertMockFallbackAllowed(error, options.overrides, "ARCHITECT");
     const fallback = createMockCourse(input);
     return {
       profile: fallback.profile,

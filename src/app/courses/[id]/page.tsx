@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { getCourse, saveCourse } from "@/lib/storage";
 import { formatMinutes, totalMinutes } from "@/lib/time";
 import { AgentEvent, Course, ExportJob, GenerationJob, JobStatus } from "@/lib/types";
@@ -39,11 +39,14 @@ export default function CourseOverviewPage() {
       });
   }, [id]);
 
+  const attemptedJobs = useRef<Set<string>>(new Set());
+
   useEffect(() => {
     if (!course || backgroundJob) return;
     const queued = course.chapters.find((chapter) => chapter.status === "queued" && chapter.generationJobId);
-    if (!queued?.generationJobId) return;
+    if (!queued?.generationJobId || attemptedJobs.current.has(queued.generationJobId)) return;
 
+    attemptedJobs.current.add(queued.generationJobId);
     setBackgroundJob(queued.generationJobId);
     apiFetch(`/api/generation-jobs/${queued.generationJobId}`, {
       method: "POST",

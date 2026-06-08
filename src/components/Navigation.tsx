@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Menu, X, BookOpen, Sparkles } from "lucide-react";
 import { ThemeToggle } from "./ThemeToggle";
+import { ModelSettings } from "./ModelSettings";
 
 export function Navigation() {
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -51,7 +52,10 @@ export function Navigation() {
             </Link>
           ))}
           <div className="ml-2">
-            <ThemeToggle />
+            <div className="flex items-center gap-1">
+              <ModelSettings showLabel />
+              <ThemeToggle />
+            </div>
           </div>
         </div>
 
@@ -87,7 +91,10 @@ export function Navigation() {
               </Link>
             ))}
             <div className="pt-4 border-t border-border/50">
-              <ThemeToggle />
+              <div className="flex items-center gap-2">
+                <ModelSettings size="icon" />
+                <ThemeToggle />
+              </div>
             </div>
           </div>
         </div>
