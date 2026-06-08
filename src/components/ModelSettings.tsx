@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { Settings2, Sparkles } from "lucide-react";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { Button } from "@/components/ui/button";
@@ -65,7 +65,6 @@ export function ModelSettings({ className, showLabel = false, size }: ModelSetti
   const [open, setOpen] = useState(false);
   const [status, setStatus] = useState("");
   const [settings, setSettings] = useState<ModelSettingsState>(() => emptySettings());
-  const defaultAccordion = useMemo(() => MODEL_AGENT_NAMES.slice(0, 1), []);
   const buttonSize = size ?? (showLabel ? "sm" : "icon-sm");
 
   useEffect(() => {
