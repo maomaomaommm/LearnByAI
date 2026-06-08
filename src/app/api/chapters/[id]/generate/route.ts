@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireApiUser } from "@/lib/apiAuth";
 import { generateChapter } from "@/lib/maol/client";
+import { parseModelOverridesFromHeaders } from "@/lib/modelOverrides";
 import { withQuotaConsumption } from "@/lib/quota";
 import { safeErrorMessage } from "@/lib/safeError";
 import { canUseCourseSnapshot, getServerCourse, saveServerGenerationJob, saveServerQualityReport, updateServerChapter } from "@/lib/serverStore";
@@ -28,9 +29,11 @@ export async function POST(
   }
 
   const userId = auth.userId;
+  const overrides = parseModelOverridesFromHeaders(request.headers);
   try {
     const result = await withQuotaConsumption(userId, "generate_chapter", async () => {
       const response = await generateChapter(course, chapter, {
+        overrides,
         onJobUpdate: async (updatedJob) => {
           await saveServerGenerationJob(updatedJob, request);
         },

@@ -1,5 +1,6 @@
 import { generateText } from "../ai";
 import { appendJobEvent } from "../jobs";
+import { ModelOverrides } from "../modelOverrides";
 import { safeErrorMessage } from "../safeError";
 import { AgentName, GenerationJob } from "../types";
 import { canCallAgent, resolveAgent } from "./registry";
@@ -10,6 +11,7 @@ export async function dispatchAgentText(input: {
   jobId?: string;
   temperature?: number;
   maxTokens?: number;
+  overrides?: ModelOverrides;
   mock?: () => string;
   onJobUpdate?: (job: GenerationJob) => Promise<void> | void;
 }) {
@@ -22,7 +24,7 @@ export async function dispatchAgentText(input: {
   }
 
   try {
-    if (!canCallAgent(input.agent)) {
+    if (!canCallAgent(input.agent, input.overrides)) {
       const text = input.mock?.() ?? "";
       if (input.jobId) {
         await appendAndPersist(input.jobId, {
@@ -34,11 +36,12 @@ export async function dispatchAgentText(input: {
       return text;
     }
 
-    const config = resolveAgent(input.agent);
+    const config = resolveAgent(input.agent, input.overrides);
     const text = await generateText(input.prompt, {
       agent: input.agent,
       temperature: input.temperature ?? config.temperature,
       maxTokens: input.maxTokens ?? config.maxTokens,
+      overrides: input.overrides,
     });
 
     if (input.jobId) {

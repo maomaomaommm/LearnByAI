@@ -1,17 +1,19 @@
 import { AgentName } from "./types";
+import { ModelOverrides } from "./modelOverrides";
 
 const DEFAULT_AI_BASE_URL = "https://api.yzccc.cloud/v1";
 const DEFAULT_AI_MODEL = "gpt-5.5";
 
-export function isMockMode() {
-  return process.env.AI_MOCK_MODE === "true" || !process.env.AI_API_KEY;
+export function isMockMode(overrides?: ModelOverrides) {
+  return process.env.AI_MOCK_MODE === "true" || !getBaseAIConfig(overrides).apiKey;
 }
 
-export function getBaseAIConfig() {
+export function getBaseAIConfig(overrides?: ModelOverrides) {
+  const userDefault = overrides?.default;
   return {
-    apiKey: process.env.AI_API_KEY ?? "",
-    baseUrl: trimSlash(process.env.AI_API_BASE_URL ?? DEFAULT_AI_BASE_URL),
-    model: process.env.AI_MODEL ?? DEFAULT_AI_MODEL,
+    apiKey: userDefault?.apiKey ?? process.env.AI_API_KEY ?? "",
+    baseUrl: trimSlash(userDefault?.baseUrl ?? process.env.AI_API_BASE_URL ?? DEFAULT_AI_BASE_URL),
+    model: userDefault?.model ?? process.env.AI_MODEL ?? DEFAULT_AI_MODEL,
     temperature: readNumber(process.env.AI_TEMPERATURE, 0.45),
     maxTokens: readNumber(process.env.AI_MAX_TOKENS, 32768),
     timeoutMs: readNumber(process.env.AI_TIMEOUT_MS, 900_000),
@@ -19,15 +21,17 @@ export function getBaseAIConfig() {
   };
 }
 
-export function getAgentConfig(agent: AgentName) {
+export function getAgentConfig(agent: AgentName, overrides?: ModelOverrides) {
   const prefix = agent;
   const base = getBaseAIConfig();
+  const userDefault = overrides?.default;
+  const userAgent = overrides?.agents?.[agent];
 
   return {
     agent,
-    apiKey: process.env[`${prefix}_API_KEY`] || base.apiKey,
-    baseUrl: trimSlash(process.env[`${prefix}_API_BASE_URL`] || base.baseUrl),
-    model: process.env[`${prefix}_MODEL`] || base.model,
+    apiKey: userAgent?.apiKey ?? userDefault?.apiKey ?? (process.env[`${prefix}_API_KEY`] || base.apiKey),
+    baseUrl: trimSlash(userAgent?.baseUrl ?? userDefault?.baseUrl ?? (process.env[`${prefix}_API_BASE_URL`] || base.baseUrl)),
+    model: userAgent?.model ?? userDefault?.model ?? (process.env[`${prefix}_MODEL`] || base.model),
     temperature: readNumber(process.env[`${prefix}_TEMPERATURE`], base.temperature),
     maxTokens: readNumber(process.env[`${prefix}_MAX_TOKENS`], base.maxTokens),
     timeoutMs: readNumber(process.env[`${prefix}_TIMEOUT_MS`], base.timeoutMs),
