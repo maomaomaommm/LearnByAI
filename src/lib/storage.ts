@@ -8,7 +8,7 @@ const ANNOTATIONS_KEY = "learnbyai:annotations";
 
 export function getCourses(): Course[] {
   if (typeof window === "undefined") return [];
-  const courses = JSON.parse(localStorage.getItem(COURSES_KEY) ?? "[]") as Course[];
+  const courses = readStorageArray<Course>(COURSES_KEY);
   const migrated = courses.map(normalizeCourse);
   if (JSON.stringify(courses) !== JSON.stringify(migrated)) {
     localStorage.setItem(COURSES_KEY, JSON.stringify(migrated));
@@ -85,14 +85,23 @@ export function saveCourse(course: Course) {
 
 export function getAnnotations(chapterId: string): Annotation[] {
   if (typeof window === "undefined") return [];
-  const all: Annotation[] = JSON.parse(localStorage.getItem(ANNOTATIONS_KEY) ?? "[]");
+  const all = readStorageArray<Annotation>(ANNOTATIONS_KEY);
   return all.filter((annotation) => annotation.chapterId === chapterId);
 }
 
 export function saveAnnotation(annotation: Annotation) {
-  const all: Annotation[] = JSON.parse(localStorage.getItem(ANNOTATIONS_KEY) ?? "[]");
+  const all = readStorageArray<Annotation>(ANNOTATIONS_KEY);
   const index = all.findIndex((item) => item.id === annotation.id);
   if (index >= 0) all[index] = annotation;
   else all.push(annotation);
   localStorage.setItem(ANNOTATIONS_KEY, JSON.stringify(all));
+}
+
+function readStorageArray<T>(key: string): T[] {
+  try {
+    const parsed: unknown = JSON.parse(localStorage.getItem(key) ?? "[]");
+    return Array.isArray(parsed) ? (parsed as T[]) : [];
+  } catch {
+    return [];
+  }
 }

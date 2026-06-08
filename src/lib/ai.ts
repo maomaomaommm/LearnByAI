@@ -1,6 +1,8 @@
 import "server-only";
 
+import { headers } from "next/headers";
 import { getAgentConfig, getBaseAIConfig } from "./config";
+import { ModelOverrides, parseModelOverridesFromHeaders } from "./modelOverrides";
 import { safeErrorMessage } from "./safeError";
 import { AgentName } from "./types";
 
@@ -16,9 +18,11 @@ export async function generateText(
     agent?: AgentName;
     maxTokens?: number;
     temperature?: number;
+    overrides?: ModelOverrides;
   },
 ) {
-  const config = options?.agent ? getAgentConfig(options.agent) : getBaseAIConfig();
+  const overrides = options?.overrides ?? await getRequestModelOverrides();
+  const config = options?.agent ? getAgentConfig(options.agent, overrides) : getBaseAIConfig(overrides);
   if (!config.apiKey) throw new Error("AI_API_KEY is not configured");
 
   let lastError = "";
@@ -98,6 +102,14 @@ export async function generateText(
   }
 
   throw new Error(`${config.model} request failed: ${lastError}`);
+}
+
+async function getRequestModelOverrides() {
+  try {
+    return parseModelOverridesFromHeaders(await headers());
+  } catch {
+    return undefined;
+  }
 }
 
 function thinkingPayload(thinking: "disabled" | "enabled" | "auto") {

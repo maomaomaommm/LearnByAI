@@ -3,6 +3,7 @@ import "server-only";
 import { appendJobEvent, completeGenerationJob, createGenerationJob, failGenerationJob, getGenerationJob, patchGenerationJob, upsertGenerationJob } from "./jobs";
 import { shouldRunInlineGeneration } from "./config";
 import { generateChapter, planCourseOutline } from "./maol/client";
+import { parseModelOverridesFromHeaders } from "./modelOverrides";
 import { withQuotaConsumption } from "./quota";
 import { safeErrorMessage } from "./safeError";
 import {
@@ -22,6 +23,7 @@ export async function runCourseGenerationJob(input: {
   courseSnapshot?: Course;
   retry?: boolean;
 }) {
+  const overrides = parseModelOverridesFromHeaders(input.request?.headers);
   const persistedJob = await getServerGenerationJob(input.jobId, input.request);
   let job = getGenerationJob(input.jobId) ?? (persistedJob ? upsertGenerationJob(persistedJob) : undefined);
   const allowedSnapshot = (await canUseCourseSnapshot(input.courseSnapshot, input.request)) ? input.courseSnapshot : undefined;
@@ -109,6 +111,7 @@ export async function runCourseGenerationJob(input: {
 
   try {
     const generated = await planCourseOutline(course, job.id, {
+      overrides,
       onJobUpdate: async (updatedJob) => {
         await saveServerGenerationJob(updatedJob, input.request);
       },
@@ -185,6 +188,7 @@ export async function runChapterGenerationJob(input: {
   courseSnapshot?: Course;
   retry?: boolean;
 }) {
+  const overrides = parseModelOverridesFromHeaders(input.request?.headers);
   const persistedJob = await getServerGenerationJob(input.jobId, input.request);
   let job = getGenerationJob(input.jobId) ?? (persistedJob ? upsertGenerationJob(persistedJob) : undefined);
   const allowedSnapshot = (await canUseCourseSnapshot(input.courseSnapshot, input.request)) ? input.courseSnapshot : undefined;
@@ -290,6 +294,7 @@ export async function runChapterGenerationJob(input: {
     const result = await withQuotaConsumption(job.userId ?? course.userId, "generate_chapter", async () => {
       const response = await generateChapter(course, chapter, {
         jobId: job.id,
+        overrides,
         onJobUpdate: async (updatedJob) => {
           await saveServerGenerationJob(updatedJob, input.request);
         },

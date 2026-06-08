@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireApiUser } from "@/lib/apiAuth";
 import { askTutor } from "@/lib/maol/client";
+import { parseModelOverridesFromHeaders } from "@/lib/modelOverrides";
 import { withQuotaConsumption } from "@/lib/quota";
 import { safeErrorMessage } from "@/lib/safeError";
 import { getServerCourse, listServerAnnotations, saveServerAnnotation, saveServerGenerationJob } from "@/lib/serverStore";
@@ -28,6 +29,7 @@ export async function POST(request: Request) {
   if ("response" in annotationValidation) return annotationValidation.response;
 
   const userId = auth.userId;
+  const overrides = parseModelOverridesFromHeaders(request.headers);
   try {
     const result = await withQuotaConsumption(userId, "ask_tutor", async () => {
       const response = await askTutor({
@@ -35,6 +37,7 @@ export async function POST(request: Request) {
         selectedText: input.selectedText,
         question: input.question,
         history: input.history ?? [],
+        overrides,
         onJobUpdate: async (updatedJob) => {
           await saveServerGenerationJob(updatedJob, request);
         },
