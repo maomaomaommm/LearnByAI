@@ -10,6 +10,7 @@ import { getAnnotations, getCourse, saveAnnotation, saveCourse } from "@/lib/sto
 import { formatMinutes, totalMinutes } from "@/lib/time";
 import { Annotation, ChapterGenerateResponse, Course, Section } from "@/lib/types";
 import { ThemeToggle } from "@/components/ThemeToggle";
+import { ModelSettings } from "@/components/ModelSettings";
 import { ArrowLeft, ChevronLeft, ChevronRight, Menu, X, Clock, MessageSquareQuote, Bot } from "lucide-react";
 
 const quickQuestions = ["解释得更简单", "给我一个具体例子", "展示推导过程", "质疑这段内容"];
@@ -301,6 +302,7 @@ export default function ReaderPage() {
             <span className="font-mono text-xs font-medium text-muted-foreground hidden md:inline-block">{course.topic}</span>
           </div>
           <div className="flex items-center gap-4">
+            <ModelSettings showLabel />
             <ThemeToggle />
             <span className="flex items-center gap-1.5 font-mono text-xs text-muted-foreground">
               <Clock size={12} />

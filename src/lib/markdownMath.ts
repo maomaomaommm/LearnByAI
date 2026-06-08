@@ -1,46 +1,219 @@
 export function normalizeMath(content: string) {
-  const normalizedDelimiters = content
-    .replace(/\r\n/g, "\n")
-    .replace(/\\\[/g, "\n$$\n")
-    .replace(/\\\]/g, "\n$$\n")
+  return splitMarkdownFences(content.replace(/\r\n/g, "\n"))
+    .map((chunk) => (chunk.fenced ? chunk.content : normalizeMathText(chunk.content)))
+    .join("\n");
+}
+
+function normalizeMathText(content: string) {
+  const normalizedDelimiters = normalizeDisplayEnvironments(content)
+    .replace(/\\\[/g, () => "\n$$\n")
+    .replace(/\\\]/g, () => "\n$$\n")
     .replace(/\\\(/g, "$")
     .replace(/\\\)/g, "$");
 
-  const lines = normalizedDelimiters.split("\n");
+  const lines = normalizeDisplayMathDelimiters(normalizedDelimiters).split("\n");
   const repaired: string[] = [];
+  let inDisplayMath = false;
+  let inSingleDollarBlock = false;
 
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index];
     const trimmed = line.trim();
     const nextTrimmed = lines[index + 1]?.trim();
 
+    if (trimmed === "$$") {
+      if (inDisplayMath) {
+        while (repaired[repaired.length - 1] === "") repaired.pop();
+        repaired.push("$$");
+        inDisplayMath = false;
+      } else if (shouldOpenExplicitDisplayMath(nextNonEmptyTrimmed(lines, index + 1))) {
+        repaired.push("$$");
+        inDisplayMath = true;
+      }
+      continue;
+    }
+
+    if (inDisplayMath) {
+      if (!trimmed && repaired[repaired.length - 1] === "$$") continue;
+      repaired.push(cleanMathText(line));
+      continue;
+    }
+
+    if (inSingleDollarBlock) {
+      if (trimmed === "$") {
+        repaired.push("$$");
+        inSingleDollarBlock = false;
+        continue;
+      }
+
+      if (!trimmed) {
+        repaired.push("$$", "");
+        inSingleDollarBlock = false;
+        continue;
+      }
+
+      if (hasClosingSingleDollar(trimmed)) {
+        repaired.push(cleanMathLine(trimmed), "$$");
+        inSingleDollarBlock = false;
+        continue;
+      }
+
+      if (isLikelyMathLine(trimmed)) {
+        repaired.push(cleanMathText(line));
+        continue;
+      }
+
+      repaired.push("$$", line);
+      inSingleDollarBlock = false;
+      continue;
+    }
+
     if (trimmed === "$") {
       repaired.push("$$");
+      inSingleDollarBlock = true;
+      continue;
+    }
+
+    if (getMathEnvironmentBegin(trimmed)) {
+      const environment = collectMathEnvironment(lines, index);
+      repaired.push("", "$$", ...environment.lines.map(cleanMathText), "$$", "");
+      index = environment.endIndex;
       continue;
     }
 
     if (isBareDisplayMathLine(trimmed)) {
-      repaired.push("", "$$", cleanMathLine(trimmed), "$$", "");
-      if (nextTrimmed === "$") index += 1;
+      repaired.push("", "$$", cleanMathLine(trimmed));
+      if (nextTrimmed === "$") {
+        repaired.push("$$", "");
+        index += 1;
+      } else if (hasClosingSingleDollar(trimmed)) {
+        repaired.push("$$", "");
+      } else {
+        inSingleDollarBlock = true;
+      }
       continue;
     }
 
-    if (
-      /\\begin\{(aligned|align|cases|matrix|pmatrix|bmatrix)\}/.test(trimmed) &&
-      !trimmed.includes("$$")
-    ) {
-      repaired.push("", "$$", cleanMathLine(trimmed), "$$", "");
+    if (isLikelyMathLine(trimmed)) {
+      repaired.push("", "$$", cleanMathText(line));
+      while (isLikelyMathContinuation(lines[index + 1]?.trim() ?? "")) {
+        index += 1;
+        repaired.push(cleanMathText(lines[index]));
+      }
+      repaired.push("$$", "");
       continue;
     }
 
     repaired.push(line);
   }
 
-  return repaired
-    .join("\n")
-    .replace(/\$\$\s*/g, "\n$$\n")
-    .replace(/\s*\$\$/g, "\n$$\n")
-    .replace(/\n{3,}/g, "\n\n");
+  if (inDisplayMath || inSingleDollarBlock) repaired.push("$$");
+
+  return repaired.join("\n").replace(/\n{3,}/g, "\n\n");
+}
+
+function splitMarkdownFences(content: string) {
+  const chunks: { content: string; fenced: boolean }[] = [];
+  const lines = content.split("\n");
+  let current: string[] = [];
+  let fenced = false;
+  let fenceMarker = "";
+
+  const flush = () => {
+    if (current.length > 0) chunks.push({ content: current.join("\n"), fenced });
+    current = [];
+  };
+
+  for (const line of lines) {
+    const fenceMatch = line.match(/^\s*(`{3,}|~{3,})/u);
+
+    if (!fenced && fenceMatch) {
+      flush();
+      fenced = true;
+      fenceMarker = fenceMatch[1][0];
+      current.push(line);
+      continue;
+    }
+
+    if (fenced) {
+      current.push(line);
+      if (fenceMatch?.[1].startsWith(fenceMarker)) {
+        flush();
+        fenced = false;
+        fenceMarker = "";
+      }
+      continue;
+    }
+
+    current.push(line);
+  }
+
+  flush();
+  return chunks;
+}
+
+function normalizeDisplayEnvironments(content: string) {
+  return content
+    .replace(/\\begin\{equation\*?\}/gu, () => "\n$$\n")
+    .replace(/\\end\{equation\*?\}/gu, () => "\n$$\n")
+    .replace(/\\begin\{displaymath\}/gu, () => "\n$$\n")
+    .replace(/\\end\{displaymath\}/gu, () => "\n$$\n")
+    .replace(/\\begin\{align\*?\}/gu, "\\begin{aligned}")
+    .replace(/\\end\{align\*?\}/gu, "\\end{aligned}")
+    .replace(/\\begin\{gather\*?\}/gu, "\\begin{gathered}")
+    .replace(/\\end\{gather\*?\}/gu, "\\end{gathered}")
+    .replace(/\\begin\{alignat\*?\}/gu, "\\begin{alignedat}")
+    .replace(/\\end\{alignat\*?\}/gu, "\\end{alignedat}");
+}
+
+function normalizeDisplayMathDelimiters(content: string) {
+  const output: string[] = [];
+
+  for (const line of content.split("\n")) {
+    if (!line.includes("$$")) {
+      output.push(line);
+      continue;
+    }
+
+    if (line.trim() === "$$") {
+      output.push("$$");
+      continue;
+    }
+
+    const parts = line.split("$$");
+    for (let index = 0; index < parts.length; index += 1) {
+      const isBeforeDelimiter = index < parts.length - 1;
+      const part =
+        index === 0
+          ? parts[index].trimEnd()
+          : isBeforeDelimiter
+            ? parts[index].trim()
+            : parts[index].trimStart();
+
+      if (part) output.push(part);
+      if (isBeforeDelimiter) output.push("$$");
+    }
+  }
+
+  return output.join("\n");
+}
+
+function nextNonEmptyTrimmed(lines: string[], startIndex: number) {
+  for (let index = startIndex; index < lines.length; index += 1) {
+    const trimmed = lines[index].trim();
+    if (trimmed) return trimmed;
+  }
+  return "";
+}
+
+function shouldOpenExplicitDisplayMath(trimmed: string) {
+  if (!trimmed || trimmed === "$" || trimmed === "$$") return false;
+  if (/^(```|~~~|#{1,6}\s|[-*+]\s|\d+\.\s|>\s|\|)/u.test(trimmed)) return false;
+  if (/[\u4e00-\u9fff]/u.test(trimmed) && !/^\\(?:begin|text|mathrm|operatorname)\b/u.test(trimmed)) {
+    return false;
+  }
+  if (hasPlainTextWords(trimmed) && !/^\\/.test(trimmed)) return false;
+  return true;
 }
 
 function cleanMathLine(line: string) {
@@ -51,12 +224,105 @@ function cleanMathLine(line: string) {
     .trim();
 }
 
+function cleanMathText(line: string) {
+  return line
+    .replace(/\\perp!+\\perp/g, "\\perp\\!\\!\\!\\perp")
+    .trim();
+}
+
+function getMathEnvironmentBegin(trimmed: string) {
+  return trimmed.match(
+    /\\begin\{(aligned|alignedat|cases|array|matrix|pmatrix|bmatrix|vmatrix|Vmatrix|split|gathered)\}/u,
+  )?.[1];
+}
+
+function collectMathEnvironment(lines: string[], startIndex: number) {
+  const linesInEnvironment: string[] = [];
+  const environment = getMathEnvironmentBegin(lines[startIndex].trim());
+  let depth = 0;
+  let endIndex = startIndex;
+
+  for (let index = startIndex; index < lines.length; index += 1) {
+    const line = lines[index];
+    const trimmed = line.trim();
+    linesInEnvironment.push(line);
+    endIndex = index;
+
+    if (environment) {
+      const beginMatches = trimmed.match(new RegExp(`\\\\begin\\{${environment}\\}`, "gu")) ?? [];
+      const endMatches = trimmed.match(new RegExp(`\\\\end\\{${environment}\\}`, "gu")) ?? [];
+      depth += beginMatches.length - endMatches.length;
+      if (index > startIndex && depth <= 0) break;
+    }
+
+    if (!environment && index > startIndex && !isLikelyMathContinuation(lines[index + 1]?.trim() ?? "")) {
+      break;
+    }
+  }
+
+  return {
+    endIndex,
+    lines: linesInEnvironment,
+  };
+}
+
 function isBareDisplayMathLine(trimmed: string) {
   if (!trimmed.startsWith("$") || trimmed.startsWith("$$")) return false;
   if (/[\u4e00-\u9fff]/u.test(trimmed)) return false;
+  const closingDollarIndex = findUnescapedDollar(trimmed, 1);
+  if (closingDollarIndex >= 0 && trimmed.slice(closingDollarIndex + 1).trim()) return false;
 
   const math = cleanMathLine(trimmed);
   if (!math) return false;
 
   return /\\|=|[{}_^]|[A-Za-z]\s*\(|\b(mid|sum|prod|frac|tau|beta|gamma|epsilon)\b/.test(math);
+}
+
+function hasClosingSingleDollar(trimmed: string) {
+  return /^\$[\s\S]*[^\\]\$\s*$/u.test(trimmed);
+}
+
+function isLikelyMathContinuation(trimmed: string) {
+  if (!trimmed || trimmed === "$" || trimmed === "$$") return false;
+  if (/[\u4e00-\u9fff]/u.test(trimmed)) return false;
+  if (hasPlainTextWords(trimmed) && !/^\\/.test(trimmed)) return false;
+  return (
+    isLikelyMathLine(trimmed) ||
+    /^[&=+\-*/\\]/u.test(trimmed) ||
+    /(?:&?=|<=|>=|\\leq|\\geq|\\approx|\\sim|\\in)\s*/u.test(trimmed) ||
+    /\\\\\s*$/u.test(trimmed)
+  );
+}
+
+function isLikelyMathLine(trimmed: string) {
+  if (!trimmed || /[\u4e00-\u9fff]/u.test(trimmed)) return false;
+  if (/^(#{1,6}\s|[-*+]\s|\d+\.\s|>\s|\|)/u.test(trimmed)) return false;
+  if (/^(import|from|def|class|return|const|let|var|if|for|while)\b/u.test(trimmed)) return false;
+  if (trimmed.includes("$") && !trimmed.startsWith("$")) return false;
+  if (hasPlainTextWords(trimmed) && !/^\\/.test(trimmed)) return false;
+
+  return (
+    /\\(begin|end)\{(aligned|alignedat|cases|array|matrix|pmatrix|bmatrix|vmatrix|Vmatrix|split|gathered)\}/u.test(
+      trimmed,
+    ) ||
+    /\\(operatorname|mathrm|mathbf|mathcal|mathbb|frac|dfrac|tfrac|sum|prod|int|lim|Pr|P|E|Var|Cov|hat|bar|tilde|sqrt|theta|lambda|alpha|beta|gamma|delta|epsilon|varepsilon|sigma|mu|tau|phi|psi|omega|ldots|cdots|mapsto|to|Rightarrow|Leftarrow|leftrightarrow|infty)\b/u.test(
+      trimmed,
+    ) ||
+    /[A-Za-z0-9)}\]]\s*[_^]\s*\{?[\w\\]/u.test(trimmed) ||
+    /\\[()[\]{}]/u.test(trimmed)
+  );
+}
+
+function hasPlainTextWords(trimmed: string) {
+  const withoutLatexText = trimmed
+    .replace(/\\(?:text|operatorname|mathrm|mathbf|mathcal|mathbb)\{[^}]*\}/gu, "")
+    .replace(/\\[A-Za-z]+/gu, "");
+  return (withoutLatexText.match(/[A-Za-z]{3,}/gu) ?? []).length >= 2;
+}
+
+function findUnescapedDollar(value: string, startIndex: number) {
+  for (let index = startIndex; index < value.length; index += 1) {
+    if (value[index] === "$" && value[index - 1] !== "\\") return index;
+  }
+  return -1;
 }

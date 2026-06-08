@@ -11,13 +11,14 @@ export default function CoursesPage() {
   const [courses, setCourses] = useState<Course[]>([]);
 
   useEffect(() => {
-    setCourses(getCourses());
+    const localCourses = getCourses();
+    setCourses(localCourses);
     apiFetch("/api/courses")
       .then((response) => (response.ok ? response.json() : undefined))
       .then((data) => {
         if (data?.courses) {
           data.courses.forEach((course: Course) => saveCourse(course));
-          setCourses(data.courses);
+          setCourses((current) => mergeCourses(getCourses(), data.courses, current));
         }
       })
       .catch(() => setCourses(getCourses()));
@@ -69,4 +70,21 @@ export default function CoursesPage() {
       </div>
     </div>
   );
+}
+
+function mergeCourses(localCourses: Course[], serverCourses: Course[], currentCourses: Course[]) {
+  const coursesById = new Map<string, Course>();
+
+  for (const course of [...currentCourses, ...localCourses, ...serverCourses]) {
+    coursesById.set(course.id, chooseCourse(coursesById.get(course.id), course));
+  }
+
+  return [...coursesById.values()].sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
+}
+
+function chooseCourse(existing: Course | undefined, incoming: Course) {
+  if (!existing) return incoming;
+  const existingUpdatedAt = Date.parse(existing.updatedAt ?? existing.createdAt);
+  const incomingUpdatedAt = Date.parse(incoming.updatedAt ?? incoming.createdAt);
+  return incomingUpdatedAt >= existingUpdatedAt ? incoming : existing;
 }
