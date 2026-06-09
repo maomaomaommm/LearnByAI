@@ -4,16 +4,37 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { FormEvent, MouseEvent, useCallback, useEffect, useState } from "react";
 import { MarkdownContent } from "@/components/MarkdownContent";
-import { apiFetch } from "@/lib/clientApi";
+import { apiFetch, subscribeToSse } from "@/lib/clientApi";
 import { publicSafeErrorMessage } from "@/lib/publicSafeError";
 import { getAnnotations, getCourse, saveAnnotation, saveCourse } from "@/lib/storage";
 import { formatMinutes, totalMinutes } from "@/lib/time";
-import { Annotation, ChapterGenerateResponse, Course, Section } from "@/lib/types";
+import { Annotation, Chapter, ChapterGenerateResponse, Course, Section } from "@/lib/types";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { ModelSettings } from "@/components/ModelSettings";
-import { ArrowLeft, ChevronLeft, ChevronRight, Menu, X, Clock, MessageSquareQuote, Bot } from "lucide-react";
+import { ArrowLeft, ChevronLeft, ChevronRight, Menu, X, Clock, MessageSquareQuote, Bot, Download } from "lucide-react";
 
 const quickQuestions = ["解释得更简单", "给我一个具体例子", "展示推导过程", "质疑这段内容"];
+const DEFAULT_REVIEW = "已完成结构、术语与公式一致性检查。";
+
+function hasChapterBody(chapter: Chapter) {
+  return Boolean(chapter.content || chapter.sections?.length);
+}
+
+function getChapterBody(chapter: Chapter) {
+  return chapter.content ?? chapter.sections?.map((section) => section.content).join("\n\n") ?? "";
+}
+
+function isWaitingForBackgroundGeneration(chapter: Chapter) {
+  return Boolean(chapter.generationJobId);
+}
+
+function chapterStatusLabel(chapter: Chapter) {
+  if (chapter.status === "ready") return "READY";
+  if (chapter.status === "failed") return "FAILED";
+  if (chapter.status === "generating") return "GENERATING";
+  if (chapter.status === "queued") return "QUEUED";
+  return "PENDING";
+}
 
 export default function ReaderPage() {
   const { id, chapterId } = useParams<{ id: string; chapterId: string }>();
@@ -36,6 +57,39 @@ export default function ReaderPage() {
   const currentIndex = course?.chapters.findIndex((c) => c.id === chapterId) ?? -1;
   const prevChapter = currentIndex > 0 && course ? course.chapters[currentIndex - 1] : null;
   const nextChapter = currentIndex < (course?.chapters.length ?? 0) - 1 && course ? course.chapters[currentIndex + 1] : null;
+  const canPrint = Boolean(chapter && !loading && !generationError && hasChapterBody(chapter));
+
+  const applyCourseUpdate = useCallback((nextCourse: Course) => {
+    saveCourse(nextCourse);
+    setCourse(nextCourse);
+    setGenerationError("");
+
+    const current = nextCourse.chapters.find((item) => item.id === chapterId);
+    if (!current) {
+      setLoading(false);
+      return;
+    }
+
+    if (hasChapterBody(current)) {
+      setContent(getChapterBody(current));
+      setSections(current.sections ?? []);
+      setReview(current.review ?? DEFAULT_REVIEW);
+      setLoading(false);
+      return;
+    }
+
+    setContent("");
+    setSections([]);
+    setReview(current.review ?? "");
+
+    if (current.status === "failed") {
+      setGenerationError("Chapter generation failed.");
+      setLoading(false);
+      return;
+    }
+
+    setLoading(true);
+  }, [chapterId]);
 
   const ensureChapterContent = useCallback(async (stored: Course) => {
     const current = stored.chapters.find((item) => item.id === chapterId);
@@ -44,18 +98,18 @@ export default function ReaderPage() {
       return;
     }
 
-    if (current.content || current.sections?.length) {
-      const nextContent = current.content ?? current.sections?.map((section) => section.content).join("\n\n") ?? "";
-      setContent(nextContent);
-      setSections(current.sections ?? []);
-      setReview(current.review ?? "已完成结构、术语与公式一致性检查。");
-      setLoading(false);
+    if (hasChapterBody(current)) {
+      applyCourseUpdate(stored);
+      return;
+    }
+
+    if (isWaitingForBackgroundGeneration(current)) {
+      applyCourseUpdate(stored);
       return;
     }
 
     current.status = "generating";
-    saveCourse(stored);
-    setCourse({ ...stored });
+    applyCourseUpdate({ ...stored });
 
     apiFetch(`/api/chapters/${current.id}/generate`, {
       method: "POST",
@@ -68,29 +122,25 @@ export default function ReaderPage() {
       })
       .then((data: ChapterGenerateResponse) => {
         if (!data.content) throw new Error("Chapter generation failed");
-        setContent(data.content);
-        setSections(data.sections ?? []);
-        setReview(data.review);
         current.content = data.content;
         current.sections = data.sections;
         current.review = data.review;
         current.qualityReport = data.qualityReport;
         current.generationJobId = data.job?.id;
         current.status = data.qualityReport?.status === "failed" ? "failed" : "ready";
-        saveCourse(stored);
-        setCourse({ ...stored });
+        applyCourseUpdate({ ...stored });
       })
       .catch((error) => {
         current.status = "failed";
-        saveCourse(stored);
+        applyCourseUpdate({ ...stored });
         setGenerationError(publicSafeErrorMessage(error, "Chapter generation failed. Please refresh and try again."));
       })
       .finally(() => setLoading(false));
-  }, [chapterId]);
+  }, [applyCourseUpdate, chapterId]);
 
   useEffect(() => {
     const stored = getCourse(id);
-    if (stored) setCourse(stored);
+    if (stored) applyCourseUpdate(stored);
     setAnnotations(getAnnotations(chapterId));
 
     apiFetch(`/api/annotations?chapterId=${chapterId}`)
@@ -111,15 +161,39 @@ export default function ReaderPage() {
           setLoading(false);
           return;
         }
-        saveCourse(courseData);
-        setCourse(courseData);
         void ensureChapterContent(courseData);
       })
       .catch(() => {
         if (stored) void ensureChapterContent(stored);
         else setLoading(false);
       });
-  }, [chapterId, ensureChapterContent, id]);
+  }, [applyCourseUpdate, chapterId, ensureChapterContent, id]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const subscription = subscribeToSse(`/api/courses/${id}/events`, {
+      onMessage(message) {
+        if (cancelled) return;
+
+        if (message.event === "snapshot") {
+          const snapshot = message.data as { course?: Course } | undefined;
+          if (snapshot?.course) applyCourseUpdate(snapshot.course);
+          return;
+        }
+
+        if (message.event === "course") {
+          const payload = message.data as { course?: Course } | undefined;
+          if (payload?.course) applyCourseUpdate(payload.course);
+        }
+      },
+    });
+
+    return () => {
+      cancelled = true;
+      subscription.close();
+    };
+  }, [applyCourseUpdate, id]);
 
   const handleTextSelect = useCallback((text: string) => {
     if (text.length > 2) {
@@ -225,9 +299,9 @@ export default function ReaderPage() {
   }
 
   return (
-    <div className="flex h-screen overflow-hidden bg-background">
+    <div className="flex h-screen overflow-hidden bg-background print:block print:h-auto print:overflow-visible print:bg-white">
       {/* TOC Sidebar */}
-      <aside className={`shrink-0 border-r border-border bg-card transition-all duration-300 ${tocOpen ? "w-64" : "w-0 overflow-hidden"}`}>
+      <aside className={`shrink-0 border-r border-border bg-card transition-all duration-300 print:hidden ${tocOpen ? "w-64" : "w-0 overflow-hidden"}`}>
         <div className="flex h-full flex-col">
           <div className="flex items-center justify-between border-b border-border px-4 py-4">
             <Link href="/" className="font-mono text-sm font-bold text-foreground tracking-widest uppercase">
@@ -256,7 +330,7 @@ export default function ReaderPage() {
                     <span className={`text-xs ${isActive ? "font-medium text-foreground" : "text-muted-foreground"}`}>{ch.title}</span>
                   </div>
                   <div className="mt-1 pl-6 text-[10px] font-mono text-muted-foreground uppercase">
-                    {ch.status === "ready" ? "READY" : "PENDING"}
+                    {chapterStatusLabel(ch)}
                   </div>
                 </button>
               );
@@ -287,9 +361,9 @@ export default function ReaderPage() {
       </aside>
 
       {/* Main Content */}
-      <main className="flex-1 overflow-y-auto bg-background">
+      <main className="flex-1 overflow-y-auto bg-background print:overflow-visible print:bg-white print:text-black">
         {/* Toolbar */}
-        <div className="sticky top-0 z-30 flex items-center justify-between border-b border-border bg-background/95 px-6 py-3 backdrop-blur">
+        <div className="sticky top-0 z-30 flex items-center justify-between border-b border-border bg-background/95 px-6 py-3 backdrop-blur print:hidden">
           <div className="flex items-center gap-3">
             {!tocOpen && (
               <button onClick={() => setTocOpen(true)} className="rounded p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground transition-colors">
@@ -308,6 +382,14 @@ export default function ReaderPage() {
               <Clock size={12} />
               {formatMinutes(totalMinutes(chapter.time))}
             </span>
+            <div className="h-4 w-px bg-border" />
+            <button
+              onClick={() => window.print()}
+              disabled={!canPrint}
+              className="flex items-center gap-1.5 rounded-md border border-border bg-background px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <Download size={14} /> 导出 PDF
+            </button>
             <div className="h-4 w-px bg-border" />
             <div className="flex items-center gap-1">
               {prevChapter && (
@@ -369,7 +451,7 @@ export default function ReaderPage() {
           )}
 
           {/* Chapter Nav */}
-          <div className="mt-16 flex flex-col gap-4 border-t border-border pt-8 sm:flex-row sm:items-center sm:justify-between">
+          <div className="mt-16 flex flex-col gap-4 border-t border-border pt-8 sm:flex-row sm:items-center sm:justify-between print:hidden">
             {prevChapter ? (
               <button onClick={() => router.push(`/courses/${id}/chapters/${prevChapter.id}`)} className="flex flex-1 items-center gap-3 rounded-lg border border-border bg-card p-4 text-left transition-colors hover:border-foreground/30 hover:bg-muted/20">
                 <ChevronLeft size={20} className="text-muted-foreground" />
@@ -394,7 +476,7 @@ export default function ReaderPage() {
       </main>
 
       {/* Tutor Sidebar (Terminal Style) */}
-      <aside className={`shrink-0 border-l border-border bg-muted/30 flex flex-col transition-all duration-300 ${tutorOpen ? "w-80 lg:w-[400px]" : "w-0 overflow-hidden"}`}>
+      <aside className={`shrink-0 border-l border-border bg-muted/30 flex flex-col transition-all duration-300 print:hidden ${tutorOpen ? "w-80 lg:w-[400px]" : "w-0 overflow-hidden"}`}>
         <div className="flex items-center justify-between border-b border-border bg-card px-4 py-3">
           <div className="flex items-center gap-2">
             <Bot size={14} className="text-primary" />
@@ -472,7 +554,7 @@ export default function ReaderPage() {
       </aside>
 
       {!tutorOpen && (
-        <button onClick={() => setTutorOpen(true)} className="fixed right-0 top-1/2 z-40 flex h-12 w-12 -translate-y-1/2 items-center justify-center rounded-l-md border border-r-0 border-border bg-card text-muted-foreground shadow-lg hover:text-foreground transition-colors" title="展开终端">
+        <button onClick={() => setTutorOpen(true)} className="fixed right-0 top-1/2 z-40 flex h-12 w-12 -translate-y-1/2 items-center justify-center rounded-l-md border border-r-0 border-border bg-card text-muted-foreground shadow-lg hover:text-foreground transition-colors print:hidden" title="展开终端">
           <MessageSquareQuote size={18} />
         </button>
       )}

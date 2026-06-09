@@ -2,7 +2,8 @@ import "server-only";
 
 import { mkdir, readFile, rename, rm, stat, unlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { claimGenerationJob, releaseGenerationJob, upsertGenerationJob } from "./jobs";
+import { claimGenerationJob, deleteGenerationJobsForCourse, releaseGenerationJob, upsertGenerationJob } from "./jobs";
+import { publishCourseChanged, publishGenerationJobChanged } from "./courseEvents";
 import { Annotation, Course, ExportJob, GenerationJob, QualityReport, UsageEvent } from "./types";
 import { createSupabaseServiceClient, resolveUserId } from "./supabase/server";
 
@@ -48,9 +49,9 @@ export async function saveServerCourse(course: Course, request?: Request) {
   await persistLocalStore();
 
   const supabase = createSupabaseServiceClient();
-  if (!supabase || !isUuid(userId)) return nextCourse;
+  if (!supabase || !isUuid(userId)) return publishSavedCourse(nextCourse);
 
-  if (!isUuid(nextCourse.id)) return nextCourse;
+  if (!isUuid(nextCourse.id)) return publishSavedCourse(nextCourse);
 
   await requireSupabaseWrite(
     "Persist course",
@@ -121,7 +122,7 @@ export async function saveServerCourse(course: Course, request?: Request) {
     ]),
   );
 
-  return nextCourse;
+  return publishSavedCourse(nextCourse);
 }
 
 export async function getServerCourse(id: string, request?: Request) {
@@ -166,6 +167,67 @@ export async function listServerCourses(request?: Request) {
   return [...localCourses.values()]
     .filter((course) => course.userId === userId || userId === "local-beta-user")
     .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
+}
+
+export async function deleteServerCourse(id: string, request?: Request) {
+  const userId = await resolveUserId(request);
+  const course = await getServerCourse(id, request);
+  if (!course) return false;
+
+  const chapterIds = new Set(course.chapters.map((chapter) => chapter.id));
+  const qualityTargetIds = new Set([
+    course.id,
+    ...course.chapters.flatMap((chapter) => [
+      chapter.id,
+      ...(chapter.sections ?? []).map((section) => section.id),
+    ]),
+  ]);
+
+  localCourses.delete(id);
+  for (const [annotationId, annotation] of localAnnotations) {
+    if (annotation.courseId === id || chapterIds.has(annotation.chapterId)) {
+      localAnnotations.delete(annotationId);
+    }
+  }
+  for (const [exportId, exportJob] of localExports) {
+    if (exportJob.courseId === id) {
+      localExports.delete(exportId);
+    }
+  }
+  for (const [jobId, job] of localGenerationJobs) {
+    if (job.courseId === id || (job.chapterId && chapterIds.has(job.chapterId))) {
+      localGenerationJobs.delete(jobId);
+    }
+  }
+  for (const [reportId, report] of localQualityReports) {
+    if (qualityTargetIds.has(report.targetId)) {
+      localQualityReports.delete(reportId);
+    }
+  }
+  deleteGenerationJobsForCourse(id);
+  await persistLocalStore({ mergeDisk: false });
+
+  const supabase = createSupabaseServiceClient();
+  if (supabase && isUuid(userId) && isUuid(id)) {
+    const qualityTargetIdsToDelete = [...qualityTargetIds].filter(isUuid);
+    if (qualityTargetIdsToDelete.length) {
+      await requireSupabaseWrite(
+        "Delete course quality reports",
+        supabase
+          .from("quality_reports")
+          .delete()
+          .eq("user_id", userId)
+          .in("target_id", qualityTargetIdsToDelete),
+      );
+    }
+
+    await requireSupabaseWrite(
+      "Delete course",
+      supabase.from("courses").delete().eq("id", id).eq("user_id", userId),
+    );
+  }
+
+  return true;
 }
 
 export async function updateServerChapter(
@@ -342,7 +404,7 @@ export async function saveServerGenerationJob(job: GenerationJob, request?: Requ
   await persistLocalStore();
 
   const supabase = createSupabaseServiceClient();
-  if (!supabase || !isUuid(nextJob.userId)) return nextJob;
+  if (!supabase || !isUuid(nextJob.userId)) return publishSavedGenerationJob(nextJob);
 
   await requireSupabaseWrite(
     "Persist generation job",
@@ -362,7 +424,7 @@ export async function saveServerGenerationJob(job: GenerationJob, request?: Requ
     }),
   );
 
-  return nextJob;
+  return publishSavedGenerationJob(nextJob);
 }
 
 export async function saveServerGenerationJobs(jobs: GenerationJob[], request?: Request) {
@@ -659,13 +721,16 @@ async function hydrateLocalStore() {
   }
 }
 
-async function persistLocalStore() {
+async function persistLocalStore(options: { mergeDisk?: boolean } = {}) {
+  const { mergeDisk = true } = options;
   localStoreWriteQueue = localStoreWriteQueue
     .catch(() => undefined)
     .then(() =>
       withLocalStoreLock(async () => {
-        const diskStore = await readLocalStoreFromDisk();
-        if (diskStore) mergeLocalStoreIntoMemory(diskStore);
+        if (mergeDisk) {
+          const diskStore = await readLocalStoreFromDisk();
+          if (diskStore) mergeLocalStoreIntoMemory(diskStore);
+        }
         await writeLocalStore(snapshotLocalStore());
       }),
     );
@@ -822,6 +887,16 @@ async function removeStaleLocalStoreLock() {
 
 function delay(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function publishSavedCourse(course: Course) {
+  publishCourseChanged(course.id);
+  return course;
+}
+
+function publishSavedGenerationJob(job: GenerationJob) {
+  publishGenerationJobChanged(job);
+  return job;
 }
 
 async function requireSupabaseWrite(label: string, operation: PromiseLike<SupabaseResult>) {

@@ -47,11 +47,13 @@ test("real provider calls are bounded by configurable request timeouts and think
 
 test("course planning jobs can be explicitly retried when a provider call gets stuck", () => {
   const routeSource = readFileSync("src/app/api/generation-jobs/[id]/route.ts", "utf8");
+  const jobStatusSource = readFileSync("src/lib/generationJobStatus.ts", "utf8");
   const runnerSource = readFileSync("src/lib/generationRunner.ts", "utf8");
 
   assert.match(routeSource, /retry: input\.retry/u);
-  assert.match(routeSource, /markStaleJobFailed/u);
-  assert.match(routeSource, /did not update for/u);
+  assert.match(routeSource, /getGenerationJobForRequest/u);
+  assert.match(jobStatusSource, /markStaleJobFailed/u);
+  assert.match(jobStatusSource, /did not update for/u);
   assert.match(runnerSource, /retry\?: boolean/u);
   assert.match(runnerSource, /status: "retrying"/u);
   assert.match(runnerSource, /job\.status === "running" && !input\.retry/u);

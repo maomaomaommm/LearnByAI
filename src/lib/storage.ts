@@ -83,6 +83,19 @@ export function saveCourse(course: Course) {
   localStorage.setItem(COURSES_KEY, JSON.stringify(courses));
 }
 
+export function deleteCourse(id: string) {
+  const courses = getCourses();
+  const course = courses.find((item) => item.id === id);
+  const chapterIds = new Set(course?.chapters.map((chapter) => chapter.id) ?? []);
+
+  localStorage.setItem(COURSES_KEY, JSON.stringify(courses.filter((item) => item.id !== id)));
+
+  const annotations = readStorageArray<Annotation>(ANNOTATIONS_KEY).filter(
+    (annotation) => annotation.courseId !== id && !chapterIds.has(annotation.chapterId),
+  );
+  localStorage.setItem(ANNOTATIONS_KEY, JSON.stringify(annotations));
+}
+
 export function getAnnotations(chapterId: string): Annotation[] {
   if (typeof window === "undefined") return [];
   const all = readStorageArray<Annotation>(ANNOTATIONS_KEY);
