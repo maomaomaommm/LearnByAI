@@ -114,7 +114,7 @@ export default function CreateCoursePage() {
                     <BookOpen size={16} className="text-foreground" />
                     <h2 className="text-sm font-semibold text-foreground">你想学习什么？</h2>
                   </div>
-                  <input name="topic" defaultValue="因果推断" required className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground outline-none placeholder:text-muted-foreground focus:border-foreground" />
+                  <input name="topic" placeholder="例如：量子计算、Rust 语言实战、微观经济学" required className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground outline-none placeholder:text-muted-foreground focus:border-foreground" />
                 </div>
 
                 <div className="rounded-lg border border-border bg-card p-5">
@@ -122,7 +122,7 @@ export default function CreateCoursePage() {
                     <Target size={16} className="text-foreground" />
                     <h2 className="text-sm font-semibold text-foreground">你的具体目标</h2>
                   </div>
-                  <textarea name="goal" defaultValue="系统掌握因果推断，能够读懂相关论文，并尝试做方法改进" required rows={2} className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground outline-none placeholder:text-muted-foreground focus:border-foreground resize-none" />
+                  <textarea name="goal" placeholder="例如：系统掌握核心概念，能够读懂相关论文，并能用代码独立复现经典算法" required rows={2} className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground outline-none placeholder:text-muted-foreground focus:border-foreground resize-none" />
                 </div>
 
                 <div className="rounded-lg border border-border bg-card p-5">
@@ -130,7 +130,7 @@ export default function CreateCoursePage() {
                     <User size={16} className="text-foreground" />
                     <h2 className="text-sm font-semibold text-foreground">你目前的基础</h2>
                   </div>
-                  <textarea name="background" defaultValue="会 Python，学过概率统计和基础机器学习，但没有系统学过因果推断" required rows={2} className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground outline-none placeholder:text-muted-foreground focus:border-foreground resize-none" />
+                  <textarea name="background" placeholder="例如：会 Python 编程，学过大学微积分和线性代数，但没有深入接触过当前领域" required rows={2} className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground outline-none placeholder:text-muted-foreground focus:border-foreground resize-none" />
                 </div>
 
                 <div className="grid gap-5 md:grid-cols-2">

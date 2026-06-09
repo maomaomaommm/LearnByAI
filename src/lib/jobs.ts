@@ -105,6 +105,18 @@ export function listGenerationJobs() {
   return [...jobs.values()].map((job) => structuredClone(job));
 }
 
+export function deleteGenerationJobsForCourse(courseId: string) {
+  hydrateJobs();
+  let deleted = false;
+  for (const job of jobs.values()) {
+    if (job.courseId === courseId) {
+      jobs.delete(job.id);
+      deleted = true;
+    }
+  }
+  if (deleted) persistJobs();
+}
+
 export function patchGenerationJob(jobId: string, patch: Partial<GenerationJob>) {
   hydrateJobs();
   const job = jobs.get(jobId);
