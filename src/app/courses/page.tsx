@@ -2,13 +2,26 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { BookOpen, ChevronRight, Plus } from "lucide-react";
+import { BookOpen, ChevronRight, Plus, Trash2 } from "lucide-react";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { apiFetch } from "@/lib/clientApi";
-import { getCourses, saveCourse } from "@/lib/storage";
+import { deleteCourse, getCourses, saveCourse } from "@/lib/storage";
 import { Course } from "@/lib/types";
 
 export default function CoursesPage() {
   const [courses, setCourses] = useState<Course[]>([]);
+  const [courseToDelete, setCourseToDelete] = useState<Course>();
+  const [deletingId, setDeletingId] = useState("");
+  const [deleteError, setDeleteError] = useState("");
 
   useEffect(() => {
     const localCourses = getCourses();
@@ -23,6 +36,29 @@ export default function CoursesPage() {
       })
       .catch(() => setCourses(getCourses()));
   }, []);
+
+  async function confirmDeleteCourse() {
+    if (!courseToDelete) return;
+    const target = courseToDelete;
+    setDeletingId(target.id);
+    setDeleteError("");
+
+    try {
+      const response = await apiFetch(`/api/courses/${target.id}`, { method: "DELETE" });
+      if (!response.ok && response.status !== 404) {
+        const data = (await response.json().catch(() => ({}))) as { error?: string };
+        throw new Error(data.error ?? "删除课程失败。");
+      }
+
+      deleteCourse(target.id);
+      setCourses((current) => current.filter((course) => course.id !== target.id));
+      setCourseToDelete(undefined);
+    } catch (error) {
+      setDeleteError(error instanceof Error ? error.message : "删除课程失败。");
+    } finally {
+      setDeletingId("");
+    }
+  }
 
   return (
     <div className="min-h-screen bg-background px-4 py-12">
@@ -50,24 +86,66 @@ export default function CoursesPage() {
         ) : (
           <div className="grid gap-4 md:grid-cols-2">
             {courses.map((course) => (
-              <Link
+              <div
                 key={course.id}
-                href={`/courses/${course.id}`}
-                className="rounded-lg border border-border bg-card p-5 transition-colors hover:border-foreground/40"
+                className="group relative rounded-lg border border-border bg-card p-5 transition-colors hover:border-foreground/40"
               >
-                <div className="mb-2 flex items-start justify-between gap-4">
-                  <h2 className="font-mono text-lg font-semibold text-foreground">{course.topic}</h2>
-                  <ChevronRight size={18} className="text-muted-foreground" />
-                </div>
-                <p className="line-clamp-2 text-sm text-muted-foreground">{course.goal}</p>
-                <p className="mt-4 text-xs text-muted-foreground">
-                  {course.chapters.length} 章 · {new Date(course.createdAt).toLocaleString()}
-                </p>
-              </Link>
+                <Link href={`/courses/${course.id}`} className="block pr-10">
+                  <div className="mb-2 flex items-start justify-between gap-4">
+                    <h2 className="font-mono text-lg font-semibold text-foreground">{course.topic}</h2>
+                    <ChevronRight size={18} className="mt-1 shrink-0 text-muted-foreground" />
+                  </div>
+                  <p className="line-clamp-2 text-sm text-muted-foreground">{course.goal}</p>
+                  <p className="mt-4 text-xs text-muted-foreground">
+                    {course.chapters.length} 章 · {new Date(course.createdAt).toLocaleString()}
+                  </p>
+                </Link>
+                <button
+                  type="button"
+                  aria-label={`删除课程：${course.topic}`}
+                  disabled={deletingId === course.id}
+                  onClick={() => {
+                    setDeleteError("");
+                    setCourseToDelete(course);
+                  }}
+                  className="absolute right-3 top-3 inline-flex size-8 items-center justify-center rounded-md text-muted-foreground opacity-100 transition-colors hover:bg-destructive/10 hover:text-destructive disabled:pointer-events-none disabled:opacity-50 md:opacity-0 md:group-hover:opacity-100 md:focus-visible:opacity-100"
+                >
+                  <Trash2 size={16} />
+                </button>
+              </div>
             ))}
           </div>
         )}
       </div>
+
+      <AlertDialog open={Boolean(courseToDelete)} onOpenChange={(open) => !open && setCourseToDelete(undefined)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>删除这门课程？</AlertDialogTitle>
+            <AlertDialogDescription>
+              将删除「{courseToDelete?.topic}」以及它的章节、批注、生成任务和导出记录。这个操作不能撤销。
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          {deleteError && (
+            <p className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+              {deleteError}
+            </p>
+          )}
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={Boolean(deletingId)}>取消</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={Boolean(deletingId)}
+              onClick={(event) => {
+                event.preventDefault();
+                void confirmDeleteCourse();
+              }}
+              className="bg-destructive text-white hover:bg-destructive/90"
+            >
+              {deletingId ? "删除中..." : "确认删除"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

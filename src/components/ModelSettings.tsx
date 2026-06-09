@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Settings2, Sparkles } from "lucide-react";
+import { Settings2, Sparkles, Loader2, Activity } from "lucide-react";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { Button } from "@/components/ui/button";
 import {
@@ -221,30 +221,96 @@ function Fields({
   values: ModelOverrideFields;
   onChange: (field: keyof ModelOverrideFields, value: string) => void;
 }) {
+  const [isTesting, setIsTesting] = useState(false);
+  const [testResult, setTestResult] = useState<{ ok: boolean; msg: string } | null>(null);
+
+  async function handleTest() {
+    setIsTesting(true);
+    setTestResult(null);
+    try {
+      const res = await fetch("/api/test-model", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(values),
+      });
+      const data = await res.json();
+      if (data.ok) {
+        setTestResult({ ok: true, msg: `连通成功 (${data.elapsed}ms)` });
+      } else {
+        setTestResult({ ok: false, msg: data.error || "请求失败" });
+      }
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "未知错误";
+      setTestResult({ ok: false, msg: `网络错误: ${message}` });
+    } finally {
+      setIsTesting(false);
+    }
+  }
+
   return (
-    <div className="grid gap-4 sm:grid-cols-3">
-      <Field
-        id={`${idPrefix}-api-key`}
-        label="API 密钥"
-        type="password"
-        autoComplete="off"
-        value={values.apiKey ?? ""}
-        onChange={(value) => onChange("apiKey", value)}
-      />
-      <Field
-        id={`${idPrefix}-base-url`}
-        label="接口地址"
-        type="url"
-        value={values.baseUrl ?? ""}
-        onChange={(value) => onChange("baseUrl", value)}
-      />
-      <Field
-        id={`${idPrefix}-model`}
-        label="模型名称"
-        type="text"
-        value={values.model ?? ""}
-        onChange={(value) => onChange("model", value)}
-      />
+    <div className="space-y-3.5">
+      <div className="grid gap-4 sm:grid-cols-3">
+        <Field
+          id={`${idPrefix}-api-key`}
+          label="API 密钥"
+          type="password"
+          autoComplete="off"
+          value={values.apiKey ?? ""}
+          onChange={(value) => {
+            onChange("apiKey", value);
+            setTestResult(null);
+          }}
+        />
+        <Field
+          id={`${idPrefix}-base-url`}
+          label="接口地址"
+          type="url"
+          value={values.baseUrl ?? ""}
+          onChange={(value) => {
+            onChange("baseUrl", value);
+            setTestResult(null);
+          }}
+        />
+        <Field
+          id={`${idPrefix}-model`}
+          label="模型名称"
+          type="text"
+          value={values.model ?? ""}
+          onChange={(value) => {
+            onChange("model", value);
+            setTestResult(null);
+          }}
+        />
+      </div>
+      <div className="flex items-center gap-3 border-t border-border/30 pt-2.5">
+        <Button
+          type="button"
+          variant="secondary"
+          size="sm"
+          className="h-7 px-3 text-[11px] font-medium shadow-none hover:bg-primary/10 hover:text-primary transition-colors"
+          onClick={handleTest}
+          disabled={isTesting}
+        >
+          {isTesting ? (
+            <Loader2 className="mr-1.5 h-3 w-3 animate-spin" />
+          ) : (
+            <Activity className="mr-1.5 h-3 w-3" />
+          )}
+          连通测试
+        </Button>
+        {testResult && (
+          <span
+            className={cn(
+              "line-clamp-1 flex-1 text-[11px] font-medium",
+              testResult.ok ? "text-emerald-600 dark:text-emerald-400" : "text-destructive",
+            )}
+            title={testResult.msg}
+          >
+            {testResult.ok ? "✅ " : "❌ "}
+            {testResult.msg}
+          </span>
+        )}
+      </div>
     </div>
   );
 }
