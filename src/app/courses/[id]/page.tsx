@@ -9,7 +9,7 @@ import { AgentEvent, Course, ExportJob, GenerationJob, JobStatus } from "@/lib/t
 import { MarkdownContent } from "@/components/MarkdownContent";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { Target, Lightbulb, GraduationCap, ArrowLeft, FileText, ChevronRight, Clock, Download } from "lucide-react";
-import { apiFetch } from "@/lib/clientApi";
+import { apiFetch, subscribeToSse } from "@/lib/clientApi";
 import { publicSafeErrorMessage } from "@/lib/publicSafeError";
 
 export default function CourseOverviewPage() {
@@ -25,18 +25,6 @@ export default function CourseOverviewPage() {
   useEffect(() => {
     const stored = getCourse(id);
     if (stored) setCourse(stored);
-
-    apiFetch(`/api/courses/${id}`)
-      .then((response) => (response.ok ? response.json() : undefined))
-      .then((data) => {
-        if (data?.course) {
-          setCourse(data.course);
-          saveCourse(data.course);
-        }
-      })
-      .catch(() => {
-        if (!stored) setCourse(undefined);
-      });
   }, [id]);
 
   const attemptedJobs = useRef<Set<string>>(new Set());
@@ -63,67 +51,51 @@ export default function CourseOverviewPage() {
   }, [backgroundJob, course]);
 
   useEffect(() => {
-    if (!course) return;
-    const jobIds = [
-      course.generationJobId,
-      ...course.chapters.map((chapter) => chapter.generationJobId),
-    ].filter(Boolean) as string[];
-    if (jobIds.length === 0) return;
-
     let cancelled = false;
-    const poll = async () => {
-      const entries = await Promise.all(
-        jobIds.map(async (jobId) => {
-          const response = await apiFetch(`/api/generation-jobs/${jobId}`);
-          if (!response.ok) {
-            const data = (await response.json().catch(() => ({}))) as { error?: string };
-            return {
-              id: jobId,
-              status: "failed" as JobStatus,
-              error: data.error ?? "Generation job was not found. If the dev server restarted, retry this job.",
-              events: [] as AgentEvent[],
-            } as const;
-          }
-          const data = (await response.json()) as { job?: GenerationJob };
-          return data.job
-            ? ({ id: jobId, status: data.job.status, error: data.job.error, events: data.job.events ?? [] } as const)
-            : undefined;
-        }),
-      );
-      if (!cancelled) {
-        const jobs = entries.filter((entry): entry is NonNullable<typeof entry> => Boolean(entry));
-        setJobStatus((current) => ({
-          ...current,
-          ...Object.fromEntries(jobs.map((entry) => [entry.id, entry.status])),
-        }));
-        setJobErrors((current) => ({
-          ...current,
-          ...Object.fromEntries(jobs.filter((entry) => entry.error).map((entry) => [entry.id, entry.error as string])),
-        }));
-        setJobEvents((current) => ({
-          ...current,
-          ...Object.fromEntries(jobs.map((entry) => [entry.id, entry.events])),
-        }));
-        if (jobs.some((entry) => entry.status === "succeeded")) {
-          const response = await apiFetch(`/api/courses/${id}`);
-          if (response.ok) {
-            const data = (await response.json()) as { course?: Course };
-            if (data.course && !cancelled && data.course.updatedAt !== course.updatedAt) {
-              setCourse(data.course);
-              saveCourse(data.course);
-            }
-          }
-        }
-      }
+
+    const applyCourse = (nextCourse: Course) => {
+      if (cancelled) return;
+      setCourse(nextCourse);
+      saveCourse(nextCourse);
+    };
+    const applyJobs = (jobs: GenerationJob[]) => {
+      if (cancelled || jobs.length === 0) return;
+      setJobStatus((current) => ({
+        ...current,
+        ...Object.fromEntries(jobs.map((job) => [job.id, job.status])),
+      }));
+      setJobErrors((current) => ({
+        ...current,
+        ...Object.fromEntries(jobs.map((job) => [job.id, job.error ?? ""])),
+      }));
+      setJobEvents((current) => ({
+        ...current,
+        ...Object.fromEntries(jobs.map((job) => [job.id, job.events ?? []])),
+      }));
     };
 
-    void poll();
-    const timer = window.setInterval(() => void poll(), 2500);
+    const subscription = subscribeToSse(`/api/courses/${id}/events`, {
+      onMessage(message) {
+        const data = message.data;
+        if (message.event === "snapshot") {
+          const snapshot = data as { course?: Course; jobs?: GenerationJob[] } | undefined;
+          if (snapshot?.course) applyCourse(snapshot.course);
+          if (snapshot?.jobs) applyJobs(snapshot.jobs);
+        } else if (message.event === "course") {
+          const payload = data as { course?: Course } | undefined;
+          if (payload?.course) applyCourse(payload.course);
+        } else if (message.event === "job") {
+          const payload = data as { job?: GenerationJob } | undefined;
+          if (payload?.job) applyJobs([payload.job]);
+        }
+      },
+    });
+
     return () => {
       cancelled = true;
-      window.clearInterval(timer);
+      subscription.close();
     };
-  }, [course, id]);
+  }, [id]);
 
   async function retryChapter(chapterId: string, generationJobId?: string) {
     if (!course || !generationJobId) return;
