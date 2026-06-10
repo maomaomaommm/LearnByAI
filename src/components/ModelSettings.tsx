@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Settings2, Sparkles, Loader2, Activity } from "lucide-react";
+import { Activity, Loader2, Settings2, Sparkles } from "lucide-react";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { Button } from "@/components/ui/button";
 import {
@@ -23,8 +23,8 @@ import {
   normalizeModelOverrides,
   parseModelOverrides,
 } from "@/lib/modelOverrides";
-import { cn } from "@/lib/utils";
 import type { AgentName } from "@/lib/types";
+import { cn } from "@/lib/utils";
 
 type ModelSettingsProps = {
   className?: string;
@@ -38,21 +38,21 @@ type ModelSettingsState = {
 };
 
 const AGENT_LABELS: Record<AgentName, string> = {
-  ASSISTANT: "助手智能体",
-  ARCHITECT: "架构智能体",
-  AUTHOR: "作者智能体",
-  POLISHER: "润色智能体",
-  REVIEWER: "审阅智能体",
-  TUTOR: "导师智能体",
+  ASSISTANT: "Assistant",
+  ARCHITECT: "Architect",
+  AUTHOR: "Author",
+  POLISHER: "Polisher",
+  REVIEWER: "Reviewer",
+  TUTOR: "Tutor",
 };
 
 const AGENT_DESCRIPTIONS: Record<AgentName, string> = {
-  ASSISTANT: "通用问答与协调。",
-  ARCHITECT: "课程结构与 Course Bible。",
-  AUTHOR: "章节正文生成。",
-  POLISHER: "章节润色与表达优化。",
-  REVIEWER: "质量审阅与问题检查。",
-  TUTOR: "阅读器内答疑。",
+  ASSISTANT: "General coordination and Q&A.",
+  ARCHITECT: "Course structure and Course Bible planning.",
+  AUTHOR: "Chapter textbook drafting.",
+  POLISHER: "Chapter polish and expression cleanup.",
+  REVIEWER: "Quality review and issue checks.",
+  TUTOR: "Reader-side tutoring.",
 };
 
 const EMPTY_FIELDS: ModelOverrideFields = {
@@ -100,17 +100,17 @@ export function ModelSettings({ className, showLabel = false, size }: ModelSetti
     const normalized = normalizeModelOverrides(toOverrides(settings));
     if (normalized) {
       localStorage.setItem(MODEL_CONFIG_STORAGE_KEY, JSON.stringify(normalized));
-      setStatus("已保存模型配置");
+      setStatus("Model settings saved.");
     } else {
       localStorage.removeItem(MODEL_CONFIG_STORAGE_KEY);
-      setStatus("配置为空，已清除");
+      setStatus("Empty settings cleared.");
     }
   }
 
   function clearSettings() {
     localStorage.removeItem(MODEL_CONFIG_STORAGE_KEY);
     setSettings(emptySettings());
-    setStatus("已清除模型配置");
+    setStatus("Model settings cleared.");
   }
 
   return (
@@ -122,42 +122,43 @@ export function ModelSettings({ className, showLabel = false, size }: ModelSetti
             variant="ghost"
             size={buttonSize}
             className={cn(
-              "text-muted-foreground hover:text-foreground rounded-full transition-all duration-300",
-              showLabel && "bg-secondary/40 hover:bg-secondary px-3.5 font-mono text-xs",
+              "rounded-full text-muted-foreground transition-all duration-300 hover:text-foreground",
+              showLabel && "bg-secondary/40 px-3.5 font-mono text-xs hover:bg-secondary",
               className,
             )}
-            aria-label="模型配置"
+            aria-label="Model settings"
             onClick={() => setOpen(true)}
           >
             <Settings2 className={cn("h-4 w-4", showLabel && "mr-2")} />
-            {showLabel && <span>模型配置</span>}
+            {showLabel && <span>Model settings</span>}
           </Button>
         </TooltipTrigger>
-        <TooltipContent sideOffset={6} className="text-xs">模型配置</TooltipContent>
+        <TooltipContent sideOffset={6} className="text-xs">
+          Model settings
+        </TooltipContent>
       </Tooltip>
+
       <DialogContent className="max-h-[90vh] overflow-hidden sm:max-w-2xl">
         <DialogHeader>
-          <DialogTitle>模型配置</DialogTitle>
-          <DialogDescription>配置全局默认模型，也可以为每个智能体单独指定接口。</DialogDescription>
+          <DialogTitle>Model Settings</DialogTitle>
+          <DialogDescription>
+            Configure a default model endpoint, or override individual agents.
+          </DialogDescription>
         </DialogHeader>
 
-        <div className="max-h-[65vh] overflow-y-auto pr-2 pb-2 scrollbar-thin">
-          <section className="mb-6 relative overflow-hidden rounded-xl border border-primary/20 bg-primary/5 p-5">
-            <div className="absolute left-0 top-0 h-full w-1 bg-primary/40"></div>
+        <div className="max-h-[65vh] overflow-y-auto pb-2 pr-2 scrollbar-thin">
+          <section className="relative mb-6 overflow-hidden rounded-xl border border-primary/20 bg-primary/5 p-5">
+            <div className="absolute left-0 top-0 h-full w-1 bg-primary/40" />
             <h3 className="mb-5 flex items-center gap-2 text-sm font-semibold tracking-tight text-foreground">
               <Sparkles className="h-4 w-4 text-primary" />
-              全局默认配置
+              Default Configuration
             </h3>
-            <Fields
-              idPrefix="model-default"
-              values={settings.default}
-              onChange={updateDefault}
-            />
+            <Fields idPrefix="model-default" values={settings.default} onChange={updateDefault} />
           </section>
 
           <div className="mb-3 px-1">
             <h4 className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/70">
-              智能体专属覆写 (可选)
+              Agent Overrides
             </h4>
           </div>
 
@@ -175,13 +176,17 @@ export function ModelSettings({ className, showLabel = false, size }: ModelSetti
                     </span>
                     <span className="flex flex-col gap-0.5">
                       <span className="font-mono text-sm font-medium tracking-tight">{agent}</span>
-                      <span className="text-[10px] font-normal text-muted-foreground">{AGENT_LABELS[agent]}</span>
+                      <span className="text-[10px] font-normal text-muted-foreground">
+                        {AGENT_LABELS[agent]}
+                      </span>
                     </span>
                   </span>
                 </AccordionTrigger>
                 <AccordionContent className="pb-5 pt-1">
                   <div className="mb-5 rounded-md bg-muted/50 px-3 py-2.5">
-                    <p className="text-xs leading-relaxed text-muted-foreground">{AGENT_DESCRIPTIONS[agent]}</p>
+                    <p className="text-xs leading-relaxed text-muted-foreground">
+                      {AGENT_DESCRIPTIONS[agent]}
+                    </p>
                   </div>
                   <Fields
                     idPrefix={`model-${agent.toLowerCase()}`}
@@ -200,10 +205,10 @@ export function ModelSettings({ className, showLabel = false, size }: ModelSetti
           </div>
           <div className="flex flex-col-reverse gap-2 sm:flex-row">
             <Button type="button" variant="outline" onClick={clearSettings}>
-              清空
+              Clear
             </Button>
             <Button type="button" onClick={saveSettings}>
-              保存
+              Save
             </Button>
           </div>
         </DialogFooter>
@@ -235,13 +240,13 @@ function Fields({
       });
       const data = await res.json();
       if (data.ok) {
-        setTestResult({ ok: true, msg: `连通成功 (${data.elapsed}ms)` });
+        setTestResult({ ok: true, msg: `Connected (${data.elapsed}ms)` });
       } else {
-        setTestResult({ ok: false, msg: data.error || "请求失败" });
+        setTestResult({ ok: false, msg: data.error || "Request failed" });
       }
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : "未知错误";
-      setTestResult({ ok: false, msg: `网络错误: ${message}` });
+      const message = err instanceof Error ? err.message : "Unknown error";
+      setTestResult({ ok: false, msg: `Network error: ${message}` });
     } finally {
       setIsTesting(false);
     }
@@ -252,7 +257,7 @@ function Fields({
       <div className="grid gap-4 sm:grid-cols-3">
         <Field
           id={`${idPrefix}-api-key`}
-          label="API 密钥"
+          label="API Key"
           type="password"
           autoComplete="off"
           value={values.apiKey ?? ""}
@@ -263,7 +268,7 @@ function Fields({
         />
         <Field
           id={`${idPrefix}-base-url`}
-          label="接口地址"
+          label="Base URL"
           type="url"
           value={values.baseUrl ?? ""}
           onChange={(value) => {
@@ -273,7 +278,7 @@ function Fields({
         />
         <Field
           id={`${idPrefix}-model`}
-          label="模型名称"
+          label="Model"
           type="text"
           value={values.model ?? ""}
           onChange={(value) => {
@@ -287,7 +292,7 @@ function Fields({
           type="button"
           variant="secondary"
           size="sm"
-          className="h-7 px-3 text-[11px] font-medium shadow-none hover:bg-primary/10 hover:text-primary transition-colors"
+          className="h-7 px-3 text-[11px] font-medium shadow-none transition-colors hover:bg-primary/10 hover:text-primary"
           onClick={handleTest}
           disabled={isTesting}
         >
@@ -296,7 +301,7 @@ function Fields({
           ) : (
             <Activity className="mr-1.5 h-3 w-3" />
           )}
-          连通测试
+          Test
         </Button>
         {testResult && (
           <span
@@ -306,7 +311,7 @@ function Fields({
             )}
             title={testResult.msg}
           >
-            {testResult.ok ? "✅ " : "❌ "}
+            {testResult.ok ? "OK: " : "Error: "}
             {testResult.msg}
           </span>
         )}
@@ -342,8 +347,8 @@ function Field({
         autoComplete={autoComplete}
         spellCheck={false}
         onChange={(event) => onChange(event.target.value)}
-        placeholder={label === "API 密钥" ? "未配置则使用默认" : ""}
-        className="h-8 bg-secondary/30 border-border/60 text-xs font-mono placeholder:text-muted-foreground/40 focus-visible:bg-background transition-colors"
+        placeholder={label === "API Key" ? "Use server default" : ""}
+        className="h-8 border-border/60 bg-secondary/30 font-mono text-xs transition-colors placeholder:text-muted-foreground/40 focus-visible:bg-background"
       />
     </div>
   );

@@ -4,20 +4,18 @@ import { generateChapter } from "@/lib/maol/client";
 import { parseModelOverridesFromHeaders } from "@/lib/modelOverrides";
 import { withQuotaConsumption } from "@/lib/quota";
 import { safeErrorMessage } from "@/lib/safeError";
-import { canUseCourseSnapshot, getServerCourse, saveServerGenerationJob, saveServerQualityReport, updateServerChapter } from "@/lib/serverStore";
-import { Course } from "@/lib/types";
+import { getServerCourse, saveServerGenerationJob, saveServerQualityReport, updateServerChapter } from "@/lib/serverStore";
 
 export async function POST(
   request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params;
-  const input = (await request.json()) as { courseId: string; course?: Course };
+  const input = (await request.json()) as { courseId: string };
   const auth = await requireApiUser(request);
   if ("response" in auth) return auth.response;
 
-  const persistedCourse = await getServerCourse(input.courseId, request);
-  const course = persistedCourse ?? ((await canUseCourseSnapshot(input.course, request)) ? input.course : undefined);
+  const course = await getServerCourse(input.courseId, request);
 
   if (!course) {
     return NextResponse.json({ error: "Course not found" }, { status: 404 });

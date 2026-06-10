@@ -3,7 +3,6 @@
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useState, useRef } from "react";
-import { getCourse, saveCourse } from "@/lib/storage";
 import { formatMinutes, totalMinutes } from "@/lib/time";
 import { AgentEvent, Course, ExportJob, GenerationJob, JobStatus } from "@/lib/types";
 import { MarkdownContent } from "@/components/MarkdownContent";
@@ -21,10 +20,26 @@ export default function CourseOverviewPage() {
   const [jobStatus, setJobStatus] = useState<Record<string, JobStatus>>({});
   const [jobErrors, setJobErrors] = useState<Record<string, string>>({});
   const [jobEvents, setJobEvents] = useState<Record<string, AgentEvent[]>>({});
+  const [loadError, setLoadError] = useState("");
 
   useEffect(() => {
-    const stored = getCourse(id);
-    if (stored) setCourse(stored);
+    let cancelled = false;
+    setLoadError("");
+
+    apiFetch(`/api/courses/${id}`)
+      .then((response) => (response.ok ? response.json() : undefined))
+      .then((data) => {
+        if (cancelled) return;
+        if (data?.course) setCourse(data.course);
+        else setLoadError("课程不存在，或你没有访问权限。");
+      })
+      .catch(() => {
+        if (!cancelled) setLoadError("读取课程失败，请稍后重试。");
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, [id]);
 
   const attemptedJobs = useRef<Set<string>>(new Set());
@@ -38,13 +53,12 @@ export default function CourseOverviewPage() {
     setBackgroundJob(queued.generationJobId);
     apiFetch(`/api/generation-jobs/${queued.generationJobId}`, {
       method: "POST",
-      body: JSON.stringify({ courseId: course.id, course }),
+      body: JSON.stringify({ retry: false }),
     })
       .then((response) => (response.ok ? response.json() : undefined))
       .then((data) => {
         if (data?.course) {
           setCourse(data.course);
-          saveCourse(data.course);
         }
       })
       .finally(() => setBackgroundJob(""));
@@ -56,7 +70,6 @@ export default function CourseOverviewPage() {
     const applyCourse = (nextCourse: Course) => {
       if (cancelled) return;
       setCourse(nextCourse);
-      saveCourse(nextCourse);
     };
     const applyJobs = (jobs: GenerationJob[]) => {
       if (cancelled || jobs.length === 0) return;
@@ -102,12 +115,11 @@ export default function CourseOverviewPage() {
     setBackgroundJob(generationJobId);
     const response = await apiFetch(`/api/generation-jobs/${generationJobId}`, {
       method: "POST",
-      body: JSON.stringify({ courseId: course.id, course, retry: true }),
+      body: JSON.stringify({ retry: true }),
     });
     const data = response.ok ? await response.json() : undefined;
     if (data?.course) {
       setCourse(data.course);
-      saveCourse(data.course);
     } else {
       const nextCourse = {
         ...course,
@@ -116,7 +128,6 @@ export default function CourseOverviewPage() {
         ),
       };
       setCourse(nextCourse);
-      saveCourse(nextCourse);
     }
     setBackgroundJob("");
   }
@@ -127,7 +138,7 @@ export default function CourseOverviewPage() {
     setJobErrors((current) => ({ ...current, [generationJobId]: "" }));
     const response = await apiFetch(`/api/generation-jobs/${generationJobId}`, {
       method: "POST",
-      body: JSON.stringify({ courseId: course.id, course, retry: true }),
+      body: JSON.stringify({ retry: true }),
     });
     const data = await response.json().catch(() => undefined);
     if (!response.ok) {
@@ -138,7 +149,6 @@ export default function CourseOverviewPage() {
     }
     if (data?.course) {
       setCourse(data.course);
-      saveCourse(data.course);
     }
     if (data?.job) {
       setJobStatus((current) => ({ ...current, [generationJobId]: data.job.status }));
@@ -156,7 +166,7 @@ export default function CourseOverviewPage() {
     try {
       const response = await apiFetch("/api/exports", {
         method: "POST",
-        body: JSON.stringify({ courseId: course.id, course, format }),
+        body: JSON.stringify({ courseId: course.id, format }),
       });
       const data = await response.json();
       if (!response.ok || !data.export) throw new Error(data.error ?? "Export failed");
@@ -181,7 +191,7 @@ export default function CourseOverviewPage() {
   if (!course) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background text-muted-foreground">
-        正在读取课程...
+        {loadError || "正在读取课程..."}
       </div>
     );
   }

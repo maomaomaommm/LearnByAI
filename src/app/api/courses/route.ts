@@ -49,12 +49,12 @@ export async function POST(request: Request) {
   const { course: linkedCourse, job: persistedJob } = result.value;
 
   if (shouldRunInlineGeneration(request)) {
-    scheduleCoursePlanning(request, linkedCourse, persistedJob.id);
+    scheduleCoursePlanning(request, persistedJob.id);
   }
   return NextResponse.json({ course: linkedCourse, job: persistedJob });
 }
 
-function scheduleCoursePlanning(request: Request, course: Course, jobId: string) {
+function scheduleCoursePlanning(request: Request, jobId: string) {
   const runnerRequest = new Request(request.url, {
     headers: new Headers(request.headers),
   });
@@ -62,7 +62,6 @@ function scheduleCoursePlanning(request: Request, course: Course, jobId: string)
   void runCourseGenerationJob({
     jobId,
     request: runnerRequest,
-    courseSnapshot: course,
   }).catch((error) => {
     console.error("Background course planning failed", error);
   });

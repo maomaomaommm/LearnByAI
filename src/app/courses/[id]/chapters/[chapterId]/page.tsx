@@ -6,7 +6,6 @@ import { FormEvent, MouseEvent, useCallback, useEffect, useState } from "react";
 import { MarkdownContent } from "@/components/MarkdownContent";
 import { apiFetch, subscribeToSse } from "@/lib/clientApi";
 import { publicSafeErrorMessage } from "@/lib/publicSafeError";
-import { getAnnotations, getCourse, saveAnnotation, saveCourse } from "@/lib/storage";
 import { formatMinutes, totalMinutes } from "@/lib/time";
 import { Annotation, Chapter, ChapterGenerateResponse, Course, Section } from "@/lib/types";
 import { ThemeToggle } from "@/components/ThemeToggle";
@@ -60,7 +59,6 @@ export default function ReaderPage() {
   const canPrint = Boolean(chapter && !loading && !generationError && hasChapterBody(chapter));
 
   const applyCourseUpdate = useCallback((nextCourse: Course) => {
-    saveCourse(nextCourse);
     setCourse(nextCourse);
     setGenerationError("");
 
@@ -113,7 +111,7 @@ export default function ReaderPage() {
 
     apiFetch(`/api/chapters/${current.id}/generate`, {
       method: "POST",
-      body: JSON.stringify({ courseId: stored.id, course: stored }),
+      body: JSON.stringify({ courseId: stored.id }),
     })
       .then(async (response) => {
         const data = (await response.json()) as ChapterGenerateResponse & { error?: string };
@@ -139,24 +137,23 @@ export default function ReaderPage() {
   }, [applyCourseUpdate, chapterId]);
 
   useEffect(() => {
-    const stored = getCourse(id);
-    if (stored) applyCourseUpdate(stored);
-    setAnnotations(getAnnotations(chapterId));
+    let cancelled = false;
+    setLoading(true);
+    setGenerationError("");
+    setAnnotations([]);
 
     apiFetch(`/api/annotations?chapterId=${chapterId}`)
       .then((response) => (response.ok ? response.json() : undefined))
       .then((data) => {
-        if (data?.annotations) {
-          data.annotations.forEach((annotation: Annotation) => saveAnnotation(annotation));
-          setAnnotations(getAnnotations(chapterId));
-        }
+        if (!cancelled && data?.annotations) setAnnotations(data.annotations);
       })
       .catch(() => undefined);
 
     apiFetch(`/api/courses/${id}`)
       .then((response) => (response.ok ? response.json() : undefined))
       .then((data) => {
-        const courseData = (data?.course as Course | undefined) ?? stored;
+        if (cancelled) return;
+        const courseData = data?.course as Course | undefined;
         if (!courseData) {
           setLoading(false);
           return;
@@ -164,9 +161,12 @@ export default function ReaderPage() {
         void ensureChapterContent(courseData);
       })
       .catch(() => {
-        if (stored) void ensureChapterContent(stored);
-        else setLoading(false);
+        if (!cancelled) setLoading(false);
       });
+
+    return () => {
+      cancelled = true;
+    };
   }, [applyCourseUpdate, chapterId, ensureChapterContent, id]);
 
   useEffect(() => {
@@ -271,13 +271,10 @@ export default function ReaderPage() {
     }
 
     if (savedAnnotation) {
-      saveAnnotation(savedAnnotation);
+      setAnnotations((current) => upsertAnnotation(current, savedAnnotation));
     } else {
       annotation.messages.push({ id: crypto.randomUUID(), role: "assistant", content: answer });
-      saveAnnotation(annotation);
     }
-    const next = getAnnotations(chapterId);
-    setAnnotations(next);
     setActive({ ...(savedAnnotation ?? annotation) });
     setAnswering(false);
   }
@@ -560,4 +557,10 @@ export default function ReaderPage() {
       )}
     </div>
   );
+}
+
+function upsertAnnotation(annotations: Annotation[], annotation: Annotation) {
+  const index = annotations.findIndex((item) => item.id === annotation.id);
+  if (index === -1) return [...annotations, annotation];
+  return annotations.map((item) => (item.id === annotation.id ? annotation : item));
 }

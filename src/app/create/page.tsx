@@ -7,15 +7,19 @@ import { ArrowRight, BookOpen, Target, User, Clock, GraduationCap, Loader2, Rout
 import Link from "next/link";
 import { apiFetch } from "@/lib/clientApi";
 import { publicSafeErrorMessage } from "@/lib/publicSafeError";
-import { saveCourse } from "@/lib/storage";
 import { Course, CourseCreateResponse } from "@/lib/types";
 
 export default function CreateCoursePage() {
   const router = useRouter();
+  const [hydrated, setHydrated] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [progress, setProgress] = useState(0);
   const [progressStage, setProgressStage] = useState("准备生成");
+
+  useEffect(() => {
+    setHydrated(true);
+  }, []);
 
   useEffect(() => {
     if (!loading) return;
@@ -75,7 +79,6 @@ export default function CreateCoursePage() {
       
       setProgress(100);
       setProgressStage("生成完成，正在打开课程");
-      saveCourse(course);
       
       router.push(`/courses/${course.id}`);
     } catch (error) {
@@ -159,7 +162,11 @@ export default function CreateCoursePage() {
                   </div>
                 </div>
 
-                <button type="submit" className="inline-flex w-full items-center justify-center gap-2 rounded-md bg-foreground px-6 py-3 text-sm font-medium text-background hover:bg-foreground/90 transition-colors">
+                <button
+                  type="submit"
+                  disabled={!hydrated}
+                  className="inline-flex w-full items-center justify-center gap-2 rounded-md bg-foreground px-6 py-3 text-sm font-medium text-background hover:bg-foreground/90 disabled:cursor-not-allowed disabled:opacity-60 transition-colors"
+                >
                   生成我的课程
                   <ArrowRight size={16} />
                 </button>

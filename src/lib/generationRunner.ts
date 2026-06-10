@@ -7,7 +7,6 @@ import { parseModelOverridesFromHeaders } from "./modelOverrides";
 import { withQuotaConsumption } from "./quota";
 import { safeErrorMessage } from "./safeError";
 import {
-  canUseCourseSnapshot,
   getServerCourse,
   getServerGenerationJob,
   saveServerCourse,
@@ -15,42 +14,16 @@ import {
   saveServerQualityReport,
   updateServerChapter,
 } from "./serverStore";
-import { Course, GenerationJob } from "./types";
+import { GenerationJob } from "./types";
 
 export async function runCourseGenerationJob(input: {
   jobId: string;
   request?: Request;
-  courseSnapshot?: Course;
   retry?: boolean;
 }) {
   const overrides = parseModelOverridesFromHeaders(input.request?.headers);
   const persistedJob = await getServerGenerationJob(input.jobId, input.request);
   let job = getGenerationJob(input.jobId) ?? (persistedJob ? upsertGenerationJob(persistedJob) : undefined);
-  const allowedSnapshot = (await canUseCourseSnapshot(input.courseSnapshot, input.request)) ? input.courseSnapshot : undefined;
-
-  if (!job && allowedSnapshot?.generationJobId === input.jobId) {
-    const now = new Date().toISOString();
-    job = upsertGenerationJob({
-      id: input.jobId,
-      type: "course",
-      courseId: allowedSnapshot.id,
-      userId: allowedSnapshot.userId,
-      activeAgent: "ARCHITECT",
-      status: input.retry ? "retrying" : "queued",
-      events: [
-        {
-          id: crypto.randomUUID(),
-          agent: "ARCHITECT",
-          status: input.retry ? "retrying" : "queued",
-          message: "Recovered course planning job from local course snapshot.",
-          createdAt: now,
-        },
-      ],
-      createdAt: now,
-      updatedAt: now,
-    });
-    await saveServerGenerationJob(job, input.request);
-  }
 
   if (!job) {
     return {
@@ -86,9 +59,9 @@ export async function runCourseGenerationJob(input: {
     }
   }
 
-  const course = (await getServerCourse(courseId, input.request)) ?? allowedSnapshot;
+  const course = await getServerCourse(courseId, input.request);
   if (!course) {
-    const failedJob = failGenerationJob(job.id, "Course snapshot unavailable for course planning job.");
+    const failedJob = failGenerationJob(job.id, "Persisted course unavailable for course planning job.");
     if (failedJob) await saveServerGenerationJob(failedJob, input.request);
     return {
       error: "Course not found",
@@ -125,21 +98,13 @@ export async function runCourseGenerationJob(input: {
       message: "First chapter queued for background generation.",
     });
 
+
     const chapters = generated.chapters.map((chapter, index) => ({
       ...chapter,
       id: crypto.randomUUID(),
       status: index === 0 ? ("queued" as const) : ("pending" as const),
       generationJobId: index === 0 ? firstChapterJob.id : undefined,
     }));
-    const firstChapter = chapters[0];
-    if (firstChapter) {
-      const linkedChapterJob = patchGenerationJob(firstChapterJob.id, {
-        courseId: course.id,
-        chapterId: firstChapter.id,
-      });
-      if (linkedChapterJob) await saveServerGenerationJob(linkedChapterJob, input.request);
-    }
-
     const plannedCourse = await saveServerCourse(
       {
         ...course,
@@ -156,11 +121,19 @@ export async function runCourseGenerationJob(input: {
       await saveServerGenerationJob(completedJob, input.request);
     }
 
+    const firstChapter = chapters[0];
+    if (firstChapter) {
+      const linkedChapterJob = patchGenerationJob(firstChapterJob.id, {
+        courseId: course.id,
+        chapterId: firstChapter.id,
+      });
+      if (linkedChapterJob) await saveServerGenerationJob(linkedChapterJob, input.request);
+    }
+
     if (firstChapter?.generationJobId && shouldRunInlineGeneration(input.request)) {
       void runChapterGenerationJob({
         jobId: firstChapter.generationJobId,
         request: input.request,
-        courseSnapshot: plannedCourse,
       }).catch((error) => {
         console.error("Background chapter generation failed", error);
       });
@@ -185,30 +158,11 @@ export async function runCourseGenerationJob(input: {
 export async function runChapterGenerationJob(input: {
   jobId: string;
   request?: Request;
-  courseSnapshot?: Course;
   retry?: boolean;
 }) {
   const overrides = parseModelOverridesFromHeaders(input.request?.headers);
   const persistedJob = await getServerGenerationJob(input.jobId, input.request);
   let job = getGenerationJob(input.jobId) ?? (persistedJob ? upsertGenerationJob(persistedJob) : undefined);
-  const allowedSnapshot = (await canUseCourseSnapshot(input.courseSnapshot, input.request)) ? input.courseSnapshot : undefined;
-
-  if (!job && allowedSnapshot) {
-    const chapter = allowedSnapshot.chapters.find((item) => item.generationJobId === input.jobId);
-    if (chapter) {
-      const synthetic = createGenerationJob({
-        type: "chapter",
-        courseId: allowedSnapshot.id,
-        chapterId: chapter.id,
-        userId: allowedSnapshot.userId,
-        activeAgent: "AUTHOR",
-        status: "queued",
-        message: "Recovered queued chapter job from course snapshot.",
-      });
-      job = synthetic;
-      await saveServerGenerationJob(synthetic, input.request);
-    }
-  }
 
   if (!job) {
     return {
@@ -225,7 +179,7 @@ export async function runChapterGenerationJob(input: {
   if (job.status === "succeeded" && !input.retry) {
     const chapterId = job.chapterId;
     const persistedCourse = job.courseId ? await getServerCourse(job.courseId, input.request) : undefined;
-    const course = persistedCourse ?? allowedSnapshot;
+    const course = persistedCourse;
     return {
       job,
       course,
@@ -236,7 +190,7 @@ export async function runChapterGenerationJob(input: {
   if ((job.status === "running" || job.status === "retrying") && !input.retry) {
     const chapterId = job.chapterId;
     const persistedCourse = job.courseId ? await getServerCourse(job.courseId, input.request) : undefined;
-    const course = persistedCourse ?? allowedSnapshot;
+    const course = persistedCourse;
     return {
       job,
       course,
@@ -256,12 +210,12 @@ export async function runChapterGenerationJob(input: {
   }
 
   const persistedCourse = job.courseId ? await getServerCourse(job.courseId, input.request) : undefined;
-  const course = persistedCourse ?? allowedSnapshot;
+  const course = persistedCourse;
   if (!course) {
     const failedJob = appendJobEvent(job.id, {
       agent: "ASSISTANT",
       status: "failed",
-      message: "Course snapshot unavailable for queued chapter job.",
+      message: "Persisted course unavailable for queued chapter job.",
     });
     if (failedJob) {
       await saveServerGenerationJob(failedJob, input.request);
