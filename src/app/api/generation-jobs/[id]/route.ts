@@ -4,7 +4,6 @@ import { getGenerationJobForRequest } from "@/lib/generationJobStatus";
 import { getGenerationJob, upsertGenerationJob } from "@/lib/jobs";
 import { runChapterGenerationJob, runCourseGenerationJob } from "@/lib/generationRunner";
 import { getServerGenerationJob } from "@/lib/serverStore";
-import { Course } from "@/lib/types";
 
 export async function GET(
   request: Request,
@@ -28,24 +27,26 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params;
-  const input = (await request.json().catch(() => ({}))) as { courseId?: string; course?: Course; retry?: boolean };
+  const input = (await request.json().catch(() => ({}))) as { retry?: boolean };
   const auth = await requireApiUser(request);
   if ("response" in auth) return auth.response;
 
   const persistedJob = await getServerGenerationJob(id, request);
   const job = getGenerationJob(id) ?? (persistedJob ? upsertGenerationJob(persistedJob) : undefined);
-  const isCourseJob = job?.type === "course" || input.course?.generationJobId === id;
+  if (!job) {
+    return NextResponse.json({ error: "Generation job not found" }, { status: 404 });
+  }
+
+  const isCourseJob = job.type === "course";
   const result = isCourseJob
     ? await runCourseGenerationJob({
         jobId: id,
         request,
-        courseSnapshot: input.course,
         retry: input.retry,
       })
     : await runChapterGenerationJob({
         jobId: id,
         request,
-        courseSnapshot: input.course,
         retry: input.retry,
       });
 

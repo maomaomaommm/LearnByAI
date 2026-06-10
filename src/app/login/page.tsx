@@ -1,19 +1,17 @@
 "use client";
 
 import { FormEvent, useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
 import { LogIn } from "lucide-react";
 import { publicSafeErrorMessage } from "@/lib/publicSafeError";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 
 export default function LoginPage() {
-  const router = useRouter();
+  const [hydrated, setHydrated] = useState(false);
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
-  const [localUser, setLocalUser] = useState("");
 
   useEffect(() => {
-    setLocalUser(localStorage.getItem("learnbyai:local-user") ?? "");
+    setHydrated(true);
   }, []);
 
   async function login(event: FormEvent<HTMLFormElement>) {
@@ -26,10 +24,7 @@ export default function LoginPage() {
     const supabase = createSupabaseBrowserClient();
 
     if (!supabase) {
-      localStorage.setItem("learnbyai:local-user", email);
-      setLocalUser(email);
-      setMessage("Supabase is not configured. You are signed in as a local Beta user.");
-      setTimeout(() => router.push("/courses"), 500);
+      setMessage("Supabase login is not configured. Please contact the administrator.");
       setLoading(false);
       return;
     }
@@ -50,8 +45,6 @@ export default function LoginPage() {
     if (supabase) {
       await supabase.auth.signOut();
     }
-    localStorage.removeItem("learnbyai:local-user");
-    setLocalUser("");
     setMessage("Signed out.");
   }
 
@@ -74,21 +67,19 @@ export default function LoginPage() {
           className="mb-4 w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:border-primary"
         />
         <button
-          disabled={loading}
-          className="w-full rounded-md bg-foreground px-4 py-2 text-sm font-medium text-background disabled:opacity-50"
+          disabled={!hydrated || loading}
+          className="w-full rounded-md bg-foreground px-4 py-2 text-sm font-medium text-background disabled:cursor-not-allowed disabled:opacity-50"
         >
-          {loading ? "Working..." : "Send magic link / local sign in"}
+          {loading ? "Working..." : "Send magic link"}
         </button>
         {message && <p className="mt-4 text-sm text-muted-foreground">{message}</p>}
-        {localUser && (
-          <button
-            type="button"
-            onClick={() => void logout()}
-            className="mt-4 w-full rounded-md border border-border px-4 py-2 text-sm text-muted-foreground hover:text-foreground"
-          >
-            Sign out local beta user
-          </button>
-        )}
+        <button
+          type="button"
+          onClick={() => void logout()}
+          className="mt-4 w-full rounded-md border border-border px-4 py-2 text-sm text-muted-foreground hover:text-foreground"
+        >
+          Sign out
+        </button>
       </form>
     </div>
   );

@@ -1,15 +1,17 @@
 import { expect, test } from "@playwright/test";
 
-test("local beta login sets API identity and logout clears it", async ({ page }) => {
+test("login does not create a browser-local API identity", async ({ page }) => {
   const email = `local-${crypto.randomUUID()}@example.com`;
 
   await page.goto("/login");
   await page.locator('input[name="email"]').fill(email);
-  await page.locator("form button").first().click();
-  await expect(page).toHaveURL(/\/courses$/, { timeout: 10_000 });
+  const submitButton = page.locator("form button").first();
+  await expect(submitButton).toBeEnabled();
+  await submitButton.click();
+  await expect(page.getByText("Supabase login is not configured. Please contact the administrator.")).toBeVisible();
   await expect(
     page.evaluate(() => localStorage.getItem("learnbyai:local-user")),
-  ).resolves.toBe(email);
+  ).resolves.toBeNull();
 
   const create = await page.request.post("/api/courses", {
     headers: { "x-learnbyai-user-id": email },
@@ -30,7 +32,7 @@ test("local beta login sets API identity and logout clears it", async ({ page })
   expect(ownRead.ok()).toBeTruthy();
 
   await page.goto("/login");
-  await page.getByRole("button", { name: "Sign out local beta user" }).click();
+  await page.getByRole("button", { name: "Sign out" }).click();
   await expect(page.getByText("Signed out.")).toBeVisible();
   await expect(
     page.evaluate(() => localStorage.getItem("learnbyai:local-user")),

@@ -70,10 +70,10 @@ function expectJobAgents(job: GenerationJobResponse["job"], agents: string[]) {
 }
 
 test("course API isolates local beta users by header", async ({ request }) => {
+  const userA = { "x-learnbyai-user-id": `user-a-${crypto.randomUUID()}@example.com` };
+  const userB = { "x-learnbyai-user-id": `user-b-${crypto.randomUUID()}@example.com` };
   const create = await request.post("/api/courses", {
-    headers: {
-      "x-learnbyai-user-id": "user-a@example.com",
-    },
+    headers: userA,
     data: {
       topic: "用户隔离测试",
       goal: "验证课程归属隔离",
@@ -88,24 +88,18 @@ test("course API isolates local beta users by header", async ({ request }) => {
   const courseId = created.course.id;
 
   const ownRead = await request.get(`/api/courses/${courseId}`, {
-    headers: {
-      "x-learnbyai-user-id": "user-a@example.com",
-    },
+    headers: userA,
   });
   expect(ownRead.ok()).toBeTruthy();
 
   const otherRead = await request.get(`/api/courses/${courseId}`, {
-    headers: {
-      "x-learnbyai-user-id": "user-b@example.com",
-    },
+    headers: userB,
   });
   expect(otherRead.status()).toBe(404);
 
   const snapshotByOther = await request.post("/api/exports", {
-    headers: {
-      "x-learnbyai-user-id": "user-b@example.com",
-    },
-    data: { courseId, course: created.course, format: "pdf" },
+    headers: userB,
+    data: { courseId, format: "pdf" },
   });
   expect(snapshotByOther.status()).toBe(404);
 });
@@ -155,8 +149,8 @@ test("concurrent course creation cannot bypass local beta quota", async ({ reque
 });
 
 test("export downloads are isolated by local beta user", async ({ request }) => {
-  const userA = { "x-learnbyai-user-id": "export-a@example.com" };
-  const userB = { "x-learnbyai-user-id": "export-b@example.com" };
+  const userA = { "x-learnbyai-user-id": `export-a-${crypto.randomUUID()}@example.com` };
+  const userB = { "x-learnbyai-user-id": `export-b-${crypto.randomUUID()}@example.com` };
   const create = await request.post("/api/courses", {
     headers: userA,
     data: {
@@ -172,7 +166,7 @@ test("export downloads are isolated by local beta user", async ({ request }) => 
   const { course } = await create.json();
   const exportResponse = await request.post("/api/exports", {
     headers: userA,
-    data: { courseId: course.id, course, format: "pdf" },
+    data: { courseId: course.id, format: "pdf" },
   });
   expect(exportResponse.ok()).toBeTruthy();
   const exportJson = await exportResponse.json();
@@ -231,19 +225,19 @@ test("export quota records only valid owned export attempts", async ({ request }
 
   const first = await request.post("/api/exports", {
     headers,
-    data: { courseId: course.id, course, format: "pdf" },
+    data: { courseId: course.id, format: "pdf" },
   });
   expect(first.ok()).toBeTruthy();
 
   const second = await request.post("/api/exports", {
     headers,
-    data: { courseId: course.id, course, format: "tex" },
+    data: { courseId: course.id, format: "tex" },
   });
   expect(second.ok()).toBeTruthy();
 
   const blocked = await request.post("/api/exports", {
     headers,
-    data: { courseId: course.id, course, format: "pdf" },
+    data: { courseId: course.id, format: "pdf" },
   });
   expect(blocked.status()).toBe(429);
   expect((await blocked.json()).error).toContain("Daily quota");
@@ -433,7 +427,7 @@ test("chapter generation job respects generate_chapter quota", async ({ request 
 
   const allowedRetry = await request.post(`/api/generation-jobs/${jobId}`, {
     headers,
-    data: { courseId: course.id, course, retry: true },
+    data: { retry: true },
   });
   expect(allowedRetry.ok()).toBeTruthy();
   const allowedRetryJson = await allowedRetry.json();
@@ -441,7 +435,7 @@ test("chapter generation job respects generate_chapter quota", async ({ request 
 
   const blockedRetry = await request.post(`/api/generation-jobs/${jobId}`, {
     headers,
-    data: { courseId: course.id, course: allowedRetryJson.course, retry: true },
+    data: { retry: true },
   });
   expect(blockedRetry.status()).toBe(429);
   const blockedJson = await blockedRetry.json();
@@ -468,10 +462,12 @@ test("chapter generation job can be retried through the job API", async ({ reque
   const { course } = await waitForPlannedCourse(request, created.course.id, created.job.id, headers);
   const chapter = course.chapters[0];
   const jobId = chapter.generationJobId;
+  expect(jobId).toBeTruthy();
+  await waitForGenerationJobStatus(request, jobId, headers, "succeeded");
 
   const firstRun = await request.post(`/api/generation-jobs/${jobId}`, {
     headers,
-    data: { courseId: course.id, course },
+    data: {},
   });
   expect(firstRun.ok()).toBeTruthy();
   const firstRunJson = await firstRun.json();
@@ -480,12 +476,15 @@ test("chapter generation job can be retried through the job API", async ({ reque
 
   const retryRun = await request.post(`/api/generation-jobs/${jobId}`, {
     headers,
-    data: { courseId: course.id, course: firstRunJson.course, retry: true },
+    data: { retry: true },
   });
   expect(retryRun.ok()).toBeTruthy();
-  const retryJson = await retryRun.json();
+  await waitForGenerationJobStatus(request, jobId, headers, "succeeded");
+  const retryJson = await readGenerationJob(request, jobId, headers);
   expect(retryJson.job.status).toBe("succeeded");
-  expect(retryJson.chapter.status).toBe("ready");
+  const retriedCourse = await request.get(`/api/courses/${course.id}`, { headers });
+  expect(retriedCourse.ok()).toBeTruthy();
+  expect((await retriedCourse.json()).course.chapters[0].status).toBe("ready");
 });
 
 test("legacy chapter generation endpoint is disabled without consuming quota", async ({ request }) => {

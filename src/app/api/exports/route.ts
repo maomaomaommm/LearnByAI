@@ -4,7 +4,7 @@ import { createCourseExport } from "@/lib/exports";
 import { completeGenerationJob, createGenerationJob } from "@/lib/jobs";
 import { withQuotaConsumption } from "@/lib/quota";
 import { safeErrorMessage } from "@/lib/safeError";
-import { canUseCourseSnapshot, getServerCourse, listServerExports, saveServerExport, saveServerGenerationJob } from "@/lib/serverStore";
+import { getServerCourse, listServerExports, saveServerExport, saveServerGenerationJob } from "@/lib/serverStore";
 
 export async function GET(request: Request) {
   const auth = await requireApiUser(request);
@@ -21,8 +21,7 @@ export async function POST(request: Request) {
     const auth = await requireApiUser(request);
     if ("response" in auth) return auth.response;
 
-    const persistedCourse = await getServerCourse(input.courseId, request);
-    const course = persistedCourse ?? ((await canUseCourseSnapshot(input.course, request)) ? input.course : undefined);
+    const course = await getServerCourse(input.courseId, request);
     if (!course) {
       return NextResponse.json({ error: "Course not found" }, { status: 404 });
     }

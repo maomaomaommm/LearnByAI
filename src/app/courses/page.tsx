@@ -14,7 +14,6 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { apiFetch } from "@/lib/clientApi";
-import { deleteCourse, getCourses, saveCourse } from "@/lib/storage";
 import { Course } from "@/lib/types";
 
 export default function CoursesPage() {
@@ -22,19 +21,34 @@ export default function CoursesPage() {
   const [courseToDelete, setCourseToDelete] = useState<Course>();
   const [deletingId, setDeletingId] = useState("");
   const [deleteError, setDeleteError] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
 
   useEffect(() => {
-    const localCourses = getCourses();
-    setCourses(localCourses);
+    let cancelled = false;
+    setLoading(true);
+    setLoadError("");
+
     apiFetch("/api/courses")
       .then((response) => (response.ok ? response.json() : undefined))
       .then((data) => {
+        if (cancelled) return;
         if (data?.courses) {
-          data.courses.forEach((course: Course) => saveCourse(course));
-          setCourses((current) => mergeCourses(getCourses(), data.courses, current));
+          setCourses(data.courses);
+        } else {
+          setLoadError("读取课程失败，请先登录后重试。");
         }
       })
-      .catch(() => setCourses(getCourses()));
+      .catch(() => {
+        if (!cancelled) setLoadError("读取课程失败，请稍后重试。");
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   async function confirmDeleteCourse() {
@@ -50,7 +64,6 @@ export default function CoursesPage() {
         throw new Error(data.error ?? "删除课程失败。");
       }
 
-      deleteCourse(target.id);
       setCourses((current) => current.filter((course) => course.id !== target.id));
       setCourseToDelete(undefined);
     } catch (error) {
@@ -78,7 +91,17 @@ export default function CoursesPage() {
           </Link>
         </div>
 
-        {courses.length === 0 ? (
+        {loading ? (
+          <div className="rounded-lg border border-dashed border-border py-20 text-center">
+            <BookOpen size={32} className="mx-auto mb-4 text-muted-foreground" />
+            <p className="text-sm text-muted-foreground">正在读取课程...</p>
+          </div>
+        ) : loadError ? (
+          <div className="rounded-lg border border-dashed border-border py-20 text-center">
+            <BookOpen size={32} className="mx-auto mb-4 text-muted-foreground" />
+            <p className="text-sm text-muted-foreground">{loadError}</p>
+          </div>
+        ) : courses.length === 0 ? (
           <div className="rounded-lg border border-dashed border-border py-20 text-center">
             <BookOpen size={32} className="mx-auto mb-4 text-muted-foreground" />
             <p className="text-sm text-muted-foreground">还没有课程。</p>
@@ -148,21 +171,4 @@ export default function CoursesPage() {
       </AlertDialog>
     </div>
   );
-}
-
-function mergeCourses(localCourses: Course[], serverCourses: Course[], currentCourses: Course[]) {
-  const coursesById = new Map<string, Course>();
-
-  for (const course of [...currentCourses, ...localCourses, ...serverCourses]) {
-    coursesById.set(course.id, chooseCourse(coursesById.get(course.id), course));
-  }
-
-  return [...coursesById.values()].sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
-}
-
-function chooseCourse(existing: Course | undefined, incoming: Course) {
-  if (!existing) return incoming;
-  const existingUpdatedAt = Date.parse(existing.updatedAt ?? existing.createdAt);
-  const incomingUpdatedAt = Date.parse(incoming.updatedAt ?? incoming.createdAt);
-  return incomingUpdatedAt >= existingUpdatedAt ? incoming : existing;
 }

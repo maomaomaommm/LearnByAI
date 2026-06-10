@@ -242,12 +242,6 @@ export async function updateServerChapter(
   return saveServerCourse({ ...course, chapters }, request);
 }
 
-export async function canUseCourseSnapshot(course: Course | undefined, request?: Request) {
-  if (!course) return false;
-  const userId = await resolveUserId(request);
-  return !course.userId || course.userId === userId;
-}
-
 export async function saveServerAnnotation(annotation: Annotation, request?: Request) {
   const userId = await resolveUserId(request);
   const nextAnnotation = {

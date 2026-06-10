@@ -14,6 +14,7 @@
     "test:beta-health": "node scripts/beta-health.mjs",
     "test:worker-handoff": "node scripts/worker-handoff-smoke.mjs",
     "worker:once": "node scripts/run-generation-worker-once.mjs",
+    "worker:loop": "node scripts/run-generation-worker-loop.mjs",
     "test:phase-gate": "node scripts/run-local-gate.mjs",
     "test:beta-gate": "node scripts/run-beta-gate.mjs",
     "test:e2e": "node scripts/run-e2e.mjs",
