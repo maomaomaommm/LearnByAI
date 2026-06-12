@@ -30,6 +30,9 @@ export async function POST(request: Request) {
 
   const userId = auth.userId;
   const overrides = parseModelOverridesFromHeaders(request.headers);
+  const tutorContext = annotationValidation.course && annotationValidation.annotation
+    ? buildTutorContext(annotationValidation.course, annotationValidation.annotation)
+    : undefined;
   try {
     const result = await withQuotaConsumption(userId, "ask_tutor", async () => {
       const response = await askTutor({
@@ -37,6 +40,7 @@ export async function POST(request: Request) {
         selectedText: input.selectedText,
         question: input.question,
         history: input.history ?? [],
+        context: tutorContext,
         overrides,
         onJobUpdate: async (updatedJob) => {
           await saveServerGenerationJob(updatedJob, request);
@@ -98,7 +102,7 @@ async function validateAnnotationAnchor(annotationInput: unknown, request: Reque
     return { response: NextResponse.json({ error: "Section not found" }, { status: 404 }) };
   }
 
-  return { annotation };
+  return { annotation, course };
 }
 
 function courseHasChapter(course: Course, chapterId: string) {
@@ -109,4 +113,37 @@ function courseHasSection(course: Course, chapterId: string, sectionId: string) 
   return course.chapters
     .find((chapter) => chapter.id === chapterId)
     ?.sections?.some((section) => section.id === sectionId) ?? false;
+}
+
+function buildTutorContext(course: Course, annotation: Annotation) {
+  const chapterIndex = course.chapters.findIndex((chapter) => chapter.id === annotation.chapterId);
+  const chapter = course.chapters[chapterIndex];
+  if (!chapter) return undefined;
+
+  const chapterText = annotation.sectionId
+    ? chapter.sections?.find((section) => section.id === annotation.sectionId)?.content
+    : chapter.content ?? chapter.sections?.map((section) => section.content).join("\n\n");
+
+  return {
+    goal: course.goal,
+    learnerProfile: course.profile,
+    teachingStyle: course.courseBible.teachingStyle,
+    chapterTitle: chapter.title,
+    chapterDescription: chapter.description,
+    chapterPurpose: chapter.purpose,
+    previousChapterTitle: course.chapters[chapterIndex - 1]?.title,
+    nextChapterTitle: course.chapters[chapterIndex + 1]?.title,
+    chapterSummary: summarizeText(chapterText ?? ""),
+    terminology: course.courseBible.terminology.slice(0, 12).map((item) => ({
+      term: item.term,
+      definition: item.definition,
+    })),
+  };
+}
+
+function summarizeText(text: string) {
+  return text
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 1800);
 }

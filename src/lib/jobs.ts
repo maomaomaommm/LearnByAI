@@ -11,23 +11,27 @@ let hydrated = false;
 
 export function createGenerationJob(input: {
   type: GenerationJob["type"];
+  mode?: GenerationJob["mode"];
   courseId?: string;
   chapterId?: string;
   userId?: string;
   activeAgent?: AgentName;
   status?: JobStatus;
   message?: string;
+  modelOverrides?: GenerationJob["modelOverrides"];
 }) {
   hydrateJobs();
   const now = new Date().toISOString();
   const job: GenerationJob = {
     id: crypto.randomUUID(),
     type: input.type,
+    mode: input.mode,
     courseId: input.courseId,
     chapterId: input.chapterId,
     userId: input.userId,
     activeAgent: input.activeAgent,
     status: input.status ?? "pending",
+    modelOverrides: input.modelOverrides,
     events: [],
     createdAt: now,
     updatedAt: now,
@@ -146,6 +150,7 @@ export function claimGenerationJob(jobId: string, workerId: string, leaseMs: num
   const now = new Date().toISOString();
   const next = {
     ...job,
+    status: "running" as const,
     lockedBy: workerId,
     lockedUntil: new Date(Date.now() + leaseMs).toISOString(),
     attempts: (job.attempts ?? 0) + 1,

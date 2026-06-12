@@ -6,15 +6,54 @@ import { FormEvent, MouseEvent, useCallback, useEffect, useState } from "react";
 import { MarkdownContent } from "@/components/MarkdownContent";
 import { apiFetch, subscribeToSse } from "@/lib/clientApi";
 import { publicSafeErrorMessage } from "@/lib/publicSafeError";
-import { getAnnotations, getCourse, saveAnnotation, saveCourse } from "@/lib/storage";
 import { formatMinutes, totalMinutes } from "@/lib/time";
-import { Annotation, Chapter, ChapterGenerateResponse, Course, Section } from "@/lib/types";
+import { Annotation, Chapter, ChapterGenerateResponse, Course, EntityStatus, Section } from "@/lib/types";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { ModelSettings } from "@/components/ModelSettings";
 import { ArrowLeft, ChevronLeft, ChevronRight, Menu, X, Clock, MessageSquareQuote, Bot, Download } from "lucide-react";
 
-const quickQuestions = ["解释得更简单", "给我一个具体例子", "展示推导过程", "质疑这段内容"];
-const DEFAULT_REVIEW = "已完成结构、术语与公式一致性检查。";
+const quickQuestions = [
+  "\u89e3\u91ca\u5f97\u66f4\u7b80\u5355",
+  "\u7ed9\u6211\u4e00\u4e2a\u5177\u4f53\u4f8b\u5b50",
+  "\u5c55\u793a\u63a8\u5bfc\u8fc7\u7a0b",
+  "\u8d28\u7591\u8fd9\u6bb5\u5185\u5bb9",
+];
+const DEFAULT_REVIEW = "\u5df2\u5b8c\u6210\u7ed3\u6784\u3001\u672f\u8bed\u4e0e\u516c\u5f0f\u4e00\u81f4\u6027\u68c0\u67e5\u3002";
+const DRAFT_REVIEW = "\u8349\u7a3f\u5df2\u4fdd\u5b58\uff0c\u683c\u5f0f\u4fee\u590d\u548c\u8d28\u91cf\u68c0\u67e5\u4ecd\u5728\u7ee7\u7eed\u3002";
+const FORMAT_GUARD_REVIEW = "\u5df2\u901a\u8fc7\u683c\u5f0f\u4fee\u590d\uff0c\u5b8c\u6210 Markdown\u3001\u516c\u5f0f\u3001\u4ee3\u7801\u5757\u4e0e\u6807\u9898\u683c\u5f0f\u68c0\u67e5\u3002";
+const QUALITY_FAILED_REVIEW = "\u5df2\u751f\u6210\u8349\u7a3f\uff0c\u4f46\u8d28\u91cf\u68c0\u67e5\u672a\u901a\u8fc7\uff0c\u4e0b\u9762\u4ecd\u5c55\u793a\u5df2\u751f\u6210\u5185\u5bb9\u3002";
+
+const CHAPTER_STATUS_LABEL: Record<EntityStatus, string> = {
+  pending: "\u5f85\u751f\u6210",
+  queued: "\u961f\u5217\u4e2d",
+  generating: "\u751f\u6210\u4e2d",
+  draft_ready: "\u5f85\u8d28\u68c0\u8349\u7a3f",
+  quality_failed: "\u8d28\u68c0\u672a\u901a\u8fc7",
+  ready: "\u8d28\u68c0\u901a\u8fc7",
+  failed: "\u751f\u6210\u5931\u8d25",
+};
+
+const QUALITY_STATUS_LABEL: Record<string, string> = {
+  passed: "\u8d28\u68c0\u901a\u8fc7",
+  warning: "\u8d28\u68c0\u901a\u8fc7",
+  failed: "\u8d28\u68c0\u672a\u901a\u8fc7",
+};
+
+type RepairSuggestion = {
+  id: string;
+  courseId: string;
+  chapterId: string;
+  sectionId?: string;
+  selectedText: string;
+  userMessage: string;
+  issueType: string;
+  diagnosis: string;
+  beforeText: string;
+  afterText: string;
+  confidence: "low" | "medium" | "high";
+  status: "proposed" | "applied";
+  createdAt: string;
+};
 
 function hasChapterBody(chapter: Chapter) {
   return Boolean(chapter.content || chapter.sections?.length);
@@ -28,12 +67,57 @@ function isWaitingForBackgroundGeneration(chapter: Chapter) {
   return Boolean(chapter.generationJobId);
 }
 
+function effectiveChapterStatus(chapter: Chapter): EntityStatus {
+  if (hasChapterBody(chapter)) {
+    if (chapter.qualityReport?.status === "failed" || chapter.status === "quality_failed") return "quality_failed";
+    if (chapter.status === "ready" || chapter.qualityReport?.status === "passed" || chapter.qualityReport?.status === "warning") return "ready";
+    return "draft_ready";
+  }
+  return chapter.status ?? "pending";
+}
+
+function reviewFallbackForChapter(chapter?: Chapter) {
+  if (!chapter) return DEFAULT_REVIEW;
+  const status = effectiveChapterStatus(chapter);
+  if (status === "quality_failed") return QUALITY_FAILED_REVIEW;
+  if (status === "draft_ready") return DRAFT_REVIEW;
+  return DEFAULT_REVIEW;
+}
+
+function isQuestionMarkReview(value: string) {
+  const text = value.trim();
+  if (!text) return false;
+  const questionMarks = text.match(/\?/g)?.length ?? 0;
+  return questionMarks > 0 && questionMarks / text.length >= 0.4;
+}
+
+function localizeReviewText(value?: string, chapter?: Chapter) {
+  const fallback = reviewFallbackForChapter(chapter);
+  if (!value || isQuestionMarkReview(value)) return fallback;
+  return value
+    .replace(
+      "AUTHOR draft saved. Format Guard and quality review are still running.",
+      DRAFT_REVIEW,
+    )
+    .replace(
+      "Format Guard completed Markdown, formula, code block, and heading repairs.",
+      FORMAT_GUARD_REVIEW,
+    )
+    .replace(
+      "\u5df2\u901a\u8fc7 Format Guard \u5b8c\u6210 Markdown\u3001\u516c\u5f0f\u3001\u4ee3\u7801\u5757\u4e0e\u6807\u9898\u683c\u5f0f\u4fee\u590d\u3002",
+      FORMAT_GUARD_REVIEW,
+    )
+    .replace(
+      "Chapter generation failed.",
+      "\u672c\u7ae0\u751f\u6210\u5931\u8d25\u3002",
+    );
+}
+
 function chapterStatusLabel(chapter: Chapter) {
-  if (chapter.status === "ready") return "READY";
-  if (chapter.status === "failed") return "FAILED";
-  if (chapter.status === "generating") return "GENERATING";
-  if (chapter.status === "queued") return "QUEUED";
-  return "PENDING";
+  if (hasChapterBody(chapter) && chapter.qualityReport?.status) {
+    return QUALITY_STATUS_LABEL[chapter.qualityReport.status] ?? CHAPTER_STATUS_LABEL[effectiveChapterStatus(chapter)];
+  }
+  return CHAPTER_STATUS_LABEL[effectiveChapterStatus(chapter)];
 }
 
 export default function ReaderPage() {
@@ -44,8 +128,12 @@ export default function ReaderPage() {
   const [sections, setSections] = useState<Section[]>([]);
   const [review, setReview] = useState("");
   const [selectedText, setSelectedText] = useState("");
+  const [selectedSectionId, setSelectedSectionId] = useState<string | undefined>();
   const [annotations, setAnnotations] = useState<Annotation[]>([]);
   const [active, setActive] = useState<Annotation>();
+  const [repair, setRepair] = useState<RepairSuggestion>();
+  const [repairing, setRepairing] = useState(false);
+  const [repairError, setRepairError] = useState("");
   const [loading, setLoading] = useState(true);
   const [answering, setAnswering] = useState(false);
   const [generationError, setGenerationError] = useState("");
@@ -57,33 +145,37 @@ export default function ReaderPage() {
   const currentIndex = course?.chapters.findIndex((c) => c.id === chapterId) ?? -1;
   const prevChapter = currentIndex > 0 && course ? course.chapters[currentIndex - 1] : null;
   const nextChapter = currentIndex < (course?.chapters.length ?? 0) - 1 && course ? course.chapters[currentIndex + 1] : null;
-  const canPrint = Boolean(chapter && !loading && !generationError && hasChapterBody(chapter));
+  const canPrint = Boolean(chapter && !loading && hasChapterBody(chapter));
+  const chapterHasBody = Boolean(chapter && hasChapterBody(chapter));
+  const chapterGenerationJobId = chapter?.generationJobId;
+  const chapterStatus = chapter?.status;
 
   const applyCourseUpdate = useCallback((nextCourse: Course) => {
-    saveCourse(nextCourse);
     setCourse(nextCourse);
-    setGenerationError("");
 
     const current = nextCourse.chapters.find((item) => item.id === chapterId);
     if (!current) {
+      setGenerationError("");
       setLoading(false);
       return;
     }
 
     if (hasChapterBody(current)) {
+      setGenerationError(effectiveChapterStatus(current) === "quality_failed" ? "\u672c\u7ae0\u8d28\u91cf\u68c0\u67e5\u672a\u901a\u8fc7\uff0c\u4e0b\u9762\u4ecd\u5c55\u793a\u5df2\u751f\u6210\u8349\u7a3f\u3002" : "");
       setContent(getChapterBody(current));
       setSections(current.sections ?? []);
-      setReview(current.review ?? DEFAULT_REVIEW);
+      setReview(localizeReviewText(current.review, current));
       setLoading(false);
       return;
     }
 
+    setGenerationError("");
     setContent("");
     setSections([]);
-    setReview(current.review ?? "");
+    setReview(localizeReviewText(current.review, current));
 
     if (current.status === "failed") {
-      setGenerationError("Chapter generation failed.");
+      setGenerationError("本章生成失败。");
       setLoading(false);
       return;
     }
@@ -113,50 +205,81 @@ export default function ReaderPage() {
 
     apiFetch(`/api/chapters/${current.id}/generate`, {
       method: "POST",
-      body: JSON.stringify({ courseId: stored.id, course: stored }),
+      body: JSON.stringify({ courseId: stored.id }),
     })
       .then(async (response) => {
-        const data = (await response.json()) as ChapterGenerateResponse & { error?: string };
-        if (!response.ok) throw new Error(data.error ?? "Chapter generation failed");
+        const data = (await response.json()) as ChapterGenerateResponse & { course?: Course; queued?: boolean; error?: string };
+        if (!response.ok) throw new Error(data.error ?? "本章生成失败");
         return data;
       })
-      .then((data: ChapterGenerateResponse) => {
-        if (!data.content) throw new Error("Chapter generation failed");
+      .then((data: ChapterGenerateResponse & { course?: Course; queued?: boolean }) => {
+        if (data.queued) {
+          if (data.course) {
+            applyCourseUpdate(data.course);
+          } else {
+            current.status = "queued";
+            current.generationJobId = data.job?.id;
+            applyCourseUpdate({ ...stored });
+          }
+          return;
+        }
+        if (!data.content) throw new Error("本章生成失败");
         current.content = data.content;
         current.sections = data.sections;
         current.review = data.review;
         current.qualityReport = data.qualityReport;
         current.generationJobId = data.job?.id;
-        current.status = data.qualityReport?.status === "failed" ? "failed" : "ready";
+        current.status = data.qualityReport?.status === "failed" ? "quality_failed" : "ready";
         applyCourseUpdate({ ...stored });
       })
       .catch((error) => {
         current.status = "failed";
         applyCourseUpdate({ ...stored });
-        setGenerationError(publicSafeErrorMessage(error, "Chapter generation failed. Please refresh and try again."));
+        setGenerationError(publicSafeErrorMessage(error, "本章生成失败，请刷新后重试。"));
       })
       .finally(() => setLoading(false));
   }, [applyCourseUpdate, chapterId]);
 
+  const regenerateCurrentChapter = useCallback(() => {
+    if (!course || !chapter) return;
+    setGenerationError("");
+    setLoading(true);
+    void ensureChapterContent({
+      ...course,
+      chapters: course.chapters.map((item) =>
+        item.id === chapter.id
+          ? {
+              ...item,
+              status: undefined,
+              generationJobId: undefined,
+              content: undefined,
+              sections: undefined,
+              review: undefined,
+              qualityReport: undefined,
+            }
+          : item,
+      ),
+    });
+  }, [chapter, course, ensureChapterContent]);
+
   useEffect(() => {
-    const stored = getCourse(id);
-    if (stored) applyCourseUpdate(stored);
-    setAnnotations(getAnnotations(chapterId));
+    let cancelled = false;
+    setLoading(true);
+    setGenerationError("");
+    setAnnotations([]);
 
     apiFetch(`/api/annotations?chapterId=${chapterId}`)
       .then((response) => (response.ok ? response.json() : undefined))
       .then((data) => {
-        if (data?.annotations) {
-          data.annotations.forEach((annotation: Annotation) => saveAnnotation(annotation));
-          setAnnotations(getAnnotations(chapterId));
-        }
+        if (!cancelled && data?.annotations) setAnnotations(data.annotations);
       })
       .catch(() => undefined);
 
     apiFetch(`/api/courses/${id}`)
       .then((response) => (response.ok ? response.json() : undefined))
       .then((data) => {
-        const courseData = (data?.course as Course | undefined) ?? stored;
+        if (cancelled) return;
+        const courseData = data?.course as Course | undefined;
         if (!courseData) {
           setLoading(false);
           return;
@@ -164,9 +287,12 @@ export default function ReaderPage() {
         void ensureChapterContent(courseData);
       })
       .catch(() => {
-        if (stored) void ensureChapterContent(stored);
-        else setLoading(false);
+        if (!cancelled) setLoading(false);
       });
+
+    return () => {
+      cancelled = true;
+    };
   }, [applyCourseUpdate, chapterId, ensureChapterContent, id]);
 
   useEffect(() => {
@@ -195,18 +321,45 @@ export default function ReaderPage() {
     };
   }, [applyCourseUpdate, id]);
 
-  const handleTextSelect = useCallback((text: string) => {
+  useEffect(() => {
+    if (!chapter || chapterHasBody) return;
+    if (!chapterGenerationJobId && chapterStatus !== "queued" && chapterStatus !== "generating" && chapterStatus !== "draft_ready") return;
+
+    let cancelled = false;
+    const refresh = () => {
+      apiFetch(`/api/courses/${id}`)
+        .then((response) => (response.ok ? response.json() : undefined))
+        .then((data) => {
+          if (!cancelled && data?.course) applyCourseUpdate(data.course as Course);
+        })
+        .catch(() => undefined);
+    };
+
+    const timer = window.setInterval(refresh, 3000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [applyCourseUpdate, chapter, chapterGenerationJobId, chapterHasBody, chapterStatus, id]);
+
+  const handleTextSelect = useCallback((text: string, sectionId?: string) => {
     if (text.length > 2) {
       setSelectedText(text);
+      setSelectedSectionId(sectionId);
       setActive(undefined);
+      setRepair(undefined);
+      setRepairError("");
       setTutorOpen(true);
     }
   }, []);
 
-  const handleParagraphDoubleClick = useCallback((text: string) => {
+  const handleParagraphDoubleClick = useCallback((text: string, sectionId?: string) => {
     if (text.length > 2) {
       setSelectedText(text);
+      setSelectedSectionId(sectionId);
       setActive(undefined);
+      setRepair(undefined);
+      setRepairError("");
       setTutorOpen(true);
     }
   }, []);
@@ -215,7 +368,8 @@ export default function ReaderPage() {
     const selection = window.getSelection();
     const text = selection?.toString().trim() ?? "";
     if (text.length > 2 && event.currentTarget.contains(selection?.anchorNode ?? null)) {
-      handleTextSelect(text);
+      const sectionId = closestSectionId(selection?.anchorNode);
+      handleTextSelect(text, sectionId);
     }
   }
 
@@ -224,27 +378,34 @@ export default function ReaderPage() {
     const block = target.closest("p, li, blockquote, h2, h3");
     const text = block?.textContent?.trim() ?? "";
     if (text.length > 2) {
-      handleParagraphDoubleClick(text);
+      handleParagraphDoubleClick(text, closestSectionId(block));
     }
   }
 
   async function ask(question: string) {
     if (!course || (!selectedText && !active) || !question.trim()) return;
     setAnswering(true);
-    const annotation: Annotation =
-      active ??
-      ({
-        id: crypto.randomUUID(),
-        courseId: course.id,
-        chapterId,
-        selectedText,
-        question,
-        messages: [],
-        createdAt: new Date().toISOString(),
-      } satisfies Annotation);
+    const baseAnnotation: Annotation =
+      active
+        ? { ...active, messages: [...active.messages] }
+        : ({
+            id: crypto.randomUUID(),
+            courseId: course.id,
+            chapterId,
+            sectionId: selectedSectionId,
+            selectedText,
+            question,
+            messages: [],
+            createdAt: new Date().toISOString(),
+          } satisfies Annotation);
+    const userMessage = { id: crypto.randomUUID(), role: "user" as const, content: question };
+    const pendingAnnotation = {
+      ...baseAnnotation,
+      question: baseAnnotation.question || question,
+      messages: [...baseAnnotation.messages, userMessage],
+    };
 
-    annotation.messages.push({ id: crypto.randomUUID(), role: "user", content: question });
-    setActive({ ...annotation });
+    setActive(pendingAnnotation);
 
     let answer: string;
     let savedAnnotation: Annotation | undefined;
@@ -253,11 +414,11 @@ export default function ReaderPage() {
         method: "POST",
         body: JSON.stringify({
           topic: course.topic,
-          selectedText: annotation.selectedText,
+          selectedText: pendingAnnotation.selectedText,
           question,
-          history: annotation.messages,
-          sectionId: annotation.sectionId,
-          annotation,
+          history: pendingAnnotation.messages,
+          sectionId: pendingAnnotation.sectionId,
+          annotation: pendingAnnotation,
         }),
       });
       const data = await response.json();
@@ -271,15 +432,73 @@ export default function ReaderPage() {
     }
 
     if (savedAnnotation) {
-      saveAnnotation(savedAnnotation);
+      setAnnotations((current) => upsertAnnotation(current, savedAnnotation));
     } else {
-      annotation.messages.push({ id: crypto.randomUUID(), role: "assistant", content: answer });
-      saveAnnotation(annotation);
+      pendingAnnotation.messages = [
+        ...pendingAnnotation.messages,
+        { id: crypto.randomUUID(), role: "assistant", content: answer },
+      ];
     }
-    const next = getAnnotations(chapterId);
-    setAnnotations(next);
-    setActive({ ...(savedAnnotation ?? annotation) });
+    setActive(savedAnnotation ?? pendingAnnotation);
     setAnswering(false);
+  }
+
+  async function requestRepair(userMessage: string) {
+    if (!course || (!selectedText && !active)) return;
+    setRepairing(true);
+    setRepairError("");
+    setRepair(undefined);
+    const targetText = active?.selectedText ?? selectedText;
+    const sectionId = active?.sectionId ?? selectedSectionId;
+
+    try {
+      const response = await apiFetch("/api/repairs", {
+        method: "POST",
+        body: JSON.stringify({
+          courseId: course.id,
+          chapterId,
+          sectionId,
+          selectedText: targetText,
+          userMessage,
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error ?? "Repair suggestion failed.");
+      setRepair(data.repair);
+    } catch (error) {
+      setRepairError(publicSafeErrorMessage(error, "Repair suggestion failed."));
+    } finally {
+      setRepairing(false);
+    }
+  }
+
+  async function applyRepair() {
+    if (!repair) return;
+    setRepairing(true);
+    setRepairError("");
+
+    try {
+      const response = await apiFetch("/api/repairs/apply", {
+        method: "POST",
+        body: JSON.stringify({
+          courseId: repair.courseId,
+          chapterId: repair.chapterId,
+          sectionId: repair.sectionId,
+          beforeText: repair.beforeText,
+          afterText: repair.afterText,
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error ?? "Apply repair failed.");
+      if (data.course) applyCourseUpdate(data.course as Course);
+      setRepair({ ...repair, status: "applied" });
+      setSelectedText(repair.afterText);
+      setRepairError("");
+    } catch (error) {
+      setRepairError(publicSafeErrorMessage(error, "Apply repair failed."));
+    } finally {
+      setRepairing(false);
+    }
   }
 
   function submitQuestion(event: FormEvent<HTMLFormElement>) {
@@ -345,6 +564,9 @@ export default function ReaderPage() {
                 onClick={() => {
                   setActive(annotation);
                   setSelectedText("");
+                  setSelectedSectionId(annotation.sectionId);
+                  setRepair(undefined);
+                  setRepairError("");
                   setTutorOpen(true);
                 }}
                 className={`w-full px-4 py-2 text-left transition-colors ${
@@ -411,7 +633,7 @@ export default function ReaderPage() {
           <div className="mb-12 border-l-2 border-foreground bg-muted/20 p-6">
             <h1 className="mb-4 text-3xl font-bold tracking-tight text-foreground md:text-4xl">{chapter.title}</h1>
             <div className="flex flex-wrap items-center gap-4 font-mono text-xs text-muted-foreground">
-              <span>{loading ? "GENERATING..." : `✓ ${review}`}</span>
+              <span>{loading ? "\u751f\u6210\u4e2d..." : `\u2713 ${review}`}</span>
             </div>
             <div className="mt-4 text-sm text-muted-foreground leading-relaxed border-t border-border/50 pt-4">
               <p>承接：{chapter.connectionFromPrevious ?? "这是课程起点。"}</p>
@@ -419,15 +641,28 @@ export default function ReaderPage() {
             </div>
           </div>
 
+          {generationError && hasChapterBody(chapter) && (
+            <div className="mb-8 rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">
+              {generationError}
+            </div>
+          )}
+
           {loading ? (
             <div className="rounded-lg border border-dashed border-border py-24 text-center">
               <Clock size={32} className="mx-auto mb-4 animate-pulse text-muted-foreground/50" />
-              <p className="font-mono text-sm text-muted-foreground">AI IS WRITING THE TEXTBOOK...</p>
-              <p className="mt-2 text-xs text-muted-foreground/60">AI 正在根据 Course Bible 编写本章</p>
+              <p className="font-mono text-sm text-muted-foreground">AI {"\u6b63\u5728\u7f16\u5199\u672c\u7ae0..."}</p>
+              <p className="mt-2 text-xs text-muted-foreground/60">AI {"\u6b63\u5728\u6839\u636e\u8bfe\u7a0b\u5168\u5c40\u8bbe\u5b9a\u7f16\u5199\u672c\u7ae0"}</p>
             </div>
-          ) : generationError ? (
+          ) : generationError && !hasChapterBody(chapter) ? (
             <div className="rounded-lg border border-destructive/30 bg-destructive/5 py-12 text-center text-destructive">
               <p className="font-mono text-sm">{generationError}</p>
+              <button
+                type="button"
+                onClick={regenerateCurrentChapter}
+                className="mt-5 rounded-md border border-destructive/30 bg-background px-4 py-2 text-xs font-medium text-destructive hover:bg-destructive/10"
+              >
+                重新生成本章
+              </button>
             </div>
           ) : (
             <article 
@@ -480,7 +715,7 @@ export default function ReaderPage() {
         <div className="flex items-center justify-between border-b border-border bg-card px-4 py-3">
           <div className="flex items-center gap-2">
             <Bot size={14} className="text-primary" />
-            <span className="font-mono text-[11px] font-medium text-primary uppercase tracking-wider">Tutor Terminal</span>
+            <span className="font-mono text-[11px] font-medium text-primary uppercase tracking-wider">{"\u5bfc\u5e08\u7ec8\u7aef"}</span>
           </div>
           <button onClick={() => setTutorOpen(false)} className="rounded p-1 text-muted-foreground hover:text-foreground">
             <X size={14} />
@@ -510,7 +745,62 @@ export default function ReaderPage() {
                 ))}
                 {answering && (
                   <div className="flex items-center gap-2 text-primary">
-                    <span className="font-mono text-[10px] animate-pulse">PROCESSING...</span>
+                    <span className="font-mono text-[10px] animate-pulse">{"\u5904\u7406\u4e2d..."}</span>
+                  </div>
+                )}
+                {repair && (
+                  <div className="rounded-md border border-primary/30 bg-background p-3">
+                    <div className="mb-2 flex items-center justify-between gap-2">
+                      <span className="font-mono text-[10px] uppercase tracking-wider text-primary">
+                        REPAIR · {repair.confidence}
+                      </span>
+                      <span className="font-mono text-[10px] text-muted-foreground">
+                        {repair.status === "applied" ? "已应用" : "待确认"}
+                      </span>
+                    </div>
+                    <p className="mb-3 text-xs leading-relaxed text-muted-foreground">{repair.diagnosis}</p>
+                    <div className="space-y-2">
+                      <div>
+                        <p className="mb-1 font-mono text-[10px] text-muted-foreground">原文</p>
+                        <div className="max-h-28 overflow-y-auto rounded border border-border bg-muted/30 p-2 text-xs leading-relaxed text-muted-foreground">
+                          <MarkdownContent content={repair.beforeText} />
+                        </div>
+                      </div>
+                      <div>
+                        <p className="mb-1 font-mono text-[10px] text-muted-foreground">修复后</p>
+                        <div className="max-h-36 overflow-y-auto rounded border border-primary/20 bg-primary/5 p-2 text-xs leading-relaxed text-foreground">
+                          <MarkdownContent content={repair.afterText} />
+                        </div>
+                      </div>
+                    </div>
+                    <div className="mt-3 flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => void applyRepair()}
+                        disabled={repairing || repair.status === "applied"}
+                        className="rounded border border-primary/40 bg-primary/10 px-2 py-1 font-mono text-[10px] text-primary hover:bg-primary/15 disabled:opacity-50"
+                      >
+                        应用修改
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setRepair(undefined)}
+                        disabled={repairing}
+                        className="rounded border border-border bg-background px-2 py-1 font-mono text-[10px] text-muted-foreground hover:text-foreground disabled:opacity-50"
+                      >
+                        取消
+                      </button>
+                    </div>
+                  </div>
+                )}
+                {repairing && (
+                  <div className="flex items-center gap-2 text-primary">
+                    <span className="font-mono text-[10px] animate-pulse">{"\u4fee\u590d\u5efa\u8bae\u5904\u7406\u4e2d..."}</span>
+                  </div>
+                )}
+                {repairError && (
+                  <div className="rounded border border-destructive/30 bg-destructive/5 p-2 text-xs text-destructive">
+                    {repairError}
                   </div>
                 )}
               </div>
@@ -519,7 +809,7 @@ export default function ReaderPage() {
             <div className="flex h-full flex-col items-center justify-center text-center text-muted-foreground">
               <MessageSquareQuote size={32} className="mb-4 opacity-50" />
               <p className="font-mono text-xs leading-relaxed max-w-[200px]">
-                SELECT TEXT OR DOUBLE-CLICK PARAGRAPH TO INITIATE INQUIRY
+                {"\u9009\u4e2d\u6587\u5b57\u6216\u53cc\u51fb\u6bb5\u843d\u540e\u53d1\u8d77\u95ee\u7b54"}
               </p>
             </div>
           )}
@@ -538,12 +828,28 @@ export default function ReaderPage() {
                   {q}
                 </button>
               ))}
+              <button
+                type="button"
+                onClick={() => void requestRepair("请检查这段内容是否有公式、Markdown 或概念错误，先给出修复建议。")}
+                disabled={answering || repairing}
+                className="rounded border border-border bg-background px-2 py-1 font-mono text-[10px] text-muted-foreground hover:border-primary hover:text-primary disabled:opacity-50 transition-colors"
+              >
+                检查问题
+              </button>
+              <button
+                type="button"
+                onClick={() => void requestRepair("请修复这段内容中的格式、公式或明显表述问题，只做最小必要修改。")}
+                disabled={answering || repairing}
+                className="rounded border border-primary/40 bg-primary/10 px-2 py-1 font-mono text-[10px] text-primary hover:bg-primary/15 disabled:opacity-50 transition-colors"
+              >
+                修复这段
+              </button>
             </div>
             <form onSubmit={submitQuestion} className="relative flex items-center">
               <span className="absolute left-3 font-mono text-[12px] text-primary">{">"}</span>
               <input
                 name="question"
-                placeholder="INPUT QUERY..."
+                placeholder="\u8f93\u5165\u95ee\u9898..."
                 autoComplete="off"
                 disabled={answering}
                 className="w-full bg-background border border-border py-2 pl-7 pr-3 font-mono text-[12px] text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none disabled:opacity-50"
@@ -560,4 +866,15 @@ export default function ReaderPage() {
       )}
     </div>
   );
+}
+
+function upsertAnnotation(annotations: Annotation[], annotation: Annotation) {
+  const index = annotations.findIndex((item) => item.id === annotation.id);
+  if (index === -1) return [...annotations, annotation];
+  return annotations.map((item) => (item.id === annotation.id ? annotation : item));
+}
+
+function closestSectionId(node: Node | null | undefined) {
+  const element = node instanceof Element ? node : node?.parentElement;
+  return element?.closest<HTMLElement>("[data-section-id]")?.dataset.sectionId;
 }

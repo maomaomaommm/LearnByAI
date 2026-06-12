@@ -1,15 +1,18 @@
 import { parseJson } from "../ai";
+import { normalizeChapterMarkdownHeading } from "../chapterHeadings";
 import { appendJobEvent, createGenerationJob, completeGenerationJob, failGenerationJob, getGenerationJob, patchGenerationJob } from "../jobs";
 import { ModelOverrides } from "../modelOverrides";
 import { createMockAnswer, createMockChapter, createMockCourse } from "../mock";
 import { buildAnnotationTutorPrompt } from "../prompts/annotationTutor";
+import { buildChapterRepairPrompt } from "../prompts/chapterRepairer";
 import { buildChapterReviewPrompt } from "../prompts/chapterReviewer";
-import { buildChapterWriterPrompt } from "../prompts/chapterWriter";
-import { buildCoursePlannerPrompt } from "../prompts/coursePlanner";
+import { buildChapterWriterPrompt, getChapterLengthGuide } from "../prompts/chapterWriter";
+import { buildContentRepairPrompt } from "../prompts/contentRepair";
+import { buildCoursePlannerCompactPrompt, buildCoursePlannerJsonRepairPrompt, buildCoursePlannerPrompt } from "../prompts/coursePlanner";
 import { buildFormatGuardPrompt, postRepairMarkdown, preRepairMarkdown } from "../prompts/formatGuard";
 import { runChapterQualityPipelineWithRepair } from "../quality/pipeline";
 import { safeErrorMessage } from "../safeError";
-import { Chapter, ChapterGenerateResponse, Course, CourseBible, CourseCreateResponse, GenerationJob, Section } from "../types";
+import { Chapter, ChapterGenerateResponse, Course, CourseBible, CourseCreateResponse, GenerationJob, QualityIssue, Section } from "../types";
 import { dispatchAgentText } from "./dispatcher";
 import { assertMockFallbackAllowed } from "./fallback";
 import { markdownToSections } from "./integrator";
@@ -20,6 +23,7 @@ export type CourseInput = {
   background: string;
   preference: string;
   weeklyHours: number;
+  chapterLength?: "short" | "medium" | "long";
 };
 
 export type CourseGeneration = {
@@ -27,6 +31,15 @@ export type CourseGeneration = {
   courseBible: CourseBible;
   chapters: Omit<Chapter, "id" | "content" | "review" | "status">[];
 };
+
+const COURSE_PLANNER_TIMEOUT_MS = 240_000;
+const COURSE_PLANNER_REPAIR_TIMEOUT_MS = 180_000;
+const REMOTE_FORMAT_GUARD_MAX_CHARS = 6_000;
+const CHUNKED_REPAIR_MIN_CHARS = 6_000;
+const REPAIR_CHUNK_MAX_CHARS = 1_800;
+const REPAIR_CHUNK_MAX_TOKENS = 3_072;
+const REPAIR_CHUNK_TIMEOUT_MS = 45_000;
+const MAX_LONG_TEXT_REPAIR_ATTEMPTS = 1;
 
 export async function generateCourse(input: CourseInput, options: { overrides?: ModelOverrides } = {}): Promise<CourseCreateResponse> {
   const job = createGenerationJob({
@@ -85,7 +98,12 @@ export async function generateCourse(input: CourseInput, options: { overrides?: 
 export async function generateChapter(
   course: Course,
   chapter: Chapter,
-  options: { jobId?: string; overrides?: ModelOverrides; onJobUpdate?: (job: GenerationJob) => Promise<void> | void } = {},
+  options: {
+    jobId?: string;
+    overrides?: ModelOverrides;
+    onJobUpdate?: (job: GenerationJob) => Promise<void> | void;
+    onStage?: (stage: ChapterGenerationStage) => Promise<void> | void;
+  } = {},
 ): Promise<ChapterGenerateResponse> {
   const existingJob = options.jobId ? getGenerationJob(options.jobId) : undefined;
   const job = existingJob
@@ -94,6 +112,7 @@ export async function generateChapter(
         chapterId: chapter.id,
         activeAgent: "AUTHOR",
         status: "running",
+        modelOverrides: options.overrides ?? existingJob.modelOverrides,
       })!
     : createGenerationJob({
         type: "chapter",
@@ -101,6 +120,7 @@ export async function generateChapter(
         chapterId: chapter.id,
         activeAgent: "AUTHOR",
         status: "running",
+        modelOverrides: options.overrides,
         message: "Chapter generation started.",
       });
 
@@ -113,6 +133,7 @@ export async function generateChapter(
   }
 
   try {
+    const lengthGuide = getChapterLengthGuide(course.chapterLength);
     const draft = preRepairMarkdown(
       await dispatchAgentText({
         agent: "AUTHOR",
@@ -122,37 +143,53 @@ export async function generateChapter(
           chapters: course.chapters,
         }),
         temperature: 0.45,
-        maxTokens: 24576,
+        maxTokens: lengthGuide.maxTokens,
         overrides: options.overrides,
         mock: () => createMockChapter(course.topic, chapter.title, course.goal),
         onJobUpdate: options.onJobUpdate,
       }),
     );
 
+    await options.onStage?.({
+      stage: "draft",
+      content: draft,
+      sections: markdownToSections(chapter, draft),
+      review: "\u8349\u7a3f\u5df2\u4fdd\u5b58\uff0c\u683c\u5f0f\u4fee\u590d\u548c\u8d28\u91cf\u68c0\u67e5\u4ecd\u5728\u7ee7\u7eed\u3002",
+    });
+
     let formatted = draft;
-    let review = "正文已生成；Format Guard 暂时超时，已保留本地格式预修复版本。";
+    let review = "\u6b63\u6587\u5df2\u751f\u6210\uff1b\u683c\u5f0f\u4fee\u590d\u6682\u65f6\u4e0d\u53ef\u7528\uff0c\u5df2\u4fdd\u7559\u672c\u5730\u683c\u5f0f\u9884\u4fee\u590d\u7248\u672c\u3002";
 
     try {
+      if (shouldSkipRemoteFormatGuard(draft)) {
+        throw new Error("Long draft uses local format guard before targeted review repair.");
+      }
       formatted = postRepairMarkdown(
         await dispatchAgentText({
           agent: "POLISHER",
           jobId: job.id,
           prompt: buildFormatGuardPrompt(draft),
           temperature: 0.1,
-          maxTokens: 24576,
+          maxTokens: lengthGuide.maxTokens,
           overrides: options.overrides,
           mock: () => draft,
           onJobUpdate: options.onJobUpdate,
         }),
       );
-      review = "已通过 Format Guard 完成 Markdown、公式、代码块与标题格式修复。";
+      review = "\u5df2\u901a\u8fc7\u683c\u5f0f\u4fee\u590d\uff0c\u5b8c\u6210 Markdown\u3001\u516c\u5f0f\u3001\u4ee3\u7801\u5757\u4e0e\u6807\u9898\u683c\u5f0f\u68c0\u67e5\u3002";
+      await options.onStage?.({
+        stage: "polished",
+        content: formatted,
+        sections: markdownToSections(chapter, formatted),
+        review,
+      });
     } catch (error) {
-      assertMockFallbackAllowed(error, options.overrides, "POLISHER");
-      formatted = draft;
+      formatted = postRepairMarkdown(draft);
+      review = `格式修复模型暂时不可用，已使用本地格式修复保留草稿：${safeErrorMessage(error, "POLISHER failed.")}`;
     }
 
-    const quality = await reviewChapter(course, chapter, formatted, job.id, options.onJobUpdate, options.overrides);
-    formatted = quality.content;
+    const quality = await reviewChapterWithRepair(course, chapter, formatted, job.id, options.onJobUpdate, options.overrides, lengthGuide.maxTokens);
+    formatted = normalizeChapterMarkdownHeading(course, chapter, quality.content);
     const qualityReport = quality.report;
     const sections = markdownToSections(chapter, formatted);
     completeGenerationJob(job.id, chapter.id);
@@ -165,22 +202,115 @@ export async function generateChapter(
       job: getGenerationJob(job.id),
     };
   } catch (error) {
-    failGenerationJob(job.id, safeErrorMessage(error, "Chapter generation failed."));
+    const failedJob = failGenerationJob(job.id, safeErrorMessage(error, "Chapter generation failed."));
+    if (failedJob) await options.onJobUpdate?.(failedJob);
     assertMockFallbackAllowed(error, options.overrides, "AUTHOR");
     const fallback = createMockChapter(course.topic, chapter.title, course.goal);
-    const quality = await reviewChapter(course, chapter, fallback, job.id, options.onJobUpdate, options.overrides);
-    const repairedFallback = quality.content;
+    const quality = await reviewChapterWithRepair(course, chapter, fallback, job.id, options.onJobUpdate, options.overrides);
+    const repairedFallback = normalizeChapterMarkdownHeading(course, chapter, quality.content);
     const qualityReport = quality.report;
     const sections: Section[] = markdownToSections(chapter, repairedFallback);
     return {
       content: repairedFallback,
       sections,
-      review: "已降级为 Mock 内容。",
+      review: "\u5df2\u964d\u7ea7\u4e3a\u6a21\u62df\u5185\u5bb9\u3002",
       qualityReport,
       job: getGenerationJob(job.id),
     };
   }
 }
+
+export async function reviewExistingChapterDraft(
+  course: Course,
+  chapter: Chapter,
+  content: string,
+  options: {
+    jobId: string;
+    overrides?: ModelOverrides;
+    onJobUpdate?: (job: GenerationJob) => Promise<void> | void;
+    onStage?: (stage: ChapterGenerationStage) => Promise<void> | void;
+  },
+): Promise<ChapterGenerateResponse> {
+  const existingJob = getGenerationJob(options.jobId);
+  const job = existingJob
+    ? patchGenerationJob(existingJob.id, {
+        courseId: course.id,
+        chapterId: chapter.id,
+        activeAgent: "POLISHER",
+        status: "running",
+        modelOverrides: options.overrides ?? existingJob.modelOverrides,
+      })!
+    : createGenerationJob({
+        type: "chapter",
+        mode: "review_draft",
+        courseId: course.id,
+        chapterId: chapter.id,
+        activeAgent: "POLISHER",
+        status: "running",
+        modelOverrides: options.overrides,
+        message: "Draft quality review started.",
+      });
+
+  appendJobEvent(job.id, {
+    agent: "POLISHER",
+    status: "running",
+    message: "Existing draft review resumed.",
+  });
+
+  const lengthGuide = getChapterLengthGuide(course.chapterLength);
+  const draft = preRepairMarkdown(content);
+  let formatted = draft;
+  let review = "\u6b63\u6587\u5df2\u751f\u6210\uff1b\u683c\u5f0f\u4fee\u590d\u6682\u65f6\u4e0d\u53ef\u7528\uff0c\u5df2\u4fdd\u7559\u672c\u5730\u683c\u5f0f\u9884\u4fee\u590d\u7248\u672c\u3002";
+
+  try {
+    if (shouldSkipRemoteFormatGuard(draft)) {
+      throw new Error("Long draft uses local format guard before targeted review repair.");
+    }
+    formatted = postRepairMarkdown(
+      await dispatchAgentText({
+        agent: "POLISHER",
+        jobId: job.id,
+        prompt: buildFormatGuardPrompt(draft),
+        temperature: 0.1,
+        maxTokens: lengthGuide.maxTokens,
+        overrides: options.overrides,
+        mock: () => draft,
+        onJobUpdate: options.onJobUpdate,
+      }),
+    );
+    review = "\u5df2\u901a\u8fc7\u683c\u5f0f\u4fee\u590d\uff0c\u5b8c\u6210 Markdown\u3001\u516c\u5f0f\u3001\u4ee3\u7801\u5757\u4e0e\u6807\u9898\u683c\u5f0f\u68c0\u67e5\u3002";
+    await options.onStage?.({
+      stage: "polished",
+      content: formatted,
+      sections: markdownToSections(chapter, formatted),
+      review,
+    });
+  } catch (error) {
+    formatted = postRepairMarkdown(draft);
+    review = `格式修复模型暂时不可用，已使用本地格式修复保留草稿：${safeErrorMessage(error, "POLISHER failed.")}`;
+  }
+
+  const quality = await reviewChapterWithRepair(course, chapter, formatted, job.id, options.onJobUpdate, options.overrides, lengthGuide.maxTokens);
+  formatted = normalizeChapterMarkdownHeading(course, chapter, quality.content);
+  const qualityReport = quality.report;
+  const sections = markdownToSections(chapter, formatted);
+  completeGenerationJob(job.id, chapter.id);
+
+  return {
+    content: formatted,
+    sections,
+    review,
+    qualityReport,
+    job: getGenerationJob(job.id),
+  };
+}
+
+export type ChapterGenerationStage = {
+  stage: "draft" | "polished";
+  content: string;
+  sections: Section[];
+  review: string;
+};
 
 type ReviewerJson = {
   passed?: boolean;
@@ -259,7 +389,6 @@ async function reviewChapter(
       },
     };
   } catch (error) {
-    assertMockFallbackAllowed(error, overrides, "REVIEWER");
     return {
       content: quality.content,
       attempts: quality.attempts,
@@ -270,7 +399,8 @@ async function reviewChapter(
         {
           check: "reviewer.unavailable",
           severity: "warning" as const,
-          message: "REVIEWER 阶段暂时不可用，已保留 TQH 本地检查结果。",
+          message: `REVIEWER 暂时不可用，已保留 TQH 本地质检结果：${safeErrorMessage(error, "REVIEWER failed.")}`,
+          suggestion: "稍后可重新质检或重新生成；当前章节不再因为质检模型异常而卡死。",
           source: "REVIEWER" as const,
         },
       ],
@@ -281,11 +411,303 @@ async function reviewChapter(
   }
 }
 
+function shouldSkipRemoteFormatGuard(content: string) {
+  return content.length > REMOTE_FORMAT_GUARD_MAX_CHARS;
+}
+
+
+const MAX_REVIEW_REPAIR_ATTEMPTS = 2;
+
+async function reviewChapterWithRepair(
+  course: Course,
+  chapter: Chapter,
+  content: string,
+  jobId: string,
+  onJobUpdate?: (job: GenerationJob) => Promise<void> | void,
+  overrides?: ModelOverrides,
+  maxTokens = 18432,
+) {
+  let best = await reviewChapter(course, chapter, content, jobId, onJobUpdate, overrides);
+  let bestScore = best.report.score;
+  let currentContent = best.content;
+
+  const maxRepairAttempts = shouldUseChunkedRepair(content) ? MAX_LONG_TEXT_REPAIR_ATTEMPTS : MAX_REVIEW_REPAIR_ATTEMPTS;
+
+  for (let attempt = 1; attempt <= maxRepairAttempts && shouldRepairQuality(best.report.issues, best.report.score); attempt += 1) {
+    const repairIssues = best.report.issues.filter((issue) => issue.severity === "error" || issue.severity === "warning").slice(0, 8);
+    if (!repairIssues.length) break;
+
+    let repaired: string;
+    try {
+      repaired = await repairChapterContent(course, chapter, currentContent, repairIssues, {
+        jobId,
+        onJobUpdate,
+        overrides,
+        maxTokens,
+      });
+    } catch (error) {
+      return withRepairUnavailableIssue(best, error);
+    }
+    currentContent = repaired;
+    const reviewed = await reviewChapter(course, chapter, repaired, jobId, onJobUpdate, overrides);
+    const report = {
+      ...reviewed.report,
+      issues: [
+        ...reviewed.report.issues,
+        {
+          check: "review_repair.attempts",
+          severity: reviewed.report.status === "failed" ? ("warning" as const) : ("info" as const),
+          message: `Reviewer repair attempts: ${attempt}.`,
+          suggestion: reviewed.report.status === "failed" ? "Keep the best available draft and show quality issues in the UI." : "Chapter passed automatic repair.",
+          source: "TQH" as const,
+        },
+      ],
+    };
+    const candidate = { ...reviewed, report };
+    if (candidate.report.score >= bestScore) {
+      best = candidate;
+      bestScore = candidate.report.score;
+    }
+    if (candidate.report.status !== "failed") return candidate;
+  }
+
+  return best;
+}
+
+async function repairChapterContent(
+  course: Course,
+  chapter: Chapter,
+  content: string,
+  repairIssues: QualityIssue[],
+  options: {
+    jobId: string;
+    onJobUpdate?: (job: GenerationJob) => Promise<void> | void;
+    overrides?: ModelOverrides;
+    maxTokens: number;
+  },
+) {
+  if (shouldUseChunkedRepair(content)) {
+    return repairChapterInChunks(course, chapter, content, repairIssues, options);
+  }
+
+  try {
+    return postRepairMarkdown(
+      await dispatchPolisherRepairText({
+        jobId: options.jobId,
+        prompt: buildChapterRepairPrompt(course, chapter, content, repairIssues),
+        temperature: 0.15,
+        maxTokens: options.maxTokens,
+        overrides: options.overrides,
+        onJobUpdate: options.onJobUpdate,
+        mock: () => postRepairMarkdown(content),
+      }),
+    );
+  } catch (error) {
+    if (content.length < CHUNKED_REPAIR_MIN_CHARS) throw error;
+    return repairChapterInChunks(course, chapter, content, repairIssues, options);
+  }
+}
+
+async function repairChapterInChunks(
+  course: Course,
+  chapter: Chapter,
+  content: string,
+  repairIssues: QualityIssue[],
+  options: {
+    jobId: string;
+    onJobUpdate?: (job: GenerationJob) => Promise<void> | void;
+    overrides?: ModelOverrides;
+    maxTokens: number;
+  },
+) {
+  const chunks = splitMarkdownForRepair(content);
+  if (chunks.length <= 1) {
+    return postRepairMarkdown(
+      await dispatchAgentText({
+        agent: "POLISHER",
+        jobId: options.jobId,
+        prompt: buildChapterRepairPrompt(course, chapter, content, repairIssues),
+        temperature: 0.15,
+        maxTokens: options.maxTokens,
+        overrides: options.overrides,
+        onJobUpdate: options.onJobUpdate,
+        mock: () => postRepairMarkdown(content),
+      }),
+    );
+  }
+
+  const repairedChunks: string[] = [];
+  for (let index = 0; index < chunks.length; index += 1) {
+    const chunk = chunks[index] ?? "";
+    try {
+      const repairedChunk = await dispatchPolisherRepairText({
+        jobId: options.jobId,
+        prompt: buildChapterChunkRepairPrompt(course, chapter, chunk, repairIssues, index + 1, chunks.length),
+        temperature: 0.15,
+        maxTokens: Math.min(options.maxTokens, REPAIR_CHUNK_MAX_TOKENS),
+        timeoutMs: REPAIR_CHUNK_TIMEOUT_MS,
+        maxAttempts: 1,
+        stream: false,
+        overrides: options.overrides,
+        onJobUpdate: options.onJobUpdate,
+        mock: () => chunk,
+      });
+      repairedChunks.push(postRepairMarkdown(repairedChunk));
+    } catch (error) {
+      const skippedJob = appendJobEvent(options.jobId, {
+        agent: "POLISHER",
+        status: "running",
+        message: `Chunk ${index + 1}/${chunks.length} repair skipped: ${safeErrorMessage(error, "POLISHER chunk failed.")}`,
+      }, { preserveJobStatus: true });
+      if (skippedJob) await options.onJobUpdate?.(skippedJob);
+      repairedChunks.push(postRepairMarkdown(chunk));
+    }
+  }
+
+  return postRepairMarkdown(repairedChunks.join("\n\n"));
+}
+
+async function dispatchPolisherRepairText(input: {
+  jobId: string;
+  prompt: string;
+  temperature: number;
+  maxTokens: number;
+  timeoutMs?: number;
+  maxAttempts?: number;
+  stream?: boolean;
+  overrides?: ModelOverrides;
+  onJobUpdate?: (job: GenerationJob) => Promise<void> | void;
+  mock: () => string;
+}) {
+  try {
+    return await dispatchAgentText({
+      agent: "POLISHER",
+      ...input,
+    });
+  } catch (error) {
+    const fallbackJob = appendJobEvent(input.jobId, {
+      agent: "ASSISTANT",
+      status: "running",
+      message: `POLISHER repair fallback started: ${safeErrorMessage(error, "POLISHER failed.")}`,
+    }, { preserveJobStatus: true });
+    if (fallbackJob) await input.onJobUpdate?.(fallbackJob);
+
+    return dispatchAgentText({
+      agent: "ASSISTANT",
+      jobId: input.jobId,
+      prompt: buildDefaultRepairFallbackPrompt(input.prompt),
+      temperature: input.temperature,
+      maxTokens: input.maxTokens,
+      timeoutMs: input.timeoutMs,
+      maxAttempts: input.maxAttempts,
+      stream: input.stream,
+      overrides: input.overrides,
+      onJobUpdate: input.onJobUpdate,
+      mock: input.mock,
+    });
+  }
+}
+
+function buildDefaultRepairFallbackPrompt(prompt: string) {
+  return `${prompt}
+
+Fallback instruction: the POLISHER provider is unavailable. Complete the same repair task with the default model. Output only the repaired Markdown content.`;
+}
+
+function shouldUseChunkedRepair(content: string) {
+  return content.length >= CHUNKED_REPAIR_MIN_CHARS;
+}
+
+function splitMarkdownForRepair(content: string) {
+  const lines = content.replace(/\r\n/g, "\n").split("\n");
+  const chunks: string[] = [];
+  let current: string[] = [];
+  let currentLength = 0;
+
+  const flush = () => {
+    const chunk = current.join("\n").trim();
+    if (chunk) chunks.push(chunk);
+    current = [];
+    currentLength = 0;
+  };
+
+  for (const line of lines) {
+    const lineLength = line.length + 1;
+    const startsSection = /^#{2,3}\s+\S/u.test(line);
+    if (
+      current.length &&
+      (currentLength + lineLength > REPAIR_CHUNK_MAX_CHARS ||
+        (startsSection && currentLength >= REPAIR_CHUNK_MAX_CHARS / 2))
+    ) {
+      flush();
+    }
+    current.push(line);
+    currentLength += lineLength;
+  }
+  flush();
+  return chunks;
+}
+
+function buildChapterChunkRepairPrompt(
+  course: Course,
+  chapter: Chapter,
+  chunk: string,
+  issues: QualityIssue[],
+  chunkIndex: number,
+  totalChunks: number,
+) {
+  return `# Task: Targeted Chapter Chunk Repair
+
+You are repairing one Markdown chunk from a Chinese textbook chapter.
+Output only the repaired chunk. Do not output JSON, explanations, reports, code fences around the whole answer, or content from other chunks.
+Preserve the existing heading level and section scope. Fix only issues that are relevant to this chunk; if an issue belongs elsewhere, keep this chunk semantically unchanged.
+Standalone formulas must use $$...$$. Code must stay in fenced code blocks.
+
+Course topic: ${course.topic}
+Chapter title: ${chapter.title}
+Chunk: ${chunkIndex}/${totalChunks}
+
+Quality issues to fix when relevant:
+${issues.map((issue, index) => `${index + 1}. [${issue.severity}] ${issue.check}: ${issue.message}${issue.suggestion ? ` Suggestion: ${issue.suggestion}` : ""}`).join("\n")}
+
+Markdown chunk:
+
+${chunk}`;
+}
+
+function shouldRepairQuality(issues: QualityIssue[], score: number) {
+  return score < 70 || issues.some((issue) => issue.severity === "error");
+}
+
+function withRepairUnavailableIssue<T extends {
+  report: { issues: QualityIssue[]; status: "passed" | "warning" | "failed"; score: number };
+}>(reviewed: T, error: unknown) {
+  return {
+    ...reviewed,
+    report: {
+      ...reviewed.report,
+      issues: [
+        ...reviewed.report.issues,
+        {
+          check: "review_repair.unavailable",
+          severity: "warning" as const,
+          message: `自动返修暂时不可用，已保留当前最佳草稿：${safeErrorMessage(error, "repair failed.")}`,
+          suggestion: "稍后可重新生成；当前章节会按已有 TQH 分数展示。",
+          source: "TQH" as const,
+        },
+      ],
+      status: reviewed.report.status === "failed" ? reviewed.report.status : ("warning" as const),
+      score: reviewed.report.status === "failed" ? reviewed.report.score : Math.max(0, reviewed.report.score - 3),
+    },
+  };
+}
+
 export async function askTutor(input: {
   topic: string;
   selectedText: string;
   question: string;
   history?: { role: "user" | "assistant"; content: string }[];
+  context?: Parameters<typeof buildAnnotationTutorPrompt>[0]["context"];
   overrides?: ModelOverrides;
   onJobUpdate?: (job: GenerationJob) => Promise<void> | void;
 }) {
@@ -300,7 +722,10 @@ export async function askTutor(input: {
     const answer = await dispatchAgentText({
       agent: "TUTOR",
       jobId: job.id,
-      prompt: buildAnnotationTutorPrompt({ ...input, history: input.history ?? [] }),
+      prompt: buildAnnotationTutorPrompt({
+        ...input,
+        history: compactTutorHistory(input.history ?? []),
+      }),
       overrides: input.overrides,
       mock: () => createMockAnswer(input.selectedText, input.question),
       onJobUpdate: input.onJobUpdate,
@@ -313,6 +738,82 @@ export async function askTutor(input: {
     failGenerationJob(job.id, "Tutor answer failed; returned mock fallback.");
     return { answer, job: getGenerationJob(job.id) };
   }
+}
+
+export type ContentRepairSuggestion = {
+  issueType: "formula_rendering" | "markdown_format" | "conceptual_error" | "wording" | "other";
+  diagnosis: string;
+  beforeText: string;
+  afterText: string;
+  confidence: "low" | "medium" | "high";
+};
+
+export async function proposeContentRepair(input: {
+  course: Course;
+  chapterId: string;
+  sectionId?: string;
+  selectedText: string;
+  userMessage: string;
+  overrides?: ModelOverrides;
+}) {
+  const raw = await dispatchAgentText({
+    agent: "TUTOR",
+    prompt: buildContentRepairPrompt(input),
+    temperature: 0.1,
+    maxTokens: 2048,
+    stream: false,
+    responseFormat: "json_object",
+    overrides: input.overrides,
+    mock: () => JSON.stringify(createMockRepairSuggestion(input.selectedText)),
+  });
+  const parsed = parseJson<ContentRepairSuggestion>(raw);
+  return normalizeRepairSuggestion(parsed, input.selectedText);
+}
+
+function createMockRepairSuggestion(selectedText: string): ContentRepairSuggestion {
+  return {
+    issueType: "markdown_format",
+    diagnosis: "这是一个模拟修复建议。真实模型可用时会给出具体诊断。",
+    beforeText: selectedText,
+    afterText: selectedText,
+    confidence: "low",
+  };
+}
+
+function normalizeRepairSuggestion(
+  suggestion: ContentRepairSuggestion,
+  selectedText: string,
+): ContentRepairSuggestion {
+  const confidence = ["low", "medium", "high"].includes(suggestion.confidence)
+    ? suggestion.confidence
+    : "low";
+  const issueType = [
+    "formula_rendering",
+    "markdown_format",
+    "conceptual_error",
+    "wording",
+    "other",
+  ].includes(suggestion.issueType)
+    ? suggestion.issueType
+    : "other";
+
+  return {
+    issueType: issueType as ContentRepairSuggestion["issueType"],
+    diagnosis: String(suggestion.diagnosis ?? "").trim() || "已生成局部修复建议。",
+    beforeText: selectedText,
+    afterText: String(suggestion.afterText ?? selectedText).trim() || selectedText,
+    confidence: confidence as ContentRepairSuggestion["confidence"],
+  };
+}
+
+function compactTutorHistory(history: { role: "user" | "assistant"; content: string }[]) {
+  return history
+    .slice(-8)
+    .map((message) => ({
+      role: message.role,
+      content: message.content.replace(/\s+/g, " ").trim().slice(0, 1200),
+    }))
+    .filter((message) => message.content);
 }
 
 export async function planCourseOutline(
@@ -330,18 +831,20 @@ export async function planCourseOutline(
   };
 
   try {
-    return parseJson<CourseGeneration>(
-      await dispatchAgentText({
-        agent: "ARCHITECT",
-        jobId,
-        prompt: buildCoursePlannerPrompt(input),
-        temperature: 0.25,
-        maxTokens: 6144,
-        overrides: options.overrides,
-        mock,
-        onJobUpdate: options.onJobUpdate,
-      }),
-    );
+    const plannerText = await dispatchAgentText({
+      agent: "ARCHITECT",
+      jobId,
+      prompt: buildCoursePlannerPrompt(input),
+      temperature: 0.2,
+      maxTokens: 8192,
+      timeoutMs: COURSE_PLANNER_TIMEOUT_MS,
+      stream: false,
+      responseFormat: "json_object",
+      overrides: options.overrides,
+      mock,
+      onJobUpdate: options.onJobUpdate,
+    });
+    return await parseCourseGenerationJson(input, plannerText, jobId, options, mock);
   } catch (error) {
     assertMockFallbackAllowed(error, options.overrides, "ARCHITECT");
     const fallback = createMockCourse(input);
@@ -351,6 +854,78 @@ export async function planCourseOutline(
       chapters: fallback.chapters.map(stripGeneratedChapterFields),
     };
   }
+}
+
+async function parseCourseGenerationJson(
+  input: CourseInput,
+  plannerText: string,
+  jobId: string,
+  options: { overrides?: ModelOverrides; onJobUpdate?: (job: GenerationJob) => Promise<void> | void },
+  mock: () => string,
+) {
+  try {
+    return parseJson<CourseGeneration>(plannerText);
+  } catch (error) {
+    const parseError = safeErrorMessage(error, "课程规划 JSON 解析失败。");
+    const repairJob = appendJobEvent(jobId, {
+      agent: "ARCHITECT",
+      status: "running",
+      message: `课程规划 JSON 无法解析，正在自动修复：${parseError}`,
+    }, { preserveJobStatus: true });
+    if (repairJob) await options.onJobUpdate?.(repairJob);
+
+    const repairedText = await dispatchAgentText({
+      agent: "ARCHITECT",
+      jobId,
+      prompt: buildCoursePlannerJsonRepairPrompt(input, clipPlannerTextForRepair(plannerText), parseError),
+      temperature: 0,
+      maxTokens: 8192,
+      timeoutMs: COURSE_PLANNER_REPAIR_TIMEOUT_MS,
+      stream: false,
+      responseFormat: "json_object",
+      overrides: options.overrides,
+      mock,
+      onJobUpdate: options.onJobUpdate,
+    });
+
+    try {
+      return parseJson<CourseGeneration>(repairedText);
+    } catch (repairError) {
+      const compactReason = safeErrorMessage(repairError, parseError);
+      const compactJob = appendJobEvent(jobId, {
+        agent: "ARCHITECT",
+        status: "running",
+        message: `课程规划 JSON 自动修复仍未通过，正在改用紧凑规划：${compactReason}`,
+      }, { preserveJobStatus: true });
+      if (compactJob) await options.onJobUpdate?.(compactJob);
+
+      const compactText = await dispatchAgentText({
+        agent: "ARCHITECT",
+        jobId,
+        prompt: buildCoursePlannerCompactPrompt(input, compactReason),
+        temperature: 0,
+        maxTokens: 6144,
+        timeoutMs: COURSE_PLANNER_REPAIR_TIMEOUT_MS,
+        stream: false,
+        responseFormat: "json_object",
+        overrides: options.overrides,
+        mock,
+        onJobUpdate: options.onJobUpdate,
+      });
+
+      try {
+        return parseJson<CourseGeneration>(compactText);
+      } catch (compactError) {
+        throw new Error(`课程规划 JSON 自动修复失败：${safeErrorMessage(compactError, compactReason)}`);
+      }
+    }
+  }
+}
+
+function clipPlannerTextForRepair(text: string) {
+  const limit = 24000;
+  if (text.length <= limit) return text;
+  return `${text.slice(0, limit)}\n\n[后续内容过长已截断，请根据原始课程需求和已给出的结构补全合法 JSON。]`;
 }
 
 function stripGeneratedChapterFields(chapter: Chapter): Omit<Chapter, "id" | "content" | "review" | "status"> {

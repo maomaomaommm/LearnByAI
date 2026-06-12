@@ -113,6 +113,23 @@ create table if not exists quota_reservations (
   expires_at timestamptz not null default (now() + interval '10 minutes')
 );
 
+create table if not exists app_settings (
+  key text primary key,
+  value jsonb not null,
+  updated_by text,
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists admin_audit_logs (
+  id uuid primary key,
+  admin_username text not null,
+  action text not null,
+  target_type text not null,
+  target_id text,
+  summary text not null,
+  created_at timestamptz not null default now()
+);
+
 alter table profiles enable row level security;
 alter table courses enable row level security;
 alter table chapters enable row level security;
@@ -124,6 +141,8 @@ alter table quality_reports enable row level security;
 alter table exports enable row level security;
 alter table usage_events enable row level security;
 alter table quota_reservations enable row level security;
+alter table app_settings enable row level security;
+alter table admin_audit_logs enable row level security;
 
 create policy "Users can read own profile" on profiles for select using (auth.uid() = id);
 create policy "Users can insert own profile" on profiles for insert with check (auth.uid() = id);
@@ -158,39 +177,73 @@ create trigger on_auth_user_created
   after insert on auth.users
   for each row execute function public.handle_new_user();
 
+drop function if exists public.claim_generation_job(uuid, text, integer);
+
 create or replace function public.claim_generation_job(
   target_job_id uuid,
   worker_id text,
-  lease_ms integer
+  lease_ms integer,
+  max_course_chapter_jobs integer default 2
 )
 returns table(payload jsonb)
 language plpgsql
 security definer
 set search_path = public
 as $$
+declare
+  target_course_id uuid;
+  target_type text;
 begin
+  select gj.course_id, gj.type
+  into target_course_id, target_type
+  from public.generation_jobs gj
+  where gj.id = claim_generation_job.target_job_id;
+
+  if target_type = 'chapter' and target_course_id is not null then
+    perform pg_advisory_xact_lock(hashtext(target_course_id::text)::bigint);
+  end if;
+
   return query
-  update public.generation_jobs
+  update public.generation_jobs as gj
   set
-    locked_by = worker_id,
-    locked_until = now() + (lease_ms * interval '1 millisecond'),
-    attempts = attempts + 1,
+    status = 'running',
+    locked_by = claim_generation_job.worker_id,
+    locked_until = now() + (claim_generation_job.lease_ms * interval '1 millisecond'),
+    attempts = gj.attempts + 1,
     payload = jsonb_set(
       jsonb_set(
-        jsonb_set(payload, '{lockedBy}', to_jsonb(worker_id), true),
+        jsonb_set(
+          jsonb_set(gj.payload, '{status}', to_jsonb('running'::text), true),
+          '{lockedBy}',
+          to_jsonb(claim_generation_job.worker_id),
+          true
+        ),
         '{lockedUntil}',
-        to_jsonb((now() + (lease_ms * interval '1 millisecond'))::text),
+        to_jsonb((now() + (claim_generation_job.lease_ms * interval '1 millisecond'))::text),
         true
       ),
       '{attempts}',
-      to_jsonb(attempts + 1),
+      to_jsonb(gj.attempts + 1),
       true
     ),
     updated_at = now()
-  where id = target_job_id
-    and status in ('pending', 'queued', 'retrying')
-    and (locked_until is null or locked_until <= now())
-  returning generation_jobs.payload;
+  where gj.id = claim_generation_job.target_job_id
+    and gj.status in ('pending', 'queued', 'retrying')
+    and (gj.locked_until is null or gj.locked_until <= now())
+    and (
+      gj.type <> 'chapter'
+      or claim_generation_job.max_course_chapter_jobs <= 0
+      or (
+        select count(*)
+        from public.generation_jobs active
+        where active.course_id = gj.course_id
+          and active.type = 'chapter'
+          and active.id <> gj.id
+          and active.status = 'running'
+          and active.locked_until > now()
+      ) < claim_generation_job.max_course_chapter_jobs
+    )
+  returning gj.payload;
 end;
 $$;
 
@@ -307,18 +360,26 @@ as $$
   select 'learnbyai-beta-2026-06-07-03'::text;
 $$;
 
-revoke execute on function public.claim_generation_job(uuid, text, integer) from public, anon, authenticated;
+revoke execute on function public.claim_generation_job(uuid, text, integer, integer) from public, anon, authenticated;
 revoke execute on function public.reserve_usage_quota(uuid, text, integer, timestamptz, uuid, integer) from public, anon, authenticated;
 revoke execute on function public.commit_usage_quota_reservation(uuid) from public, anon, authenticated;
 revoke execute on function public.release_usage_quota_reservation(uuid) from public, anon, authenticated;
 
-grant execute on function public.claim_generation_job(uuid, text, integer) to service_role;
+grant execute on function public.claim_generation_job(uuid, text, integer, integer) to service_role;
 grant execute on function public.reserve_usage_quota(uuid, text, integer, timestamptz, uuid, integer) to service_role;
 grant execute on function public.commit_usage_quota_reservation(uuid) to service_role;
 grant execute on function public.release_usage_quota_reservation(uuid) to service_role;
 
 create index if not exists generation_jobs_runnable_idx
   on generation_jobs (status, locked_until, created_at);
+
+create unique index if not exists generation_jobs_active_course_idx
+  on generation_jobs (course_id)
+  where course_id is not null and type = 'course' and status in ('pending', 'queued', 'retrying', 'running');
+
+create unique index if not exists generation_jobs_active_chapter_idx
+  on generation_jobs (chapter_id)
+  where chapter_id is not null and type = 'chapter' and status in ('pending', 'queued', 'retrying', 'running');
 
 create index if not exists courses_user_created_idx
   on courses (user_id, created_at desc);
@@ -346,6 +407,9 @@ create index if not exists quota_reservations_user_action_expires_idx
 
 create index if not exists quality_reports_user_target_idx
   on quality_reports (user_id, target_type, target_id);
+
+create index if not exists admin_audit_logs_created_idx
+  on admin_audit_logs (created_at desc);
 
 insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
 values (

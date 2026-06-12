@@ -9,12 +9,11 @@ LearnByAI is moving from a local-first MVP into a small-user Beta. The current i
 - Course shell creation through the API, with Course Bible and outline generation handled by a background ARCHITECT job.
 - Chapter generation on demand through AUTHOR and POLISHER agents.
 - REVIEWER-backed TQH quality reports for generated chapters.
-- Background course-planning and first-chapter jobs scheduled through a local in-process runner, with course-page fallback triggering and job recovery from course snapshots in local fallback mode.
+- Background course-planning and first-chapter jobs persisted as queue records, with production deployments expected to run an external worker.
 - Structured chapter sections, with old Markdown blobs migrated into a single legacy section.
 - Anchored reader questions through the TUTOR workflow.
-- Local browser persistence as the default fallback.
 - Supabase-ready server persistence when Supabase environment variables are configured.
-- Supabase magic-link callback handling plus local Beta login/logout fallback.
+- Supabase magic-link callback handling.
 - PDF/TeX export jobs with metadata persisted separately from local fallback file bytes. PDF exports are valid PDF bytes; in configured Supabase mode, export bytes must write to Supabase Storage instead of silently falling back to local files.
 - Per-user quota checks and success-only usage-event audit records for course creation, chapter generation, tutor answers, and export.
 - Playwright E2E gates that run in mock AI mode by default.
@@ -22,8 +21,8 @@ LearnByAI is moving from a local-first MVP into a small-user Beta. The current i
 Important current behavior:
 
 - `POST /api/courses` creates a pending course shell and generation job, returns immediately, then schedules Course Bible, chapter outline, and first-chapter generation in the background.
-- Opening a chapter triggers `POST /api/chapters/[id]/generate` if the chapter has no content or sections.
-- In local fallback mode, API calls accept a course snapshot from the browser so E2E and offline development remain stable.
+- Opening a chapter triggers `POST /api/chapters/[id]/generate` if the persisted chapter has no content or sections.
+- Browser clients do not send full course snapshots back to the API. Course, chapter, annotation, export, and generation-job operations read the authoritative persisted course from the server store.
 - Real AI smoke tests are opt-in and require `AI_API_KEY`.
 
 ## 2. Tech Stack
@@ -60,7 +59,7 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=
 SUPABASE_SERVICE_ROLE_KEY=
 SUPABASE_EXPORTS_BUCKET=learnbyai-exports
 APP_BASE_URL=
-GENERATION_WORKER_MODE=inline
+GENERATION_WORKER_MODE=external
 INTERNAL_WORKER_SECRET=
 GENERATION_WORKER_JOB_ID=
 GENERATION_WORKER_LIMIT=
@@ -79,7 +78,7 @@ AI_SMOKE_REQUIRED=
 
 In Supabase mode, user API calls must include a valid Supabase bearer token. The `x-learnbyai-user-id` header is accepted only in local fallback mode. For production background workers, set `APP_BASE_URL` and `INTERNAL_WORKER_SECRET`; without the secret, `/api/internal/generation-worker` is intentionally unavailable when Supabase is configured. Worker calls may authenticate with either `Authorization: Bearer <INTERNAL_WORKER_SECRET>` or `x-internal-worker-secret`; exact `jobId` recovery does not require a user session because the worker resolves the job owner from the service-role job record before running.
 
-`npm run worker:once` is the cron/queue-friendly external worker entrypoint. It loads `.env` and `.env.local`, posts to `${APP_BASE_URL}/api/internal/generation-worker`, sends the worker secret as a bearer token, and prints only processed/result counts. Set `GENERATION_WORKER_JOB_ID` to retry one exact job, or `GENERATION_WORKER_LIMIT` to cap the number of queued jobs claimed in one invocation.
+`npm run worker:once` is the cron/queue-friendly external worker entrypoint. It loads `.env` and `.env.local`, posts to `${APP_BASE_URL}/api/internal/generation-worker`, sends the worker secret as a bearer token, and prints only processed/result counts. Set `GENERATION_WORKER_JOB_ID` to retry one exact job, or `GENERATION_WORKER_LIMIT` to cap the number of queued jobs claimed in one invocation. `npm run worker:loop` wraps the same call in a small long-running loop for systemd-style deployments.
 
 Daily quota defaults are `create_course=20`, `generate_chapter=100`, `ask_tutor=300`, and `export=30`. Override them with the `QUOTA_*` variables above for Beta cohorts; Playwright still uses `E2E_QUOTA_LIMIT=2` as a test-only override. APIs run quota-controlled work through a per-user/per-action serialized gate. In local fallback mode this is an in-process lock; in configured Supabase mode it first creates an atomic `quota_reservations` row through the `reserve_usage_quota` RPC, commits it to `usage_events` only after the requested course/job/output is successfully persisted, and releases the reservation on failure. Failed AI, Storage, or ownership checks do not consume quota, and concurrent requests cannot bypass quota in local fallback or through a migrated Supabase database.
 
@@ -257,7 +256,7 @@ Files under `src/lib/quality` provide:
 
 Background workers claim generation jobs before running them. Local fallback uses an in-process lease; Supabase mode uses the `claim_generation_job` RPC plus `locked_by`, `locked_until`, and `attempts` columns so concurrent cron invocations do not process the same queued job twice.
 
-`src/lib/storage.ts` remains the browser fallback and migration layer.
+Browser UI state is intentionally non-authoritative. The app may keep short-lived React state while a page is open, but course and annotation data is reloaded from the API after refresh/navigation and is not persisted in browser localStorage.
 
 ### API Surface
 
@@ -282,7 +281,7 @@ Background workers claim generation jobs before running them. Local fallback use
 - Phase 1, Supabase auth/database: implemented as Supabase-ready adapter plus local fallback; needs testing against a real Supabase project.
 - Phase 2, MAOL core: implemented.
 - Phase 3, TQH quality harness plus REVIEWER stage: implemented.
-- Phase 4, background course and first-chapter generation: implemented through queued course/chapter jobs, in-process scheduling from course creation, an internal worker endpoint for external cron/queue recovery, course-page fallback triggering, job polling, retry support, service-role exact job recovery, and E2E verification. A production deployment should call `/api/internal/generation-worker` from a durable queue/cron and set `INTERNAL_WORKER_SECRET`.
+- Phase 4, background course and first-chapter generation: implemented through queued course/chapter jobs, an internal worker endpoint for external cron/queue processing, job polling, retry support, service-role exact job recovery, and E2E verification. Production deployments should use `GENERATION_WORKER_MODE=external`, call `/api/internal/generation-worker` from a durable queue/cron or `npm run worker:loop`, and set `INTERNAL_WORKER_SECRET`.
 - Phase 5, structured sections: implemented for generated content and legacy migration.
 - Phase 6, export/quota hardening: implemented as local/Supabase-ready adapter with metadata plus local file-store downloads, per-user usage-event audit records, a read-only current-user usage endpoint, local serialized quota consumption, and Supabase atomic quota reservations. Quota is consumed only after ownership/resource checks pass and requested resources are successfully persisted. Supabase Storage upload/download, quota reservation RPCs, and bucket/object policies are defined in `supabase/schema.sql`, and configured Supabase mode now fails hard on database or Storage persistence errors; a real project still needs migration execution and live RLS/RPC verification.
 
@@ -333,7 +332,7 @@ Current E2E scenario:
 - Verify export metadata includes a storage path/provider.
 - Verify PDF export bytes begin with `%PDF-`.
 - Verify local Beta user isolation through API headers.
-- Verify local Beta login stores identity and logout clears it.
+- Verify login no longer creates a browser-local API identity.
 - Verify user-owned course snapshots cannot bypass server ownership checks.
 - Verify quota exhaustion returns `429`.
 - Verify concurrent same-user course creation cannot bypass the local Beta quota gate.

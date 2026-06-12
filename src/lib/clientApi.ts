@@ -93,11 +93,9 @@ async function createApiHeaders(init: RequestInit = {}) {
   const supabase = createSupabaseBrowserClient();
   const { data } = supabase ? await supabase.auth.getSession() : { data: undefined };
   const token = data?.session?.access_token;
-  const localUser = typeof window !== "undefined" ? localStorage.getItem("learnbyai:local-user") : "";
   const modelConfig = readModelConfigHeader();
 
   if (token) headers.set("authorization", `Bearer ${token}`);
-  else if (localUser) headers.set("x-learnbyai-user-id", localUser);
   if (modelConfig) headers.set(MODEL_CONFIG_HEADER, modelConfig);
 
   if (init.body && !headers.has("content-type")) {

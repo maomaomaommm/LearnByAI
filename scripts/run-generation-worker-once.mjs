@@ -8,6 +8,8 @@ export async function runGenerationWorkerOnce({
   internalWorkerSecret = process.env.INTERNAL_WORKER_SECRET,
   jobId = process.env.GENERATION_WORKER_JOB_ID,
   limit = process.env.GENERATION_WORKER_LIMIT,
+  recover = process.env.GENERATION_WORKER_RECOVER_INTERRUPTED,
+  timeoutMs = process.env.GENERATION_WORKER_REQUEST_TIMEOUT_MS,
   fetchImpl = globalThis.fetch,
 } = {}) {
   const baseUrl = normalizeBaseUrl(appBaseUrl);
@@ -21,15 +23,30 @@ export async function runGenerationWorkerOnce({
   const body = {};
   if (jobId) body.jobId = jobId;
   if (limit) body.limit = readPositiveInteger(limit, "GENERATION_WORKER_LIMIT");
+  if (recover === true || recover === "true") body.recover = true;
 
-  const response = await fetchImpl(`${baseUrl}/api/internal/generation-worker`, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      authorization: `Bearer ${internalWorkerSecret}`,
-    },
-    body: JSON.stringify(body),
-  });
+  const requestTimeoutMs = readOptionalPositiveInteger(timeoutMs, "GENERATION_WORKER_REQUEST_TIMEOUT_MS") ?? 20 * 60 * 1000;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), requestTimeoutMs);
+  let response;
+  try {
+    response = await fetchImpl(`${baseUrl}/api/internal/generation-worker`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${internalWorkerSecret}`,
+      },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") {
+      throw new Error(`Generation worker request timed out after ${requestTimeoutMs}ms.`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
 
   const json = await readJson(response);
   if (!response.ok) {
@@ -77,6 +94,11 @@ function readPositiveInteger(value, label) {
     throw new Error(`${label} must be a positive integer.`);
   }
   return parsed;
+}
+
+function readOptionalPositiveInteger(value, label) {
+  if (value === undefined || value === "") return undefined;
+  return readPositiveInteger(value, label);
 }
 
 async function readJson(response) {

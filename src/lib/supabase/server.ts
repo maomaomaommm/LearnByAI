@@ -9,8 +9,10 @@ export { AuthRequiredError };
 export function createSupabaseServiceClient() {
   if (!hasSupabaseServerConfig()) return undefined;
 
+  const serviceUrl = process.env.SUPABASE_SERVICE_URL || process.env.SUPABASE_INTERNAL_URL || process.env.NEXT_PUBLIC_SUPABASE_URL!;
+
   return createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    serviceUrl,
     process.env.SUPABASE_SERVICE_ROLE_KEY!,
     {
       auth: {

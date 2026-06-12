@@ -59,6 +59,30 @@ test("format repair normalizes isolated dollar math blocks", () => {
   assert.notEqual(result.status, "failed");
 });
 
+test("format repair removes empty trailing code fences", () => {
+  const content = ["# Heading", "concept explanation", "exercise task", "```python", "print(1)", "```", "```", "```"].join("\n");
+  const repaired = preRepairMarkdown(content);
+  const result = runChapterQualityPipeline(chapter(), repaired);
+
+  assert.doesNotMatch(repaired, /\n```\n```\s*$/u);
+  assert.ok(!result.issues.some((issue) => issue.check === "format.empty_code_fence"));
+});
+
+test("TQH flags likely display formulas without block math", () => {
+  const content = [
+    "# Heading",
+    "concept explanation",
+    "exercise task",
+    "H(j\\omega) = \\frac{1}{1 + j\\omega RC}",
+    "C_{Agent} = g(C_{Model}, C_{Harness})",
+    "\\operatorname{Err} = \\frac{1}{m}\\sum_i e_i",
+  ].join("\n");
+  const report = runChapterQualityPipeline(chapter(), content);
+
+  assert.equal(report.status, "failed");
+  assert.ok(report.issues.some((issue) => issue.check === "format.missing_block_math"));
+});
+
 test("math normalization preserves valid display math delimiters", () => {
   const content = [
     "Accuracy is:",

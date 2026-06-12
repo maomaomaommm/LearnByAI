@@ -11,6 +11,10 @@ export async function dispatchAgentText(input: {
   jobId?: string;
   temperature?: number;
   maxTokens?: number;
+  timeoutMs?: number;
+  maxAttempts?: number;
+  stream?: boolean;
+  responseFormat?: "json_object";
   overrides?: ModelOverrides;
   mock?: () => string;
   onJobUpdate?: (job: GenerationJob) => Promise<void> | void;
@@ -41,6 +45,10 @@ export async function dispatchAgentText(input: {
       agent: input.agent,
       temperature: input.temperature ?? config.temperature,
       maxTokens: input.maxTokens ?? config.maxTokens,
+      timeoutMs: input.timeoutMs,
+      maxAttempts: input.maxAttempts,
+      stream: input.stream,
+      responseFormat: input.responseFormat,
       overrides: input.overrides,
     });
 

@@ -3,7 +3,7 @@ import { Inter, Outfit, JetBrains_Mono } from "next/font/google";
 import "katex/dist/katex.min.css";
 import "./globals.css";
 import { ThemeProvider } from "@/components/ThemeProvider";
-import { Navigation } from "@/components/Navigation";
+import { AppShell } from "@/components/AppShell";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -35,10 +35,7 @@ export default function RootLayout({
     <html lang="zh-CN" suppressHydrationWarning className={`${inter.variable} ${outfit.variable} ${jbMono.variable}`}>
       <body className="font-sans antialiased">
         <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
-          <Navigation />
-          <div className="pt-14">
-            {children}
-          </div>
+          <AppShell>{children}</AppShell>
         </ThemeProvider>
       </body>
     </html>

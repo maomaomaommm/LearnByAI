@@ -1,7 +1,17 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type APIRequestContext } from "@playwright/test";
 
 test("mock beta flow: create course, generate chapter, ask tutor, export", async ({ page }) => {
   test.setTimeout(90_000);
+  const headers = { "x-learnbyai-user-id": `mvp-flow-${crypto.randomUUID()}@example.com` };
+
+  await page.route("**/api/**", async (route) => {
+    await route.continue({
+      headers: {
+        ...route.request().headers(),
+        ...headers,
+      },
+    });
+  });
 
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "LearnByAI" })).toBeVisible();
@@ -10,23 +20,26 @@ test("mock beta flow: create course, generate chapter, ask tutor, export", async
   await expect(page).toHaveURL(/\/create$/);
   await expect(page.locator("form")).toBeVisible();
 
-  await page.locator('form button[type="submit"]').click();
+  await page.locator('input[name="topic"]').fill("Mock Beta Flow");
+  await page.locator('textarea[name="goal"]').fill("Verify the browser flow uses server-backed course data.");
+  await page.locator('textarea[name="background"]').fill("A local fallback test user with basic study habits.");
+  const submitButton = page.locator('form button[type="submit"]');
+  await expect(submitButton).toBeEnabled();
+  await submitButton.click();
   await expect(page).toHaveURL(/\/courses\/[0-9a-f-]+$/, { timeout: 30_000 });
   await expect(page.getByText("Course Bible")).toBeVisible({ timeout: 30_000 });
   const courseUrl = page.url();
+  const courseId = courseUrl.match(/\/courses\/([^/?#]+)/)?.[1];
+  expect(courseId).toBeTruthy();
 
-  await expect.poll(async () =>
-    page.evaluate(() => {
-      const courses = JSON.parse(localStorage.getItem("learnbyai:courses") ?? "[]");
-      return courses[0]?.chapters?.length ?? 0;
-    }),
-  { timeout: 30_000 }).toBeGreaterThan(0);
-  const initialCourse = await page.evaluate(() => {
-    const courses = JSON.parse(localStorage.getItem("learnbyai:courses") ?? "[]");
-    return courses[0];
-  });
+  await expect.poll(async () => {
+    const course = await readCourse(page.request, courseId!, headers);
+    return course?.chapters?.length ?? 0;
+  }, { timeout: 30_000 }).toBeGreaterThan(0);
+  const initialCourse = await readCourse(page.request, courseId!, headers);
+  expect(initialCourse).toBeTruthy();
   const queuedJobId = initialCourse.chapters[0].generationJobId;
-  const jobResponse = await page.request.get(`/api/generation-jobs/${queuedJobId}`);
+  const jobResponse = await page.request.get(`/api/generation-jobs/${queuedJobId}`, { headers });
   expect(jobResponse.ok()).toBeTruthy();
   const jobJson = await jobResponse.json();
   expect(jobJson.job.id).toBe(queuedJobId);
@@ -73,12 +86,11 @@ test("mock beta flow: create course, generate chapter, ask tutor, export", async
   expect(texContent).toContain("\\documentclass{article}");
   expect(texContent.length).toBeGreaterThan(100);
 
-  const course = await page.evaluate(() => {
-    const courses = JSON.parse(localStorage.getItem("learnbyai:courses") ?? "[]");
-    return courses[0];
-  });
+  const course = await readCourse(page.request, courseId!, headers);
+  expect(course).toBeTruthy();
   const pdfResponse = await page.request.post("/api/exports", {
-    data: { courseId: course.id, course, format: "pdf" },
+    headers,
+    data: { courseId: course.id, format: "pdf" },
   });
   expect(pdfResponse.ok()).toBeTruthy();
   const pdfJson = await pdfResponse.json();
@@ -86,7 +98,7 @@ test("mock beta flow: create course, generate chapter, ask tutor, export", async
   expect(pdfJson.export.storagePath).toBeTruthy();
   expect(pdfJson.export.storageProvider).toBe("local");
   expect(pdfJson.export.content).toBeUndefined();
-  const pdfDownload = await page.request.get(`/api/exports/${pdfJson.export.id}`);
+  const pdfDownload = await page.request.get(`/api/exports/${pdfJson.export.id}`, { headers });
   expect(pdfDownload.ok()).toBeTruthy();
   const pdfBytes = Buffer.from(await pdfDownload.body());
   expect(pdfBytes.subarray(0, 5).toString()).toBe("%PDF-");
@@ -94,4 +106,10 @@ test("mock beta flow: create course, generate chapter, ask tutor, export", async
 
 function escapeRegex(value: string) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+async function readCourse(request: APIRequestContext, courseId: string, headers: Record<string, string>) {
+  const response = await request.get(`/api/courses/${courseId}`, { headers });
+  if (!response.ok()) return undefined;
+  return ((await response.json()) as { course?: { id: string; chapters: { id: string; generationJobId?: string }[] } }).course;
 }
