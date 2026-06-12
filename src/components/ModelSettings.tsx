@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Settings2, Sparkles, Loader2, Activity } from "lucide-react";
+import { Activity, Loader2, Settings2, Sparkles } from "lucide-react";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { Button } from "@/components/ui/button";
 import {
@@ -23,8 +23,8 @@ import {
   normalizeModelOverrides,
   parseModelOverrides,
 } from "@/lib/modelOverrides";
-import { cn } from "@/lib/utils";
 import type { AgentName } from "@/lib/types";
+import { cn } from "@/lib/utils";
 
 type ModelSettingsProps = {
   className?: string;
@@ -38,21 +38,30 @@ type ModelSettingsState = {
 };
 
 const AGENT_LABELS: Record<AgentName, string> = {
-  ASSISTANT: "助手智能体",
-  ARCHITECT: "架构智能体",
-  AUTHOR: "作者智能体",
-  POLISHER: "润色智能体",
-  REVIEWER: "审阅智能体",
-  TUTOR: "导师智能体",
+  ASSISTANT: "通用助手",
+  ARCHITECT: "课程规划师",
+  AUTHOR: "教材作者",
+  POLISHER: "格式润色员",
+  REVIEWER: "质量评审员",
+  TUTOR: "阅读导师",
 };
 
 const AGENT_DESCRIPTIONS: Record<AgentName, string> = {
-  ASSISTANT: "通用问答与协调。",
-  ARCHITECT: "课程结构与 Course Bible。",
-  AUTHOR: "章节正文生成。",
-  POLISHER: "章节润色与表达优化。",
-  REVIEWER: "质量审阅与问题检查。",
-  TUTOR: "阅读器内答疑。",
+  ASSISTANT: "负责通用协调、问答和兜底回复。",
+  ARCHITECT: "负责课程结构、课程全局设定和章节规划。",
+  AUTHOR: "负责撰写章节教材正文。",
+  POLISHER: "负责章节排版、表达润色和格式修复。",
+  REVIEWER: "负责质量评审、问题检查和改进建议。",
+  TUTOR: "负责阅读页中的批注问答和辅导。",
+};
+
+const AGENT_BADGES: Record<AgentName, string> = {
+  ASSISTANT: "助",
+  ARCHITECT: "规",
+  AUTHOR: "写",
+  POLISHER: "润",
+  REVIEWER: "审",
+  TUTOR: "导",
 };
 
 const EMPTY_FIELDS: ModelOverrideFields = {
@@ -100,17 +109,17 @@ export function ModelSettings({ className, showLabel = false, size }: ModelSetti
     const normalized = normalizeModelOverrides(toOverrides(settings));
     if (normalized) {
       localStorage.setItem(MODEL_CONFIG_STORAGE_KEY, JSON.stringify(normalized));
-      setStatus("已保存模型配置");
+      setStatus("模型设置已保存。");
     } else {
       localStorage.removeItem(MODEL_CONFIG_STORAGE_KEY);
-      setStatus("配置为空，已清除");
+      setStatus("空设置已清除。");
     }
   }
 
   function clearSettings() {
     localStorage.removeItem(MODEL_CONFIG_STORAGE_KEY);
     setSettings(emptySettings());
-    setStatus("已清除模型配置");
+    setStatus("模型设置已清除。");
   }
 
   return (
@@ -122,42 +131,48 @@ export function ModelSettings({ className, showLabel = false, size }: ModelSetti
             variant="ghost"
             size={buttonSize}
             className={cn(
-              "text-muted-foreground hover:text-foreground rounded-full transition-all duration-300",
-              showLabel && "bg-secondary/40 hover:bg-secondary px-3.5 font-mono text-xs",
+              "rounded-full text-muted-foreground transition-all duration-300 hover:text-foreground",
+              showLabel && "bg-secondary/40 px-3.5 font-mono text-xs hover:bg-secondary",
               className,
             )}
-            aria-label="模型配置"
+            aria-label="模型设置"
             onClick={() => setOpen(true)}
           >
             <Settings2 className={cn("h-4 w-4", showLabel && "mr-2")} />
-            {showLabel && <span>模型配置</span>}
+            {showLabel && <span>模型设置</span>}
           </Button>
         </TooltipTrigger>
-        <TooltipContent sideOffset={6} className="text-xs">模型配置</TooltipContent>
+        <TooltipContent sideOffset={6} className="text-xs">
+          模型设置
+        </TooltipContent>
       </Tooltip>
+
       <DialogContent className="max-h-[90vh] overflow-hidden sm:max-w-2xl">
         <DialogHeader>
-          <DialogTitle>模型配置</DialogTitle>
-          <DialogDescription>配置全局默认模型，也可以为每个智能体单独指定接口。</DialogDescription>
+          <DialogTitle>模型设置</DialogTitle>
+          <DialogDescription>
+            配置默认模型接口，或为不同 Agent 单独设置模型。
+          </DialogDescription>
         </DialogHeader>
 
-        <div className="max-h-[65vh] overflow-y-auto pr-2 pb-2 scrollbar-thin">
-          <section className="mb-6 relative overflow-hidden rounded-xl border border-primary/20 bg-primary/5 p-5">
-            <div className="absolute left-0 top-0 h-full w-1 bg-primary/40"></div>
+        <div className="max-h-[65vh] overflow-y-auto pb-2 pr-2 scrollbar-thin">
+          <section className="relative mb-6 overflow-hidden rounded-xl border border-primary/20 bg-primary/5 p-5">
+            <div className="absolute left-0 top-0 h-full w-1 bg-primary/40" />
             <h3 className="mb-5 flex items-center gap-2 text-sm font-semibold tracking-tight text-foreground">
               <Sparkles className="h-4 w-4 text-primary" />
-              全局默认配置
+              默认配置
             </h3>
             <Fields
               idPrefix="model-default"
               values={settings.default}
               onChange={updateDefault}
+              getTestPayload={() => ({ agent: "default", overrides: toOverrides(settings) })}
             />
           </section>
 
           <div className="mb-3 px-1">
             <h4 className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/70">
-              智能体专属覆写 (可选)
+              智能体单独配置
             </h4>
           </div>
 
@@ -171,22 +186,27 @@ export function ModelSettings({ className, showLabel = false, size }: ModelSetti
                 <AccordionTrigger className="py-3.5 hover:no-underline">
                   <span className="flex min-w-0 items-center gap-3 text-left">
                     <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-secondary font-mono text-[11px] font-bold text-secondary-foreground">
-                      {agent.substring(0, 2)}
+                      {AGENT_BADGES[agent]}
                     </span>
                     <span className="flex flex-col gap-0.5">
-                      <span className="font-mono text-sm font-medium tracking-tight">{agent}</span>
-                      <span className="text-[10px] font-normal text-muted-foreground">{AGENT_LABELS[agent]}</span>
+                      <span className="text-sm font-medium tracking-tight">{AGENT_LABELS[agent]}</span>
+                      <span className="text-[10px] font-normal text-muted-foreground">
+                        {agent}
+                      </span>
                     </span>
                   </span>
                 </AccordionTrigger>
                 <AccordionContent className="pb-5 pt-1">
                   <div className="mb-5 rounded-md bg-muted/50 px-3 py-2.5">
-                    <p className="text-xs leading-relaxed text-muted-foreground">{AGENT_DESCRIPTIONS[agent]}</p>
+                    <p className="text-xs leading-relaxed text-muted-foreground">
+                      {AGENT_DESCRIPTIONS[agent]}
+                    </p>
                   </div>
                   <Fields
                     idPrefix={`model-${agent.toLowerCase()}`}
                     values={settings.agents[agent]}
                     onChange={(field, value) => updateAgent(agent, field, value)}
+                    getTestPayload={() => ({ agent, overrides: toOverrides(settings) })}
                   />
                 </AccordionContent>
               </AccordionItem>
@@ -200,7 +220,7 @@ export function ModelSettings({ className, showLabel = false, size }: ModelSetti
           </div>
           <div className="flex flex-col-reverse gap-2 sm:flex-row">
             <Button type="button" variant="outline" onClick={clearSettings}>
-              清空
+              清除
             </Button>
             <Button type="button" onClick={saveSettings}>
               保存
@@ -216,10 +236,12 @@ function Fields({
   idPrefix,
   values,
   onChange,
+  getTestPayload,
 }: {
   idPrefix: string;
   values: ModelOverrideFields;
   onChange: (field: keyof ModelOverrideFields, value: string) => void;
+  getTestPayload: () => unknown;
 }) {
   const [isTesting, setIsTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ ok: boolean; msg: string } | null>(null);
@@ -231,17 +253,17 @@ function Fields({
       const res = await fetch("/api/test-model", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(values),
+        body: JSON.stringify(getTestPayload()),
       });
-      const data = await res.json();
+      const data = await readJsonResponse(res);
       if (data.ok) {
-        setTestResult({ ok: true, msg: `连通成功 (${data.elapsed}ms)` });
+        setTestResult({ ok: true, msg: `连接成功（${data.elapsed}ms）` });
       } else {
         setTestResult({ ok: false, msg: data.error || "请求失败" });
       }
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "未知错误";
-      setTestResult({ ok: false, msg: `网络错误: ${message}` });
+      setTestResult({ ok: false, msg: `网络错误：${message}` });
     } finally {
       setIsTesting(false);
     }
@@ -252,7 +274,7 @@ function Fields({
       <div className="grid gap-4 sm:grid-cols-3">
         <Field
           id={`${idPrefix}-api-key`}
-          label="API 密钥"
+          label="接口密钥"
           type="password"
           autoComplete="off"
           value={values.apiKey ?? ""}
@@ -273,7 +295,7 @@ function Fields({
         />
         <Field
           id={`${idPrefix}-model`}
-          label="模型名称"
+          label="模型"
           type="text"
           value={values.model ?? ""}
           onChange={(value) => {
@@ -287,7 +309,7 @@ function Fields({
           type="button"
           variant="secondary"
           size="sm"
-          className="h-7 px-3 text-[11px] font-medium shadow-none hover:bg-primary/10 hover:text-primary transition-colors"
+          className="h-7 px-3 text-[11px] font-medium shadow-none transition-colors hover:bg-primary/10 hover:text-primary"
           onClick={handleTest}
           disabled={isTesting}
         >
@@ -296,7 +318,7 @@ function Fields({
           ) : (
             <Activity className="mr-1.5 h-3 w-3" />
           )}
-          连通测试
+          测试
         </Button>
         {testResult && (
           <span
@@ -306,13 +328,25 @@ function Fields({
             )}
             title={testResult.msg}
           >
-            {testResult.ok ? "✅ " : "❌ "}
+            {testResult.ok ? "成功：" : "错误："}
             {testResult.msg}
           </span>
         )}
       </div>
     </div>
   );
+}
+
+async function readJsonResponse(res: Response) {
+  const text = await res.text();
+  try {
+    return JSON.parse(text);
+  } catch {
+    return {
+      ok: false,
+      error: `服务器返回了非 JSON 响应（HTTP ${res.status}），请检查应用服务或网关是否正常。`,
+    };
+  }
 }
 
 function Field({
@@ -342,8 +376,8 @@ function Field({
         autoComplete={autoComplete}
         spellCheck={false}
         onChange={(event) => onChange(event.target.value)}
-        placeholder={label === "API 密钥" ? "未配置则使用默认" : ""}
-        className="h-8 bg-secondary/30 border-border/60 text-xs font-mono placeholder:text-muted-foreground/40 focus-visible:bg-background transition-colors"
+        placeholder={type === "password" ? "使用服务器默认配置" : ""}
+        className="h-8 border-border/60 bg-secondary/30 font-mono text-xs transition-colors placeholder:text-muted-foreground/40 focus-visible:bg-background"
       />
     </div>
   );

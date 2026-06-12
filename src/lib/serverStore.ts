@@ -17,6 +17,7 @@ const localStorePath = join(process.cwd(), ".learnbyai", "local-beta-store.json"
 const localStoreLockPath = `${localStorePath}.lock`;
 const LOCAL_STORE_LOCK_TIMEOUT_MS = 10_000;
 const LOCAL_STORE_STALE_LOCK_MS = 30_000;
+const ACTIVE_GENERATION_JOB_STATUSES: GenerationJob["status"][] = ["pending", "queued", "retrying", "running"];
 let localStoreWriteQueue = Promise.resolve();
 
 type LocalStore = {
@@ -31,6 +32,8 @@ type LocalStore = {
 type SupabaseErrorLike = {
   code?: string;
   message?: string;
+  details?: string;
+  hint?: string;
 };
 
 type SupabaseResult = {
@@ -242,12 +245,6 @@ export async function updateServerChapter(
   return saveServerCourse({ ...course, chapters }, request);
 }
 
-export async function canUseCourseSnapshot(course: Course | undefined, request?: Request) {
-  if (!course) return false;
-  const userId = await resolveUserId(request);
-  return !course.userId || course.userId === userId;
-}
-
 export async function saveServerAnnotation(annotation: Annotation, request?: Request) {
   const userId = await resolveUserId(request);
   const nextAnnotation = {
@@ -406,13 +403,14 @@ export async function saveServerGenerationJob(job: GenerationJob, request?: Requ
   const supabase = createSupabaseServiceClient();
   if (!supabase || !isUuid(nextJob.userId)) return publishSavedGenerationJob(nextJob);
 
-  await requireSupabaseWrite(
-    "Persist generation job",
-    supabase.from("generation_jobs").upsert({
+  const relationalCourseId = await resolveGenerationJobCourseId(supabase, nextJob);
+  const relationalChapterId = await resolveGenerationJobChapterId(supabase, nextJob);
+
+  const { error } = await supabase.from("generation_jobs").upsert({
       id: nextJob.id,
       user_id: nextJob.userId,
-      course_id: isUuid(nextJob.courseId) ? nextJob.courseId : null,
-      chapter_id: isUuid(nextJob.chapterId) ? nextJob.chapterId : null,
+      course_id: relationalCourseId,
+      chapter_id: relationalChapterId,
       type: nextJob.type,
       status: nextJob.status,
       locked_by: nextJob.lockedBy ?? null,
@@ -421,8 +419,20 @@ export async function saveServerGenerationJob(job: GenerationJob, request?: Requ
       payload: nextJob,
       created_at: nextJob.createdAt,
       updated_at: nextJob.updatedAt,
-    }),
-  );
+    });
+
+  if (isActiveGenerationJobConflict(error)) {
+    const activeJob = await getConflictingActiveGenerationJob(nextJob, request);
+    if (activeJob) {
+      localGenerationJobs.delete(nextJob.id);
+      localGenerationJobs.set(activeJob.id, activeJob);
+      upsertGenerationJob(activeJob);
+      await persistLocalStore();
+      return publishSavedGenerationJob(activeJob);
+    }
+  }
+
+  assertSupabaseNoError("Persist generation job", error);
 
   return publishSavedGenerationJob(nextJob);
 }
@@ -454,6 +464,14 @@ export async function getServerGenerationJob(id: string, request?: Request) {
   return hydratedJob.userId === userId || userId === "local-beta-user" ? hydratedJob : undefined;
 }
 
+export async function getActiveServerGenerationJobForCourse(courseId: string, request?: Request) {
+  return getActiveServerGenerationJob("course_id", courseId, "course", request);
+}
+
+export async function getActiveServerGenerationJobForChapter(chapterId: string, request?: Request) {
+  return getActiveServerGenerationJob("chapter_id", chapterId, "chapter", request);
+}
+
 export async function getServerGenerationJobForWorker(id: string) {
   const supabase = createSupabaseServiceClient();
 
@@ -482,6 +500,7 @@ export async function listRunnableGenerationJobs(limit = 10) {
       .from("generation_jobs")
       .select("payload, created_at")
       .in("status", statuses)
+      .or(`locked_until.is.null,locked_until.lte.${new Date().toISOString()}`)
       .order("created_at", { ascending: true })
       .limit(limit);
 
@@ -497,10 +516,133 @@ export async function listRunnableGenerationJobs(limit = 10) {
     .slice(0, limit);
 }
 
+export async function recoverInterruptedGenerationJobs() {
+  const supabase = createSupabaseServiceClient();
+  const now = new Date().toISOString();
+  const message = "Generation worker restarted before this job finished; returning it to the queue.";
+
+  if (supabase) {
+    const { data, error } = await supabase
+      .from("generation_jobs")
+      .select("id, payload")
+      .in("status", ["running", "retrying"])
+      .not("locked_until", "is", null);
+
+    assertSupabaseNoError("List interrupted generation jobs", error);
+    const interrupted = data ?? [];
+    for (const row of interrupted) {
+      const job = row.payload as GenerationJob;
+      const recoveredStatus: GenerationJob["status"] = job.status === "running" ? "retrying" : job.status;
+      const nextJob: GenerationJob = {
+        ...job,
+        status: recoveredStatus,
+        lockedBy: undefined,
+        lockedUntil: undefined,
+        updatedAt: now,
+        events: [
+          ...(job.events ?? []),
+          {
+            id: crypto.randomUUID(),
+            agent: job.activeAgent ?? "ASSISTANT",
+            status: recoveredStatus,
+            message,
+            createdAt: now,
+          },
+        ],
+      };
+      localGenerationJobs.set(nextJob.id, nextJob);
+      upsertGenerationJob(nextJob);
+      await requireSupabaseWrite(
+        "Recover interrupted generation job",
+        supabase
+          .from("generation_jobs")
+          .update({
+            status: recoveredStatus,
+            locked_by: null,
+            locked_until: null,
+            payload: nextJob,
+            updated_at: now,
+          })
+          .eq("id", nextJob.id),
+      );
+      publishSavedGenerationJob(nextJob);
+    }
+    if (interrupted.length) await persistLocalStore();
+    return interrupted.length;
+  }
+
+  await hydrateLocalStore();
+  let recovered = 0;
+  for (const job of localGenerationJobs.values()) {
+    if (!["running", "retrying"].includes(job.status) || !job.lockedUntil) continue;
+    const recoveredStatus: GenerationJob["status"] = job.status === "running" ? "retrying" : job.status;
+    const nextJob: GenerationJob = {
+      ...job,
+      status: recoveredStatus,
+      lockedBy: undefined,
+      lockedUntil: undefined,
+      updatedAt: now,
+      events: [
+        ...(job.events ?? []),
+        {
+          id: crypto.randomUUID(),
+          agent: job.activeAgent ?? "ASSISTANT",
+          status: recoveredStatus,
+          message,
+          createdAt: now,
+        },
+      ],
+    };
+    localGenerationJobs.set(nextJob.id, nextJob);
+    upsertGenerationJob(nextJob);
+    publishSavedGenerationJob(nextJob);
+    recovered += 1;
+  }
+  if (recovered) await persistLocalStore();
+  return recovered;
+}
+
+async function getActiveServerGenerationJob(
+  column: "course_id" | "chapter_id",
+  id: string,
+  type: GenerationJob["type"],
+  request?: Request,
+) {
+  const userId = await resolveUserId(request);
+  const supabase = createSupabaseServiceClient();
+
+  if (supabase && isUuid(userId) && isUuid(id)) {
+    const { data, error } = await supabase
+      .from("generation_jobs")
+      .select("payload, updated_at")
+      .eq(column, id)
+      .eq("user_id", userId)
+      .eq("type", type)
+      .in("status", ACTIVE_GENERATION_JOB_STATUSES)
+      .order("updated_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    assertSupabaseNoError("Read active generation job", error);
+    if (data?.payload) return data.payload as GenerationJob;
+    return undefined;
+  }
+
+  await hydrateLocalStore();
+  const matches = [...localGenerationJobs.values()]
+    .filter((job) => job.userId === userId || userId === "local-beta-user")
+    .filter((job) => job.type === type)
+    .filter((job) => ACTIVE_GENERATION_JOB_STATUSES.includes(job.status))
+    .filter((job) => (column === "course_id" ? job.courseId === id : job.chapterId === id))
+    .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
+  return matches[0];
+}
+
 export async function claimServerGenerationJob(
   jobId: string,
   workerId: string,
   leaseMs: number,
+  maxCourseChapterJobs = 2,
 ) {
   const supabase = createSupabaseServiceClient();
   if (supabase) {
@@ -508,6 +650,7 @@ export async function claimServerGenerationJob(
       target_job_id: jobId,
       worker_id: workerId,
       lease_ms: leaseMs,
+      max_course_chapter_jobs: maxCourseChapterJobs,
     });
     assertSupabaseNoError("Claim generation job", error);
     const claimed = Array.isArray(data) ? data[0] : data;
@@ -801,6 +944,7 @@ function courseCompleteness(course: Course) {
     course.chapters.reduce((total, chapter) => total + (chapter.sections?.length ?? 0), 0) * 20 +
     course.chapters.filter((chapter) => chapter.content).length * 50 +
     course.chapters.filter((chapter) => chapter.status === "ready").length * 40 +
+    course.chapters.filter((chapter) => chapter.status === "draft_ready" || chapter.status === "quality_failed").length * 25 +
     course.chapters.filter((chapter) => chapter.qualityReport).length * 30 +
     (course.profile === "Course planning is queued." ? 0 : 100)
   );
@@ -904,10 +1048,65 @@ async function requireSupabaseWrite(label: string, operation: PromiseLike<Supaba
   assertSupabaseNoError(label, error);
 }
 
+async function resolveGenerationJobCourseId(
+  supabase: NonNullable<ReturnType<typeof createSupabaseServiceClient>>,
+  job: GenerationJob,
+) {
+  if (!isUuid(job.courseId) || !isUuid(job.userId)) return null;
+
+  const { data, error } = await supabase
+    .from("courses")
+    .select("id")
+    .eq("id", job.courseId)
+    .eq("user_id", job.userId)
+    .maybeSingle();
+
+  assertSupabaseNoError("Resolve generation job course", error);
+  return data?.id ? job.courseId : null;
+}
+
+async function resolveGenerationJobChapterId(
+  supabase: NonNullable<ReturnType<typeof createSupabaseServiceClient>>,
+  job: GenerationJob,
+) {
+  if (!isUuid(job.chapterId) || !isUuid(job.userId)) return null;
+
+  let query = supabase
+    .from("chapters")
+    .select("id")
+    .eq("id", job.chapterId)
+    .eq("user_id", job.userId);
+
+  if (isUuid(job.courseId)) {
+    query = query.eq("course_id", job.courseId);
+  }
+
+  const { data, error } = await query.maybeSingle();
+  assertSupabaseNoError("Resolve generation job chapter", error);
+  return data?.id ? job.chapterId : null;
+}
+
 function assertSupabaseNoError(label: string, error: SupabaseErrorLike | null | undefined) {
   if (!error) return;
   const detail = error.code ? `${error.code}: ${error.message ?? "unknown error"}` : error.message ?? "unknown error";
   throw new Error(`${label} failed: ${detail}`);
+}
+
+async function getConflictingActiveGenerationJob(job: GenerationJob, request?: Request) {
+  if (job.type === "course" && job.courseId) {
+    return getActiveServerGenerationJob("course_id", job.courseId, "course", request);
+  }
+  if (job.type === "chapter" && job.chapterId) {
+    return getActiveServerGenerationJob("chapter_id", job.chapterId, "chapter", request);
+  }
+  return undefined;
+}
+
+function isActiveGenerationJobConflict(error: SupabaseErrorLike | null | undefined) {
+  if (error?.code !== "23505") return false;
+  return /generation_jobs_active_(course|chapter)_idx/u.test(
+    `${error.message ?? ""} ${error.details ?? ""} ${error.hint ?? ""}`,
+  );
 }
 
 async function writeLocalStore(store: LocalStore) {

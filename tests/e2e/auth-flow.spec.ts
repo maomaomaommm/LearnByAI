@@ -1,15 +1,21 @@
 import { expect, test } from "@playwright/test";
+import { AUTH_UI_TEXT } from "../../src/lib/emailPasswordAuth";
 
-test("local beta login sets API identity and logout clears it", async ({ page }) => {
+test("login does not create a browser-local API identity", async ({ page }) => {
   const email = `local-${crypto.randomUUID()}@example.com`;
 
   await page.goto("/login");
+  await expect(page.getByRole("heading", { name: AUTH_UI_TEXT.loginTitle })).toBeVisible();
+  await expect(page.getByLabel(AUTH_UI_TEXT.password)).toHaveAttribute("required", "");
+  await expect(page.getByLabel(AUTH_UI_TEXT.password)).toHaveAttribute("minlength", "6");
+  await expect(page.getByRole("button", { name: AUTH_UI_TEXT.createAccount }).first()).toBeVisible();
+  await expect(page.locator('form button[type="submit"]')).toHaveText(AUTH_UI_TEXT.signIn);
+
   await page.locator('input[name="email"]').fill(email);
-  await page.locator("form button").first().click();
-  await expect(page).toHaveURL(/\/courses$/, { timeout: 10_000 });
+  await page.locator('input[name="password"]').fill("secret-password");
   await expect(
     page.evaluate(() => localStorage.getItem("learnbyai:local-user")),
-  ).resolves.toBe(email);
+  ).resolves.toBeNull();
 
   const create = await page.request.post("/api/courses", {
     headers: { "x-learnbyai-user-id": email },
@@ -30,8 +36,6 @@ test("local beta login sets API identity and logout clears it", async ({ page })
   expect(ownRead.ok()).toBeTruthy();
 
   await page.goto("/login");
-  await page.getByRole("button", { name: "Sign out local beta user" }).click();
-  await expect(page.getByText("Signed out.")).toBeVisible();
   await expect(
     page.evaluate(() => localStorage.getItem("learnbyai:local-user")),
   ).resolves.toBeNull();

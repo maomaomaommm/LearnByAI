@@ -7,15 +7,19 @@ import { ArrowRight, BookOpen, Target, User, Clock, GraduationCap, Loader2, Rout
 import Link from "next/link";
 import { apiFetch } from "@/lib/clientApi";
 import { publicSafeErrorMessage } from "@/lib/publicSafeError";
-import { saveCourse } from "@/lib/storage";
 import { Course, CourseCreateResponse } from "@/lib/types";
 
 export default function CreateCoursePage() {
   const router = useRouter();
+  const [hydrated, setHydrated] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [progress, setProgress] = useState(0);
   const [progressStage, setProgressStage] = useState("准备生成");
+
+  useEffect(() => {
+    setHydrated(true);
+  }, []);
 
   useEffect(() => {
     if (!loading) return;
@@ -58,6 +62,7 @@ export default function CreateCoursePage() {
       background: String(values.background),
       preference: String(values.preference),
       weeklyHours: Number(values.weeklyHours),
+      chapterLength: String(values.chapterLength || "medium"),
     };
 
     try {
@@ -67,6 +72,12 @@ export default function CreateCoursePage() {
       });
       
       if (!response.ok) {
+        if (response.status === 401) {
+          setError("请先登录后再生成课程。正在打开登录页...");
+          setLoading(false);
+          router.push("/login");
+          return;
+        }
         const data = (await response.json().catch(() => undefined)) as { error?: string } | undefined;
         throw new Error(data?.error ?? "Course creation failed.");
       }
@@ -75,7 +86,6 @@ export default function CreateCoursePage() {
       
       setProgress(100);
       setProgressStage("生成完成，正在打开课程");
-      saveCourse(course);
       
       router.push(`/courses/${course.id}`);
     } catch (error) {
@@ -157,9 +167,38 @@ export default function CreateCoursePage() {
                       <option value="10">10 小时</option>
                     </select>
                   </div>
+                  <div className="rounded-lg border border-border bg-card p-5 md:col-span-2">
+                    <div className="mb-3 flex items-center gap-2">
+                      <BookOpen size={16} className="text-foreground" />
+                      <h2 className="text-sm font-semibold text-foreground">章节篇幅</h2>
+                    </div>
+                    <div className="grid gap-2 sm:grid-cols-3">
+                      {[
+                        ["short", "短", "6k-9k 字，最快最稳"],
+                        ["medium", "中", "10k-14k 字，推荐"],
+                        ["long", "长", "16k-24k 字，更深入但更慢"],
+                      ].map(([value, label, description]) => (
+                        <label key={value} className="rounded-md border border-border bg-background p-3 text-sm">
+                          <input
+                            type="radio"
+                            name="chapterLength"
+                            value={value}
+                            defaultChecked={value === "medium"}
+                            className="mr-2"
+                          />
+                          <span className="font-medium text-foreground">{label}</span>
+                          <span className="mt-1 block text-xs text-muted-foreground">{description}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
                 </div>
 
-                <button type="submit" className="inline-flex w-full items-center justify-center gap-2 rounded-md bg-foreground px-6 py-3 text-sm font-medium text-background hover:bg-foreground/90 transition-colors">
+                <button
+                  type="submit"
+                  disabled={!hydrated}
+                  className="inline-flex w-full items-center justify-center gap-2 rounded-md bg-foreground px-6 py-3 text-sm font-medium text-background hover:bg-foreground/90 disabled:cursor-not-allowed disabled:opacity-60 transition-colors"
+                >
                   生成我的课程
                   <ArrowRight size={16} />
                 </button>

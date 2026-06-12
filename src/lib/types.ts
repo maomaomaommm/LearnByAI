@@ -1,10 +1,14 @@
-export type EntityStatus = "pending" | "queued" | "generating" | "ready" | "failed";
+import type { ModelOverrides } from "./modelOverrides";
+
+export type EntityStatus = "pending" | "queued" | "generating" | "draft_ready" | "quality_failed" | "ready" | "failed";
 
 export type JobStatus = "pending" | "queued" | "running" | "retrying" | "succeeded" | "failed";
 
 export type AgentName = "ASSISTANT" | "ARCHITECT" | "AUTHOR" | "POLISHER" | "REVIEWER" | "TUTOR";
 
 export type QualityStatus = "passed" | "warning" | "failed";
+
+export type ChapterLength = "short" | "medium" | "long";
 
 export type Chapter = {
   id: string;
@@ -14,6 +18,7 @@ export type Chapter = {
   purpose?: string;
   connectionFromPrevious?: string;
   setupForNext?: string;
+  contract?: ChapterContract;
   time: StudyTime;
   status?: EntityStatus;
   content?: string;
@@ -58,6 +63,18 @@ export type CourseBible = {
     introduces: string[];
     preparesFor: string[];
   }[];
+  chapterContracts?: ChapterContract[];
+};
+
+export type ChapterContract = {
+  chapterTitle: string;
+  requiredTopics: string[];
+  bridgeFromPrevious: string;
+  bridgeToNext: string;
+  forbiddenEarlyTopics: string[];
+  requiredExamples: string[];
+  requiredFormulas: string[];
+  summaryForNext?: string;
 };
 
 export type Course = {
@@ -68,6 +85,7 @@ export type Course = {
   background: string;
   preference: string;
   weeklyHours: number;
+  chapterLength?: ChapterLength;
   profile: string;
   courseBible: CourseBible;
   chapters: Chapter[];
@@ -108,6 +126,7 @@ export type GenerationJob = {
   courseId?: string;
   chapterId?: string;
   type: "course" | "chapter" | "annotation" | "export";
+  mode?: "generate" | "review_draft";
   status: JobStatus;
   activeAgent?: AgentName;
   events: AgentEvent[];
@@ -116,6 +135,7 @@ export type GenerationJob = {
   lockedBy?: string;
   lockedUntil?: string;
   attempts?: number;
+  modelOverrides?: ModelOverrides;
   createdAt: string;
   updatedAt: string;
 };

@@ -40,6 +40,9 @@ test("real provider calls are bounded by configurable request timeouts and think
   assert.match(configSource, /\$\{prefix\}_THINKING/u);
   assert.match(aiSource, /new AbortController\(\)/u);
   assert.match(aiSource, /signal: controller\.signal/u);
+  assert.match(aiSource, /readStreamingCompletion\(response, controller\.signal\)/u);
+  assert.match(aiSource, /throwIfAborted\(signal\)/u);
+  assert.match(aiSource, /reader\.cancel\(\)/u);
   assert.match(aiSource, /thinkingPayload\(config\.thinking\)/u);
   assert.match(aiSource, /thinking: \{ type: thinking \}/u);
   assert.match(aiSource, /request timed out after/u);

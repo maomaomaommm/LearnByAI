@@ -22,9 +22,12 @@ const statusConfig: Record<
   pending: { label: "待生成", color: "text-gray-400", icon: Loader2 },
   queued: { label: "队列中", color: "text-amber-400", icon: Loader2 },
   generating: { label: "生成中", color: "text-blue-400", icon: Loader2 },
-  ready: { label: "已完成", color: "text-green-400", icon: CheckCircle },
-  failed: { label: "失败", color: "text-red-400", icon: XCircle },
+  draft_ready: { label: "待质检", color: "text-blue-400", icon: CheckCircle },
+  quality_failed: { label: "质检未通过", color: "text-orange-400", icon: XCircle },
+  ready: { label: "质检通过", color: "text-green-400", icon: CheckCircle },
+  failed: { label: "生成失败", color: "text-red-400", icon: XCircle },
 };
+
 
 export function ChapterQualityCard({
   title,
@@ -41,7 +44,7 @@ export function ChapterQualityCard({
 }: ChapterQualityCardProps) {
   const config = statusConfig[status];
   const StatusIcon = config.icon;
-  const canGenerate = status === "pending" || status === "failed";
+  const canGenerate = status === "pending" || status === "failed" || status === "quality_failed";
 
   return (
     <div className="rounded-lg border border-border bg-card p-4 transition-all hover:border-border/80">
@@ -69,7 +72,7 @@ export function ChapterQualityCard({
         <span>预计 {estimatedMinutes} 分钟</span>
         {generatingAgent && (
           <span>
-            Agent: <span className="text-primary">{generatingAgent}</span>
+            智能体：<span className="text-primary">{generatingAgent}</span>
           </span>
         )}
         {needsHumanReview === 1 && (

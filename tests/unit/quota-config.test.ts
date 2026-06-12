@@ -27,6 +27,7 @@ test("invalid quota env falls back to action defaults", () => {
 
 test("quota writes use the serialized success-only consumption helper", () => {
   const quotaSource = readFileSync("src/lib/quota.ts", "utf8");
+  const quotaConfigSource = readFileSync("src/lib/quotaConfig.ts", "utf8");
   const courseRoute = readFileSync("src/app/api/courses/route.ts", "utf8");
   const exportRoute = readFileSync("src/app/api/exports/route.ts", "utf8");
   const annotationRoute = readFileSync("src/app/api/annotations/route.ts", "utf8");
@@ -35,18 +36,17 @@ test("quota writes use the serialized success-only consumption helper", () => {
 
   assert.match(quotaSource, /export const assertQuota = checkQuota;/);
   assert.match(quotaSource, /export async function withQuotaConsumption/);
+  assert.match(quotaConfigSource, /import\("\.\/adminSettings"\)/);
+  assert.match(quotaSource, /readEffectiveQuotaLimit/);
   assert.match(quotaSource, /withQuotaLock/);
-  for (const source of [
-    courseRoute,
-    exportRoute,
-    annotationRoute,
-    chapterGenerateRoute,
-    generationRunner,
-  ]) {
+  for (const source of [courseRoute, exportRoute, annotationRoute, generationRunner]) {
     assert.match(source, /withQuotaConsumption/);
     assert.doesNotMatch(source, /assertQuota/);
     assert.doesNotMatch(source, /consumeQuota/);
   }
+  assert.match(generationRunner, /generate_chapter/);
+  assert.doesNotMatch(chapterGenerateRoute, /assertQuota/);
+  assert.doesNotMatch(chapterGenerateRoute, /consumeQuota/);
 });
 
 test("legacy chapter generation endpoint remains disabled", () => {

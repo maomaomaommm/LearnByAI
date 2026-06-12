@@ -1,5 +1,31 @@
-import { Chapter, Course } from "@/lib/types";
+import { expectedChapterHeading } from "@/lib/chapterHeadings";
+import { Chapter, ChapterLength, Course } from "@/lib/types";
 import { textbookSkill } from "./textbookSkill";
+
+const LENGTH_GUIDE: Record<ChapterLength, { label: string; chars: string; maxTokens: number; sections: string }> = {
+  short: {
+    label: "短讲义章",
+    chars: "6,000 到 9,000 个中文字符",
+    maxTokens: 12288,
+    sections: "4 到 6 个主题小节",
+  },
+  medium: {
+    label: "中等教材章",
+    chars: "10,000 到 14,000 个中文字符",
+    maxTokens: 18432,
+    sections: "5 到 7 个主题小节",
+  },
+  long: {
+    label: "长教材章",
+    chars: "16,000 到 24,000 个中文字符",
+    maxTokens: 24576,
+    sections: "6 到 8 个主题小节",
+  },
+};
+
+export function getChapterLengthGuide(length: ChapterLength | undefined) {
+  return LENGTH_GUIDE[length ?? "medium"];
+}
 
 export function buildChapterWriterPrompt(
   course: Course,
@@ -9,50 +35,63 @@ export function buildChapterWriterPrompt(
     chapters?: Omit<Chapter, "content" | "review">[];
   },
 ) {
-  const chapterIndex =
-    options?.chapterIndex ?? course.chapters.findIndex((item) => item.id === chapter.id);
+  const chapterIndex = options?.chapterIndex ?? course.chapters.findIndex((item) => item.id === chapter.id);
   const chapters = options?.chapters ?? course.chapters;
   const previous = chapterIndex > 0 ? chapters[chapterIndex - 1] : undefined;
   const next = chapterIndex >= 0 ? chapters[chapterIndex + 1] : undefined;
+  const chapterNumber = chapterIndex >= 0 ? chapterIndex + 1 : undefined;
+  const requiredHeading = expectedChapterHeading(course, chapter);
+  const lengthGuide = getChapterLengthGuide(course.chapterLength);
+  const contract = chapter.contract ?? course.courseBible.chapterContracts?.find((item) => item.chapterTitle === chapter.title);
 
   return `${textbookSkill()}
 
 # Task: Chapter Writing
 
-请严格按照 Textbook Authoring Skill 写一章中文教材。
+你正在撰写一章中文研究生教材。请只输出完整 Markdown 正文，不要输出 JSON、审稿过程、解释前缀或代码围栏包裹全文。
 
-【硬性要求】
-- 输出 Markdown。
-- 本章内容必须明显丰富，目标为 16,000 到 24,000 中文字符。不要只写概述，要展开定义、推导、例题、讨论、代码案例和习题。
-- 不要写成博客文章，要写成研究生教材章节。
-- 使用传统教材体例：章节导言、自然命名的小节、定义/命题/例/证明/讨论、章末小结和习题。
-- 禁止使用“知识单元”“模块”“为什么需要它”“直觉解释”“检查理解的小题”等机械模板标题。
-- 至少包含 6 到 8 个自然命名的主题小节，每个小节都要有充分解释、必要定义或命题、公式/推导、例子和讨论。
-- 必须包含至少 1 个代码或实践案例、1 组练习题、1 个开放式项目任务。
-- 必须自然写清楚与上一章的联系，以及如何为下一章铺垫，但不要使用“与上一章的连接”“下一章预告”这类机械标题。
-- 不要输出审核过程，不要输出 JSON。
+当前章节：第 ${chapterNumber ?? "未知"} 章 / 共 ${chapters.length} 章
+第一行必须严格等于：
+# ${requiredHeading}
 
-【课程信息】
+篇幅档位：${lengthGuide.label}
+目标长度：${lengthGuide.chars}
+小节数量：${lengthGuide.sections}
+
+硬性要求：
+- 不得发明、改写或错置章节编号；正文中不要出现与当前章节冲突的“第 N 章”标题。
+- 使用传统教材体例：章节导言、自然命名的小节、定义/命题/例题/讨论、章节小结和习题。
+- 禁用机械模板标题，例如“知识单元”“为什么需要它”“直觉解释”“检查理解的小题”。
+- 至少包含 1 个代码或实践案例、1 组练习题、1 个开放式项目任务。
+- 公式必须规范：行内公式用 $...$；独立公式、推导、cases、aligned、矩阵必须用 $$...$$ 块公式。
+- 代码必须放在 fenced code block 中，并保留语言名。
+- 不要在本章提前展开 forbiddenEarlyTopics 中列出的后续概念；只允许用一句话铺垫。
+- 开头要自然承接上一章，结尾要自然为下一章铺垫，但不要把这些写成机械标题。
+
+课程信息：
 主题：${course.topic}
 学习目标：${course.goal}
 学习者基础：${course.background}
 讲解偏好：${course.preference}
 
-【Course Bible】
+Course Bible:
 ${JSON.stringify(course.courseBible, null, 2)}
 
-【当前章】
+当前章节：
 标题：${chapter.title}
 本章任务：${chapter.purpose ?? chapter.description}
-与上一章的联系：${chapter.connectionFromPrevious ?? "这是课程起点。"}
-为下一章铺垫：${chapter.setupForNext ?? "自然引出下一章。"}
+与上一章关系：${chapter.connectionFromPrevious ?? "这是课程起点。"}
+为下一章铺垫：${chapter.setupForNext ?? "自然引出后续章节。"}
 预计学习时间：阅读 ${chapter.time.readingMinutes} 分钟，练习 ${chapter.time.exerciseMinutes} 分钟，实践 ${chapter.time.practiceMinutes} 分钟，拓展阅读 ${chapter.time.extensionMinutes} 分钟。
 
-【上一章】
-${previous ? `${previous.title}: ${previous.description}` : "无，这是第一章。"}
+章节契约：
+${JSON.stringify(contract ?? {}, null, 2)}
 
-【下一章】
+上一章：
+${previous ? `${previous.title}: ${previous.description}${previous.contract?.summaryForNext ? `\n上一章摘要：${previous.contract.summaryForNext}` : ""}` : "无，这是第一章。"}
+
+下一章：
 ${next ? `${next.title}: ${next.description}` : "无，这是最后一章。"}
 
-请输出完整章节。`;
+请输出完整章节正文。`;
 }

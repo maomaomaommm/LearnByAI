@@ -1,23 +1,23 @@
 import { NextResponse } from "next/server";
 import { requireApiUser } from "@/lib/apiAuth";
-import { generateChapter } from "@/lib/maol/client";
+import { shouldRunInlineGeneration } from "@/lib/config";
+import { runChapterGenerationJob } from "@/lib/generationRunner";
+import { createGenerationJob } from "@/lib/jobs";
 import { parseModelOverridesFromHeaders } from "@/lib/modelOverrides";
-import { withQuotaConsumption } from "@/lib/quota";
-import { safeErrorMessage } from "@/lib/safeError";
-import { canUseCourseSnapshot, getServerCourse, saveServerGenerationJob, saveServerQualityReport, updateServerChapter } from "@/lib/serverStore";
-import { Course } from "@/lib/types";
+import { publicGenerationJob } from "@/lib/publicGenerationJob";
+import { getActiveServerGenerationJobForChapter, getServerCourse, getServerGenerationJob, saveServerGenerationJob, updateServerChapter } from "@/lib/serverStore";
+import { Chapter } from "@/lib/types";
 
 export async function POST(
   request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params;
-  const input = (await request.json()) as { courseId: string; course?: Course };
+  const input = (await request.json()) as { courseId: string; retry?: boolean };
   const auth = await requireApiUser(request);
   if ("response" in auth) return auth.response;
 
-  const persistedCourse = await getServerCourse(input.courseId, request);
-  const course = persistedCourse ?? ((await canUseCourseSnapshot(input.course, request)) ? input.course : undefined);
+  const course = await getServerCourse(input.courseId, request);
 
   if (!course) {
     return NextResponse.json({ error: "Course not found" }, { status: 404 });
@@ -30,51 +30,111 @@ export async function POST(
 
   const userId = auth.userId;
   const overrides = parseModelOverridesFromHeaders(request.headers);
-  try {
-    const result = await withQuotaConsumption(userId, "generate_chapter", async () => {
-      const response = await generateChapter(course, chapter, {
-        overrides,
-        onJobUpdate: async (updatedJob) => {
-          await saveServerGenerationJob(updatedJob, request);
-        },
-      });
-      if (response.job) {
-        await saveServerGenerationJob(response.job, request);
-      }
-      await saveServerQualityReport(response.qualityReport, request);
-      await updateServerChapter(
-        course,
-        id,
-        {
-          content: response.content,
-          sections: response.sections,
-          review: response.review,
-          qualityReport: response.qualityReport,
-          status: response.qualityReport.status === "failed" ? "failed" : "ready",
-          generationJobId: response.job?.id,
-        },
-        request,
-      );
-      return response;
-    });
-    if (!result.ok) {
-      return NextResponse.json({ error: result.quota.message }, { status: 429 });
-    }
 
-    return NextResponse.json(result.value);
-  } catch (error) {
-    await updateServerChapter(
-      course,
-      id,
-      {
-        status: "failed",
-        generationJobId: chapter.generationJobId,
-      },
-      request,
-    );
+  if (chapter.generationJobId) {
+    const existingJob = await getServerGenerationJob(chapter.generationJobId, request);
+    if (existingJob && isActiveJobStatus(existingJob.status)) {
+      return NextResponse.json(
+        {
+          course,
+          job: publicGenerationJob(existingJob),
+          queued: true,
+        },
+        { status: 202 },
+      );
+    }
+  }
+
+  const activeJob = await getActiveServerGenerationJobForChapter(chapter.id, request);
+  if (activeJob) {
+    const updatedCourse =
+      chapter.generationJobId === activeJob.id
+        ? course
+        : await updateServerChapter(
+            course,
+            id,
+            {
+              status: activeJob.status === "running" ? "generating" : "queued",
+              generationJobId: activeJob.id,
+            },
+            request,
+          );
+
     return NextResponse.json(
-      { error: safeErrorMessage(error, "Chapter generation failed.") },
-      { status: 500 },
+      {
+        course: updatedCourse,
+        job: publicGenerationJob(activeJob),
+        queued: true,
+      },
+      { status: 202 },
     );
   }
+
+  if (hasChapterBody(chapter) && !input.retry) {
+    return NextResponse.json({
+      content: chapter.content ?? chapter.sections?.map((section) => section.content).join("\n\n") ?? "",
+      sections: chapter.sections ?? [],
+      review: chapter.review ?? "",
+      qualityReport: chapter.qualityReport,
+    });
+  }
+
+  const job = createGenerationJob({
+    type: "chapter",
+    courseId: course.id,
+    chapterId: chapter.id,
+    userId,
+    activeAgent: "AUTHOR",
+    status: "queued",
+    modelOverrides: overrides,
+    message: "Chapter generation queued.",
+  });
+  const persistedJob = await saveServerGenerationJob(job, request);
+  const updatedCourse = await updateServerChapter(
+    course,
+    id,
+    {
+      content: undefined,
+      sections: undefined,
+      review: undefined,
+      qualityReport: undefined,
+      status: "queued",
+      generationJobId: persistedJob.id,
+    },
+    request,
+  );
+
+  if (shouldRunInlineGeneration(request)) {
+    scheduleChapterGeneration(request, persistedJob.id);
+  }
+
+  return NextResponse.json(
+    {
+      course: updatedCourse,
+      job: publicGenerationJob(persistedJob),
+      queued: true,
+    },
+    { status: 202 },
+  );
+}
+
+function hasChapterBody(chapter: Chapter) {
+  return Boolean(chapter.content || chapter.sections?.length);
+}
+
+function isActiveJobStatus(status: string) {
+  return ["pending", "queued", "retrying", "running"].includes(status);
+}
+
+function scheduleChapterGeneration(request: Request, jobId: string) {
+  const runnerRequest = new Request(request.url, {
+    headers: new Headers(request.headers),
+  });
+
+  void runChapterGenerationJob({
+    jobId,
+    request: runnerRequest,
+  }).catch((error) => {
+    console.error("Background chapter generation failed", error);
+  });
 }

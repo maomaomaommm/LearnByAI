@@ -276,6 +276,7 @@ async function claimGenerationJob(jobId, workerId, leaseMs) {
     target_job_id: jobId,
     worker_id: workerId,
     lease_ms: leaseMs,
+    max_course_chapter_jobs: 2,
   });
   if (error) {
     throw new Error(`Supabase claim_generation_job RPC failed: ${error.message}`);
@@ -362,6 +363,7 @@ async function assertClientCannotCallInternalRpcs(client, fixtures) {
           target_job_id: fixtures.generationJobId,
           worker_id: "forbidden-client",
           lease_ms: 60_000,
+          max_course_chapter_jobs: 2,
         }),
     },
     {

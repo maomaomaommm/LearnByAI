@@ -1,5 +1,5 @@
 import { UsageEvent } from "./types";
-import { readQuotaLimit } from "./quotaConfig";
+import { readEffectiveQuotaLimit } from "./quotaConfig";
 import {
   commitServerUsageQuotaReservation,
   countServerUsageEvents,
@@ -23,7 +23,7 @@ export async function checkQuota(
   action: UsageEvent["action"],
 ): Promise<QuotaResult> {
   const actor = userId ?? "local-beta-user";
-  const limit = readQuotaLimit(action);
+  const limit = await readEffectiveQuotaLimit(action);
   const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
   const count = await countServerUsageEvents(actor, action, since);
   const remaining = Math.max(0, limit - count);

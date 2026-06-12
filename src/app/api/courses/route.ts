@@ -3,9 +3,11 @@ import { requireApiUser } from "@/lib/apiAuth";
 import { shouldRunInlineGeneration } from "@/lib/config";
 import { runCourseGenerationJob } from "@/lib/generationRunner";
 import { createGenerationJob } from "@/lib/jobs";
+import { parseModelOverridesFromHeaders } from "@/lib/modelOverrides";
+import { publicGenerationJob } from "@/lib/publicGenerationJob";
 import { withQuotaConsumption } from "@/lib/quota";
 import { listServerCourses, saveServerCourse, saveServerGenerationJob } from "@/lib/serverStore";
-import { Course } from "@/lib/types";
+import { ChapterLength, Course } from "@/lib/types";
 
 type CourseInput = {
   topic: string;
@@ -13,6 +15,7 @@ type CourseInput = {
   background: string;
   preference: string;
   weeklyHours: number;
+  chapterLength?: ChapterLength;
 };
 
 export async function GET(request: Request) {
@@ -28,6 +31,7 @@ export async function POST(request: Request) {
   if ("response" in auth) return auth.response;
 
   const userId = auth.userId;
+  const modelOverrides = parseModelOverridesFromHeaders(request.headers);
   const result = await withQuotaConsumption(userId, "create_course", async () => {
     const course = await saveServerCourse(createPendingCourse(input, userId), request);
     const job = createGenerationJob({
@@ -36,6 +40,7 @@ export async function POST(request: Request) {
       userId,
       activeAgent: "ARCHITECT",
       status: "pending",
+      modelOverrides,
       message: "课程大纲规划已进入队列。",
     });
     const linkedCourse = await saveServerCourse({ ...course, generationJobId: job.id }, request);
@@ -49,12 +54,12 @@ export async function POST(request: Request) {
   const { course: linkedCourse, job: persistedJob } = result.value;
 
   if (shouldRunInlineGeneration(request)) {
-    scheduleCoursePlanning(request, linkedCourse, persistedJob.id);
+    scheduleCoursePlanning(request, persistedJob.id);
   }
-  return NextResponse.json({ course: linkedCourse, job: persistedJob });
+  return NextResponse.json({ course: linkedCourse, job: publicGenerationJob(persistedJob) });
 }
 
-function scheduleCoursePlanning(request: Request, course: Course, jobId: string) {
+function scheduleCoursePlanning(request: Request, jobId: string) {
   const runnerRequest = new Request(request.url, {
     headers: new Headers(request.headers),
   });
@@ -62,7 +67,6 @@ function scheduleCoursePlanning(request: Request, course: Course, jobId: string)
   void runCourseGenerationJob({
     jobId,
     request: runnerRequest,
-    courseSnapshot: course,
   }).catch((error) => {
     console.error("Background course planning failed", error);
   });
@@ -73,6 +77,7 @@ function createPendingCourse(input: CourseInput, userId: string): Course {
     id: crypto.randomUUID(),
     userId,
     ...input,
+    chapterLength: normalizeChapterLength(input.chapterLength),
     profile: "课程规划队列中。",
     courseBible: {
       targetLearner: input.background,
@@ -87,4 +92,8 @@ function createPendingCourse(input: CourseInput, userId: string): Course {
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   };
+}
+
+function normalizeChapterLength(value: unknown): ChapterLength {
+  return value === "short" || value === "long" ? value : "medium";
 }

@@ -2,15 +2,81 @@
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useEffect, useState, useRef } from "react";
-import { getCourse, saveCourse } from "@/lib/storage";
+import { useEffect, useState } from "react";
 import { formatMinutes, totalMinutes } from "@/lib/time";
-import { AgentEvent, Course, ExportJob, GenerationJob, JobStatus } from "@/lib/types";
+import { AgentEvent, Course, EntityStatus, ExportJob, GenerationJob, JobStatus } from "@/lib/types";
 import { MarkdownContent } from "@/components/MarkdownContent";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { Target, Lightbulb, GraduationCap, ArrowLeft, FileText, ChevronRight, Clock, Download } from "lucide-react";
 import { apiFetch, subscribeToSse } from "@/lib/clientApi";
 import { publicSafeErrorMessage } from "@/lib/publicSafeError";
+
+const CHAPTER_STATUS_LABEL: Record<EntityStatus, string> = {
+  pending: "\u5f85\u751f\u6210",
+  queued: "\u961f\u5217\u4e2d",
+  generating: "\u751f\u6210\u4e2d",
+  draft_ready: "\u5f85\u8d28\u68c0\u8349\u7a3f",
+  quality_failed: "\u8d28\u68c0\u672a\u901a\u8fc7",
+  ready: "\u8d28\u68c0\u901a\u8fc7",
+  failed: "\u9700\u91cd\u8bd5",
+};
+
+const JOB_STATUS_LABEL: Record<JobStatus, string> = {
+  pending: "\u5f85\u5904\u7406",
+  queued: "\u961f\u5217\u4e2d",
+  running: "\u8fd0\u884c\u4e2d",
+  retrying: "\u91cd\u8bd5\u4e2d",
+  succeeded: "\u5df2\u5b8c\u6210",
+  failed: "\u5931\u8d25",
+};
+
+const QUALITY_STATUS_LABEL: Record<string, string> = {
+  passed: "\u8d28\u68c0\u901a\u8fc7",
+  warning: "\u8d28\u68c0\u901a\u8fc7",
+  failed: "\u8d28\u68c0\u672a\u901a\u8fc7",
+};
+
+const ACTIVE_JOB_STATUSES = new Set<JobStatus>(["pending", "queued", "running", "retrying"]);
+const REGENERABLE_CHAPTER_STATUSES = new Set<EntityStatus>(["draft_ready", "quality_failed", "failed"]);
+
+function hasChapterBody(chapter: Course["chapters"][number]) {
+  return Boolean(chapter.content || chapter.sections?.length);
+}
+
+function effectiveChapterStatus(chapter: Course["chapters"][number]): EntityStatus {
+  if (hasChapterBody(chapter)) {
+    if (chapter.qualityReport?.status === "failed" || chapter.status === "quality_failed") return "quality_failed";
+    if (chapter.status === "ready" || chapter.qualityReport?.status === "passed" || chapter.qualityReport?.status === "warning") return "ready";
+    return "draft_ready";
+  }
+  return chapter.status ?? "pending";
+}
+
+function chapterStatusLabel(chapter: Course["chapters"][number]) {
+  if (hasChapterBody(chapter)) {
+    if (chapter.qualityReport?.status) {
+      return QUALITY_STATUS_LABEL[chapter.qualityReport.status] ?? CHAPTER_STATUS_LABEL[effectiveChapterStatus(chapter)];
+    }
+    return CHAPTER_STATUS_LABEL[effectiveChapterStatus(chapter)];
+  }
+  return CHAPTER_STATUS_LABEL[effectiveChapterStatus(chapter)];
+}
+
+function isActiveChapterJob(status?: JobStatus) {
+  return Boolean(status && ACTIVE_JOB_STATUSES.has(status));
+}
+
+function canRegenerateChapter(chapter: Course["chapters"][number], currentJobStatus?: JobStatus) {
+  if (isActiveChapterJob(currentJobStatus)) return false;
+  if (chapter.status === "queued" || chapter.status === "generating") return false;
+  return REGENERABLE_CHAPTER_STATUSES.has(effectiveChapterStatus(chapter));
+}
+
+function shouldShowChapterJobStatus(chapter: Course["chapters"][number], currentJobStatus?: JobStatus) {
+  if (!currentJobStatus) return false;
+  if (isActiveChapterJob(currentJobStatus)) return true;
+  return !hasChapterBody(chapter) && currentJobStatus === "failed";
+}
 
 export default function CourseOverviewPage() {
   const { id } = useParams<{ id: string }>();
@@ -21,34 +87,27 @@ export default function CourseOverviewPage() {
   const [jobStatus, setJobStatus] = useState<Record<string, JobStatus>>({});
   const [jobErrors, setJobErrors] = useState<Record<string, string>>({});
   const [jobEvents, setJobEvents] = useState<Record<string, AgentEvent[]>>({});
+  const [loadError, setLoadError] = useState("");
 
   useEffect(() => {
-    const stored = getCourse(id);
-    if (stored) setCourse(stored);
-  }, [id]);
+    let cancelled = false;
+    setLoadError("");
 
-  const attemptedJobs = useRef<Set<string>>(new Set());
-
-  useEffect(() => {
-    if (!course || backgroundJob) return;
-    const queued = course.chapters.find((chapter) => chapter.status === "queued" && chapter.generationJobId);
-    if (!queued?.generationJobId || attemptedJobs.current.has(queued.generationJobId)) return;
-
-    attemptedJobs.current.add(queued.generationJobId);
-    setBackgroundJob(queued.generationJobId);
-    apiFetch(`/api/generation-jobs/${queued.generationJobId}`, {
-      method: "POST",
-      body: JSON.stringify({ courseId: course.id, course }),
-    })
+    apiFetch(`/api/courses/${id}`)
       .then((response) => (response.ok ? response.json() : undefined))
       .then((data) => {
-        if (data?.course) {
-          setCourse(data.course);
-          saveCourse(data.course);
-        }
+        if (cancelled) return;
+        if (data?.course) setCourse(data.course);
+        else setLoadError("课程不存在，或你没有访问权限。");
       })
-      .finally(() => setBackgroundJob(""));
-  }, [backgroundJob, course]);
+      .catch(() => {
+        if (!cancelled) setLoadError("读取课程失败，请稍后重试。");
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [id]);
 
   useEffect(() => {
     let cancelled = false;
@@ -56,7 +115,6 @@ export default function CourseOverviewPage() {
     const applyCourse = (nextCourse: Course) => {
       if (cancelled) return;
       setCourse(nextCourse);
-      saveCourse(nextCourse);
     };
     const applyJobs = (jobs: GenerationJob[]) => {
       if (cancelled || jobs.length === 0) return;
@@ -98,16 +156,26 @@ export default function CourseOverviewPage() {
   }, [id]);
 
   async function retryChapter(chapterId: string, generationJobId?: string) {
-    if (!course || !generationJobId) return;
-    setBackgroundJob(generationJobId);
-    const response = await apiFetch(`/api/generation-jobs/${generationJobId}`, {
-      method: "POST",
-      body: JSON.stringify({ courseId: course.id, course, retry: true }),
-    });
+    if (!course) return;
+    const pendingKey = generationJobId ?? chapterId;
+    setBackgroundJob(pendingKey);
+
+    const response = generationJobId
+      ? await apiFetch(`/api/generation-jobs/${generationJobId}`, {
+          method: "POST",
+          body: JSON.stringify({ retry: true }),
+        })
+      : await apiFetch(`/api/chapters/${chapterId}/generate`, {
+          method: "POST",
+          body: JSON.stringify({ courseId: course.id, retry: true }),
+        });
     const data = response.ok ? await response.json() : undefined;
     if (data?.course) {
       setCourse(data.course);
-      saveCourse(data.course);
+    } else if (data?.job) {
+      setJobStatus((current) => ({ ...current, [data.job.id]: data.job.status }));
+      setJobErrors((current) => ({ ...current, [data.job.id]: data.job.error ?? "" }));
+      setJobEvents((current) => ({ ...current, [data.job.id]: data.job.events ?? [] }));
     } else {
       const nextCourse = {
         ...course,
@@ -116,7 +184,6 @@ export default function CourseOverviewPage() {
         ),
       };
       setCourse(nextCourse);
-      saveCourse(nextCourse);
     }
     setBackgroundJob("");
   }
@@ -127,7 +194,7 @@ export default function CourseOverviewPage() {
     setJobErrors((current) => ({ ...current, [generationJobId]: "" }));
     const response = await apiFetch(`/api/generation-jobs/${generationJobId}`, {
       method: "POST",
-      body: JSON.stringify({ courseId: course.id, course, retry: true }),
+      body: JSON.stringify({ retry: true }),
     });
     const data = await response.json().catch(() => undefined);
     if (!response.ok) {
@@ -138,7 +205,6 @@ export default function CourseOverviewPage() {
     }
     if (data?.course) {
       setCourse(data.course);
-      saveCourse(data.course);
     }
     if (data?.job) {
       setJobStatus((current) => ({ ...current, [generationJobId]: data.job.status }));
@@ -156,7 +222,7 @@ export default function CourseOverviewPage() {
     try {
       const response = await apiFetch("/api/exports", {
         method: "POST",
-        body: JSON.stringify({ courseId: course.id, course, format }),
+        body: JSON.stringify({ courseId: course.id, format }),
       });
       const data = await response.json();
       if (!response.ok || !data.export) throw new Error(data.error ?? "Export failed");
@@ -181,7 +247,7 @@ export default function CourseOverviewPage() {
   if (!course) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background text-muted-foreground">
-        正在读取课程...
+        {loadError || "正在读取课程..."}
       </div>
     );
   }
@@ -327,32 +393,30 @@ export default function CourseOverviewPage() {
           <div>
             <h2 className="mb-4 font-mono text-sm font-semibold uppercase tracking-widest text-muted-foreground">章节列表</h2>
             <div className="space-y-4">
-              {course.chapters.map((chapter, index) => (
-                <Link
-                  key={chapter.id}
-                  href={`/courses/${course.id}/chapters/${chapter.id}`}
-                  className="group block rounded-lg border border-border bg-card p-5 transition-all hover:-translate-y-1 hover:border-foreground/30 hover:shadow-md"
-                >
+              {course.chapters.map((chapter, index) => {
+                const currentJobStatus = chapter.generationJobId ? jobStatus[chapter.generationJobId] : undefined;
+                const currentJobStatusLabel = shouldShowChapterJobStatus(chapter, currentJobStatus) && currentJobStatus
+                  ? JOB_STATUS_LABEL[currentJobStatus]
+                  : "";
+                const pendingKey = chapter.generationJobId ?? chapter.id;
+                return (
+                  <Link
+                    key={chapter.id}
+                    href={`/courses/${course.id}/chapters/${chapter.id}`}
+                    className="group block rounded-lg border border-border bg-card p-5 transition-all hover:-translate-y-1 hover:border-foreground/30 hover:shadow-md"
+                  >
                   <div className="mb-2 flex items-start justify-between gap-4">
                     <h3 className="font-mono text-base font-semibold text-foreground group-hover:text-primary transition-colors">
                       <span className="mr-2 text-muted-foreground">{String(index + 1).padStart(2, '0')}.</span>
                       {chapter.title}
                     </h3>
-                    {chapter.generationJobId && jobStatus[chapter.generationJobId] && (
+                    {currentJobStatusLabel && (
                       <span className="shrink-0 rounded-full bg-primary/10 px-2.5 py-1 text-[10px] font-medium text-primary">
-                        JOB: {jobStatus[chapter.generationJobId].toUpperCase()}
+                        {"\u4efb\u52a1\uff1a"}{currentJobStatusLabel}
                       </span>
                     )}
                     <span className="shrink-0 rounded-full bg-background px-2.5 py-1 text-[10px] font-medium text-muted-foreground border border-border">
-                      {chapter.status === "ready"
-                        ? "可阅读"
-                        : chapter.status === "failed"
-                          ? "需重试"
-                          : chapter.status === "generating"
-                            ? "生成中"
-                          : chapter.status === "queued"
-                            ? "队列中"
-                            : "待生成"}
+                      {chapterStatusLabel(chapter)}
                     </span>
                   </div>
                   <p className="mb-4 line-clamp-2 text-sm text-muted-foreground">
@@ -360,7 +424,7 @@ export default function CourseOverviewPage() {
                   </p>
                   {chapter.qualityReport && (
                     <div className="mb-3 rounded-md border border-border bg-background px-3 py-2 text-xs text-muted-foreground">
-                      TQH：{chapter.qualityReport.score} / 100 · {chapter.qualityReport.status}
+                      TQH{"\uff1a"}{chapter.qualityReport.score} / 100 {"\u00b7"} {QUALITY_STATUS_LABEL[chapter.qualityReport.status] ?? chapter.qualityReport.status}
                     </div>
                   )}
                   <div className="flex items-center justify-between text-xs text-muted-foreground">
@@ -374,7 +438,7 @@ export default function CourseOverviewPage() {
                       开始阅读 <ChevronRight size={14} />
                     </span>
                   </div>
-                  {(chapter.status === "failed" || (chapter.generationJobId && jobStatus[chapter.generationJobId] === "failed")) && (
+                  {canRegenerateChapter(chapter, currentJobStatus) && (
                     <button
                       type="button"
                       onClick={(event) => {
@@ -382,14 +446,15 @@ export default function CourseOverviewPage() {
                         event.stopPropagation();
                         void retryChapter(chapter.id, chapter.generationJobId);
                       }}
-                      disabled={backgroundJob === chapter.generationJobId}
+                      disabled={backgroundJob === pendingKey}
                       className="mt-4 rounded-md border border-border bg-background px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground disabled:opacity-50"
                     >
-                      {backgroundJob === chapter.generationJobId ? "RETRYING" : "RETRY GENERATION"}
+                      {backgroundJob === pendingKey ? "正在重试" : "重新生成"}
                     </button>
                   )}
                 </Link>
-              ))}
+                );
+              })}
             </div>
           </div>
         </div>
