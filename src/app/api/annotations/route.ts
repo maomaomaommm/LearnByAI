@@ -75,10 +75,21 @@ export async function POST(request: Request) {
     return NextResponse.json(result.value);
   } catch (error) {
     return NextResponse.json(
-      { error: safeErrorMessage(error, "Tutor answer failed.") },
-      { status: 500 },
+      { error: tutorErrorMessage(error) },
+      { status: 502 },
     );
   }
+}
+
+function tutorErrorMessage(error: unknown) {
+  const message = safeErrorMessage(error, "Tutor answer failed.");
+  if (/timed out|timeout|aborted/i.test(message)) {
+    return "导师回答超时，请稍后重试。";
+  }
+  if (/401|unauthorized|api key|authentication/i.test(message)) {
+    return "AI 服务鉴权失败，请联系管理员检查模型配置。";
+  }
+  return "导师暂时无法回答，请稍后重试。";
 }
 
 async function validateAnnotationAnchor(annotationInput: unknown, request: Request) {
