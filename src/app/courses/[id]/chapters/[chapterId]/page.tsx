@@ -23,6 +23,7 @@ const DRAFT_REVIEW = "\u8349\u7a3f\u5df2\u4fdd\u5b58\uff0c\u683c\u5f0f\u4fee\u59
 const FORMAT_GUARD_REVIEW = "\u5df2\u901a\u8fc7\u683c\u5f0f\u4fee\u590d\uff0c\u5b8c\u6210 Markdown\u3001\u516c\u5f0f\u3001\u4ee3\u7801\u5757\u4e0e\u6807\u9898\u683c\u5f0f\u68c0\u67e5\u3002";
 const QUALITY_FAILED_REVIEW = "\u5df2\u751f\u6210\u8349\u7a3f\uff0c\u4f46\u8d28\u91cf\u68c0\u67e5\u672a\u901a\u8fc7\uff0c\u4e0b\u9762\u4ecd\u5c55\u793a\u5df2\u751f\u6210\u5185\u5bb9\u3002";
 const TUTOR_REQUEST_TIMEOUT_MS = 70_000;
+const REPAIR_REQUEST_TIMEOUT_MS = 70_000;
 
 const CHAPTER_STATUS_LABEL: Record<EntityStatus, string> = {
   pending: "\u5f85\u751f\u6210",
@@ -459,10 +460,13 @@ export default function ReaderPage() {
     setRepair(undefined);
     const targetText = active?.selectedText ?? selectedText;
     const sectionId = active?.sectionId ?? selectedSectionId;
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), REPAIR_REQUEST_TIMEOUT_MS);
 
     try {
       const response = await apiFetch("/api/repairs", {
         method: "POST",
+        signal: controller.signal,
         body: JSON.stringify({
           courseId: course.id,
           chapterId,
@@ -475,8 +479,13 @@ export default function ReaderPage() {
       if (!response.ok) throw new Error(data.error ?? "Repair suggestion failed.");
       setRepair(data.repair);
     } catch (error) {
-      setRepairError(publicSafeErrorMessage(error, "Repair suggestion failed."));
+      setRepairError(
+        controller.signal.aborted
+          ? "修复建议生成超时，请稍后重试。"
+          : publicSafeErrorMessage(error, "暂时无法生成修复建议，请稍后重试。"),
+      );
     } finally {
+      window.clearTimeout(timeout);
       setRepairing(false);
     }
   }
@@ -840,18 +849,18 @@ export default function ReaderPage() {
               <button
                 type="button"
                 onClick={() => void requestRepair("请检查这段内容是否有公式、Markdown 或概念错误，先给出修复建议。")}
-                disabled={answering || repairing}
+                disabled={repairing}
                 className="rounded border border-border bg-background px-2 py-1 font-mono text-[10px] text-muted-foreground hover:border-primary hover:text-primary disabled:opacity-50 transition-colors"
               >
-                检查问题
+                {repairing ? "检查中..." : "检查问题"}
               </button>
               <button
                 type="button"
                 onClick={() => void requestRepair("请修复这段内容中的格式、公式或明显表述问题，只做最小必要修改。")}
-                disabled={answering || repairing}
+                disabled={repairing}
                 className="rounded border border-primary/40 bg-primary/10 px-2 py-1 font-mono text-[10px] text-primary hover:bg-primary/15 disabled:opacity-50 transition-colors"
               >
-                修复这段
+                {repairing ? "修复中..." : "修复这段"}
               </button>
             </div>
             <form onSubmit={submitQuestion} className="flex items-stretch gap-2">
