@@ -10,7 +10,7 @@ import { formatMinutes, totalMinutes } from "@/lib/time";
 import { Annotation, Chapter, ChapterGenerateResponse, Course, EntityStatus, Section } from "@/lib/types";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { ModelSettings } from "@/components/ModelSettings";
-import { ArrowLeft, ChevronLeft, ChevronRight, Menu, X, Clock, MessageSquareQuote, Bot, Download } from "lucide-react";
+import { ArrowLeft, ChevronLeft, ChevronRight, Menu, X, Clock, MessageSquareQuote, Bot, Download, Send } from "lucide-react";
 
 const quickQuestions = [
   "\u89e3\u91ca\u5f97\u66f4\u7b80\u5355",
@@ -136,6 +136,7 @@ export default function ReaderPage() {
   const [repairError, setRepairError] = useState("");
   const [loading, setLoading] = useState(true);
   const [answering, setAnswering] = useState(false);
+  const [question, setQuestion] = useState("");
   const [generationError, setGenerationError] = useState("");
 
   const [tocOpen, setTocOpen] = useState(true);
@@ -503,10 +504,10 @@ export default function ReaderPage() {
 
   function submitQuestion(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const form = event.currentTarget;
-    const input = form.elements.namedItem("question") as HTMLInputElement;
-    void ask(input.value);
-    input.value = "";
+    const submittedQuestion = question.trim();
+    if (!submittedQuestion || answering) return;
+    setQuestion("");
+    void ask(submittedQuestion);
   }
 
   if (!course || !chapter) {
@@ -845,15 +846,28 @@ export default function ReaderPage() {
                 修复这段
               </button>
             </div>
-            <form onSubmit={submitQuestion} className="relative flex items-center">
-              <span className="absolute left-3 font-mono text-[12px] text-primary">{">"}</span>
-              <input
-                name="question"
-                placeholder="\u8f93\u5165\u95ee\u9898..."
-                autoComplete="off"
-                disabled={answering}
-                className="w-full bg-background border border-border py-2 pl-7 pr-3 font-mono text-[12px] text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none disabled:opacity-50"
-              />
+            <form onSubmit={submitQuestion} className="flex items-stretch gap-2">
+              <div className="relative flex-1">
+                <span className="absolute left-3 font-mono text-[12px] text-primary">{">"}</span>
+                <input
+                  name="question"
+                  placeholder="\u8f93\u5165\u95ee\u9898..."
+                  autoComplete="off"
+                  disabled={answering}
+                  value={question}
+                  onChange={(event) => setQuestion(event.target.value)}
+                  className="h-full w-full bg-background border border-border py-2 pl-7 pr-3 font-mono text-[12px] text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none disabled:opacity-50"
+                />
+              </div>
+              <button
+                type="submit"
+                disabled={answering || !question.trim()}
+                className="inline-flex min-w-16 items-center justify-center gap-1.5 rounded border border-primary/50 bg-primary/10 px-3 font-mono text-[11px] text-primary hover:bg-primary/20 disabled:cursor-not-allowed disabled:opacity-40 transition-colors"
+                aria-label={answering ? "正在发送问题" : "发送问题"}
+              >
+                <Send size={13} />
+                {answering ? "回答中" : "发送"}
+              </button>
             </form>
           </div>
         )}
