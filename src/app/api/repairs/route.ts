@@ -5,6 +5,7 @@ import { parseModelOverridesFromHeaders } from "@/lib/modelOverrides";
 import { resolveRepairAnchor } from "@/lib/repairAnchor";
 import { safeErrorMessage } from "@/lib/safeError";
 import { getServerCourse } from "@/lib/serverStore";
+import { Chapter } from "@/lib/types";
 
 export async function POST(request: Request) {
   const auth = await requireApiUser(request);
@@ -34,11 +35,8 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Section not found" }, { status: 404 });
     }
 
-    const targetText = sectionId
-      ? chapter.sections?.find((section) => section.id === sectionId)?.content
-      : chapter.content ?? chapter.sections?.map((section) => section.content).join("\n\n");
-    const repairAnchor = targetText ? resolveRepairAnchor(targetText, selectedText) : undefined;
-    if (!repairAnchor) {
+    const resolvedAnchor = resolveChapterRepairAnchor(chapter, sectionId, selectedText);
+    if (!resolvedAnchor) {
       return NextResponse.json(
         { error: "无法在当前章节中唯一定位所选内容，请缩小选区后重试。" },
         { status: 409 },
@@ -48,8 +46,8 @@ export async function POST(request: Request) {
     const suggestion = await proposeContentRepair({
       course,
       chapterId,
-      sectionId,
-      selectedText: repairAnchor,
+      sectionId: resolvedAnchor.sectionId,
+      selectedText: resolvedAnchor.text,
       userMessage,
       overrides: parseModelOverridesFromHeaders(request.headers),
     });
@@ -59,8 +57,8 @@ export async function POST(request: Request) {
         id: crypto.randomUUID(),
         courseId,
         chapterId,
-        sectionId,
-        selectedText: repairAnchor,
+        sectionId: resolvedAnchor.sectionId,
+        selectedText: resolvedAnchor.text,
         userMessage,
         ...suggestion,
         status: "proposed",
@@ -73,6 +71,34 @@ export async function POST(request: Request) {
       { status: 502 },
     );
   }
+}
+
+function resolveChapterRepairAnchor(
+  chapter: Chapter,
+  preferredSectionId: string | undefined,
+  selectedText: string,
+) {
+  const sections = chapter.sections ?? [];
+  if (sections.length > 0) {
+    const preferred = sections.find((section) => section.id === preferredSectionId);
+    const preferredAnchor = preferred
+      ? resolveRepairAnchor(preferred.content, selectedText)
+      : undefined;
+    if (preferred && preferredAnchor) {
+      return { sectionId: preferred.id, text: preferredAnchor };
+    }
+
+    const matches = sections.flatMap((section) => {
+      const text = resolveRepairAnchor(section.content, selectedText);
+      return text ? [{ sectionId: section.id, text }] : [];
+    });
+    return matches.length === 1 ? matches[0] : undefined;
+  }
+
+  const text = chapter.content
+    ? resolveRepairAnchor(chapter.content, selectedText)
+    : undefined;
+  return text ? { sectionId: undefined, text } : undefined;
 }
 
 function repairErrorMessage(error: unknown) {

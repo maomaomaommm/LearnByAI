@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { FormEvent, MouseEvent, useCallback, useEffect, useState } from "react";
+import { FormEvent, MouseEvent, useCallback, useEffect, useRef, useState } from "react";
 import { MarkdownContent } from "@/components/MarkdownContent";
 import { apiFetch, subscribeToSse } from "@/lib/clientApi";
 import { publicSafeErrorMessage } from "@/lib/publicSafeError";
@@ -140,9 +140,16 @@ export default function ReaderPage() {
   const [answering, setAnswering] = useState(false);
   const [question, setQuestion] = useState("");
   const [generationError, setGenerationError] = useState("");
+  const tutorScrollRef = useRef<HTMLDivElement>(null);
 
   const [tocOpen, setTocOpen] = useState(true);
   const [tutorOpen, setTutorOpen] = useState(true);
+
+  useEffect(() => {
+    const container = tutorScrollRef.current;
+    if (!container) return;
+    container.scrollTo({ top: container.scrollHeight, behavior: "smooth" });
+  }, [active, answering, repair, repairing, repairError]);
 
   const chapter = course?.chapters.find((item) => item.id === chapterId);
   const currentIndex = course?.chapters.findIndex((c) => c.id === chapterId) ?? -1;
@@ -740,7 +747,7 @@ export default function ReaderPage() {
           </button>
         </div>
 
-        <div className="flex-1 overflow-y-auto p-4 scrollbar-thin scrollbar-thumb-border scrollbar-track-transparent">
+        <div ref={tutorScrollRef} className="flex-1 overflow-y-auto p-4 scrollbar-thin scrollbar-thumb-border scrollbar-track-transparent">
           {selectedText || active ? (
             <div className="space-y-6">
               <div className="border-l-2 border-primary pl-3">
