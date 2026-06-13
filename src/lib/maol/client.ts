@@ -39,6 +39,7 @@ const CHUNKED_REPAIR_MIN_CHARS = 6_000;
 const REPAIR_CHUNK_MAX_CHARS = 1_800;
 const REPAIR_CHUNK_MAX_TOKENS = 3_072;
 const REPAIR_CHUNK_TIMEOUT_MS = 45_000;
+const TUTOR_TIMEOUT_MS = 60_000;
 const MAX_LONG_TEXT_REPAIR_ATTEMPTS = 1;
 
 export async function generateCourse(input: CourseInput, options: { overrides?: ModelOverrides } = {}): Promise<CourseCreateResponse> {
@@ -726,6 +727,7 @@ export async function askTutor(input: {
         ...input,
         history: compactTutorHistory(input.history ?? []),
       }),
+      timeoutMs: TUTOR_TIMEOUT_MS,
       overrides: input.overrides,
       mock: () => createMockAnswer(input.selectedText, input.question),
       onJobUpdate: input.onJobUpdate,

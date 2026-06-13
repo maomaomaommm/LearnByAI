@@ -22,6 +22,7 @@ const DEFAULT_REVIEW = "\u5df2\u5b8c\u6210\u7ed3\u6784\u3001\u672f\u8bed\u4e0e\u
 const DRAFT_REVIEW = "\u8349\u7a3f\u5df2\u4fdd\u5b58\uff0c\u683c\u5f0f\u4fee\u590d\u548c\u8d28\u91cf\u68c0\u67e5\u4ecd\u5728\u7ee7\u7eed\u3002";
 const FORMAT_GUARD_REVIEW = "\u5df2\u901a\u8fc7\u683c\u5f0f\u4fee\u590d\uff0c\u5b8c\u6210 Markdown\u3001\u516c\u5f0f\u3001\u4ee3\u7801\u5757\u4e0e\u6807\u9898\u683c\u5f0f\u68c0\u67e5\u3002";
 const QUALITY_FAILED_REVIEW = "\u5df2\u751f\u6210\u8349\u7a3f\uff0c\u4f46\u8d28\u91cf\u68c0\u67e5\u672a\u901a\u8fc7\uff0c\u4e0b\u9762\u4ecd\u5c55\u793a\u5df2\u751f\u6210\u5185\u5bb9\u3002";
+const TUTOR_REQUEST_TIMEOUT_MS = 70_000;
 
 const CHAPTER_STATUS_LABEL: Record<EntityStatus, string> = {
   pending: "\u5f85\u751f\u6210",
@@ -410,9 +411,12 @@ export default function ReaderPage() {
 
     let answer: string;
     let savedAnnotation: Annotation | undefined;
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), TUTOR_REQUEST_TIMEOUT_MS);
     try {
       const response = await apiFetch("/api/annotations", {
         method: "POST",
+        signal: controller.signal,
         body: JSON.stringify({
           topic: course.topic,
           selectedText: pendingAnnotation.selectedText,
@@ -429,7 +433,12 @@ export default function ReaderPage() {
       answer = data.answer;
       savedAnnotation = data.annotation;
     } catch (error) {
-      answer = publicSafeErrorMessage(error, "Tutor request failed.");
+      answer = controller.signal.aborted
+        ? "导师回答超时，请稍后重试。"
+        : publicSafeErrorMessage(error, "导师暂时无法回答，请稍后重试。");
+    } finally {
+      window.clearTimeout(timeout);
+      setAnswering(false);
     }
 
     if (savedAnnotation) {
@@ -441,7 +450,6 @@ export default function ReaderPage() {
       ];
     }
     setActive(savedAnnotation ?? pendingAnnotation);
-    setAnswering(false);
   }
 
   async function requestRepair(userMessage: string) {
