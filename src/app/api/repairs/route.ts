@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { requireApiUser } from "@/lib/apiAuth";
 import { proposeContentRepair } from "@/lib/maol/client";
 import { parseModelOverridesFromHeaders } from "@/lib/modelOverrides";
+import { resolveRepairAnchor } from "@/lib/repairAnchor";
 import { safeErrorMessage } from "@/lib/safeError";
 import { getServerCourse } from "@/lib/serverStore";
 
@@ -36,9 +37,10 @@ export async function POST(request: Request) {
     const targetText = sectionId
       ? chapter.sections?.find((section) => section.id === sectionId)?.content
       : chapter.content ?? chapter.sections?.map((section) => section.content).join("\n\n");
-    if (!targetText?.includes(selectedText)) {
+    const repairAnchor = targetText ? resolveRepairAnchor(targetText, selectedText) : undefined;
+    if (!repairAnchor) {
       return NextResponse.json(
-        { error: "Selected text no longer matches the current chapter content." },
+        { error: "无法在当前章节中唯一定位所选内容，请缩小选区后重试。" },
         { status: 409 },
       );
     }
@@ -47,7 +49,7 @@ export async function POST(request: Request) {
       course,
       chapterId,
       sectionId,
-      selectedText,
+      selectedText: repairAnchor,
       userMessage,
       overrides: parseModelOverridesFromHeaders(request.headers),
     });
@@ -58,7 +60,7 @@ export async function POST(request: Request) {
         courseId,
         chapterId,
         sectionId,
-        selectedText,
+        selectedText: repairAnchor,
         userMessage,
         ...suggestion,
         status: "proposed",
