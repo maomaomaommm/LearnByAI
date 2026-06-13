@@ -67,8 +67,19 @@ export async function POST(request: Request) {
     });
   } catch (error) {
     return NextResponse.json(
-      { error: safeErrorMessage(error, "Repair suggestion failed.") },
-      { status: 500 },
+      { error: repairErrorMessage(error) },
+      { status: 502 },
     );
   }
+}
+
+function repairErrorMessage(error: unknown) {
+  const message = safeErrorMessage(error, "Repair suggestion failed.");
+  if (/timed out|timeout|aborted/i.test(message)) {
+    return "修复建议生成超时，请稍后重试。";
+  }
+  if (/401|unauthorized|api key|authentication/i.test(message)) {
+    return "AI 服务鉴权失败，请联系管理员检查模型配置。";
+  }
+  return "暂时无法生成修复建议，请稍后重试。";
 }

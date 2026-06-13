@@ -40,6 +40,7 @@ const REPAIR_CHUNK_MAX_CHARS = 1_800;
 const REPAIR_CHUNK_MAX_TOKENS = 3_072;
 const REPAIR_CHUNK_TIMEOUT_MS = 45_000;
 const TUTOR_TIMEOUT_MS = 60_000;
+const TUTOR_REPAIR_TIMEOUT_MS = 60_000;
 const MAX_LONG_TEXT_REPAIR_ATTEMPTS = 1;
 
 export async function generateCourse(input: CourseInput, options: { overrides?: ModelOverrides } = {}): Promise<CourseCreateResponse> {
@@ -763,6 +764,7 @@ export async function proposeContentRepair(input: {
     prompt: buildContentRepairPrompt(input),
     temperature: 0.1,
     maxTokens: 2048,
+    timeoutMs: TUTOR_REPAIR_TIMEOUT_MS,
     stream: false,
     responseFormat: "json_object",
     overrides: input.overrides,
