@@ -67,6 +67,7 @@ export function buildChapterWriterPrompt(
 - 代码必须放在 fenced code block 中，并保留语言名。
 - 不要在本章提前展开 forbiddenEarlyTopics 中列出的后续概念；只允许用一句话铺垫。
 - 开头要自然承接上一章，结尾要自然为下一章铺垫，但不要把这些写成机械标题。
+- 如果本章 requiredTopics 包含 2023 年以后提出的方法，必须用完整小节展开其动机、原理、与经典方法的对比，不能只在一句话里点名带过。
 
 课程信息：
 主题：${course.topic}
