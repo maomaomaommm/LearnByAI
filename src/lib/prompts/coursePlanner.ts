@@ -91,7 +91,16 @@ JSON 必须符合下面结构：
 - chapterContracts 必须与 chapters 一一对应；chapters[i].contract.chapterTitle 必须等于 chapters[i].title。
 - terminology 的 introducedIn 必须指向实际章节标题。
 - 时间估计必须拆分，单章总学习时间通常为 6 到 9 小时。
-- 所有 JSON 字符串必须正确转义，禁止尾随逗号。`;
+- 所有 JSON 字符串必须正确转义，禁止尾随逗号。
+
+内容时效性与覆盖面（重要）：
+- 识别该领域在 2023 年至模型知识截止时间（约 2025 年 4 月）出现的关键进展。
+- 章节必须覆盖“经典方法”和“近期方法”两层，不能只列经典方法。
+- 如果该领域发展较快（如大模型、AI 安全、Agent、扩散模型、RAG），至少安排 2 章专门讨论 2023 年以后提出或显著演进的方法。
+- 在 requiredTopics 中，近期方法应明确标注提出时间或代表性论文，便于后续章节作者识别。
+- 不要因为“旧方法更经典”就忽略新方法；也不要只堆砌新方法而丢失基础。
+- terminology 中应包含该领域的核心近期术语，如新方法的缩写、提出者或代表性论文。
+- 不得声称覆盖模型知识截止时间之后的进展，也不得虚构论文、方法或发布日期。`;
 }
 
 export function buildCoursePlannerJsonRepairPrompt(input: CoursePlannerInput, invalidText: string, parseError: string) {
