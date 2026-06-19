@@ -68,6 +68,24 @@ test("format repair removes empty trailing code fences", () => {
   assert.ok(!result.issues.some((issue) => issue.check === "format.empty_code_fence"));
 });
 
+test("format repair preserves fenced text diagrams", () => {
+  const content = [
+    "# Heading",
+    "concept explanation",
+    "exercise task",
+    "```text",
+    "given r + [error e] -> controller -> scheduler -> transformer -> output y",
+    "              ^                                      |",
+    "              |--------- sensor / feedback ---------|",
+    "```",
+  ].join("\n");
+
+  const repaired = preRepairMarkdown(content);
+
+  assert.match(repaired, /```text\n/u);
+  assert.match(repaired, /sensor \/ feedback/u);
+});
+
 test("TQH flags likely display formulas without block math", () => {
   const content = [
     "# Heading",
@@ -100,6 +118,64 @@ test("math normalization preserves valid display math delimiters", () => {
   assert.match(normalized, /\$\$\n\\operatorname\{Acc\}_\{\\text\{observed\}\} =/u);
   assert.match(normalized, /\\mathbf\{1\}\(\\hat\{y\}_i = y_i\)\n\$\$/u);
   assert.doesNotMatch(normalized, /(^|\n)\$(?!\$)\n\\operatorname/u);
+});
+
+test("math normalization escapes underscores inside text-mode LaTeX commands", () => {
+  const content = [
+    "$$",
+    "\\operatorname{state}_{\\text{__end__}} = \\mathrm{node_name}",
+    "$$",
+  ].join("\n");
+
+  const normalized = normalizeMath(content);
+
+  assert.match(normalized, /\\text\{\\_\\_end\\_\\_\}/u);
+  assert.match(normalized, /\\mathrm\{node\\_name\}/u);
+});
+
+test("math normalization prevents KaTeX multiple tag failures in aligned blocks", () => {
+  const content = [
+    "$$",
+    "\\begin{aligned}",
+    "\\frac{v_\\alpha(s)}{v(s)} &= \\frac{k\\omega_0 s}{s^2 + k\\omega_0 s + \\omega_0^2} \\tag{3.3} \\\\",
+    "\\frac{v_\\beta(s)}{v(s)} &= \\frac{k\\omega_0^2}{s^2 + k\\omega_0 s + \\omega_0^2} \\tag{3.4}",
+    "\\end{aligned}",
+    "$$",
+  ].join("\n");
+
+  const normalized = normalizeMath(content);
+
+  assert.doesNotMatch(normalized, /\\tag\{3\.[34]\}/u);
+  assert.match(normalized, /\\qquad \\text\{\(3\.3\)\}/u);
+  assert.match(normalized, /\\qquad \\text\{\(3\.4\)\}/u);
+});
+
+test("math normalization wraps absolute-value formulas that start with pipe", () => {
+  const content = [
+    "PI 控制器频率响应幅值：",
+    "|G_{\\text{PI}}(j\\omega)| = \\sqrt{K_p^2 + \\left(\\frac{K_i}{\\omega}\\right)^2}, \\qquad \\omega_c = 100",
+    "后续文字不应进入公式块。",
+  ].join("\n");
+
+  const normalized = normalizeMath(content);
+
+  assert.match(normalized, /\$\$\n\|G_\{\\text\{PI\}\}\(j\\omega\)\| = \\sqrt/u);
+  assert.match(normalized, /\\qquad \\omega_c = 100\n\$\$/u);
+  assert.equal(displayBlocksContaining(normalized, "后续文字").length, 0);
+});
+
+test("math normalization wraps naked formulas with repeated variable words", () => {
+  const content = [
+    "Formula:",
+    "T_1 = \\frac{\\sqrt{3} |\\vec{v}_{ref}|}{T_s^{V{dc}}} \\sin\\left( \\frac{\\pi}{3} - \\theta \\right), \\quad T_2 = \\frac{\\sqrt{3} |\\vec{v}_{ref}|}{T_s^{V{dc}}} \\sin(\\theta),",
+    "G_{cl}(s) = \\frac{\\hat{v}_o(s)}{\\hat{V}_{ref}(s)} = \\frac{G_c(s) G_{PWM}(s) G_{vd}(s)}{1 + G_c(s) G_{PWM}(s) G_{vd}(s)}",
+  ].join("\n");
+
+  const normalized = normalizeMath(content);
+
+  assert.match(normalized, /\$\$\nT_1 = \\frac/u);
+  assert.match(normalized, /\\sin\(\\theta\),\nG_\{cl\}\(s\) = \\frac/u);
+  assert.match(normalized, /G_c\(s\) G_\{PWM\}\(s\) G_\{vd\}\(s\)\}\n\$\$/u);
 });
 
 test("math normalization accepts common model-generated LaTeX variants", () => {

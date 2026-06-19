@@ -6,6 +6,7 @@ import { createGenerationJob } from "@/lib/jobs";
 import { parseModelOverridesFromHeaders } from "@/lib/modelOverrides";
 import { publicGenerationJob } from "@/lib/publicGenerationJob";
 import { deleteServerCourse, getActiveServerGenerationJobForChapter, getServerCourse, saveServerGenerationJob, updateServerChapter } from "@/lib/serverStore";
+import { resolveModelOverrides } from "@/lib/userModelConfig";
 import { Chapter, Course, GenerationJob } from "@/lib/types";
 
 export async function GET(
@@ -46,7 +47,8 @@ export async function DELETE(
 async function enqueueDraftReviewJobs(course: Course, request: Request, userId: string) {
   let nextCourse = course;
   const jobs: GenerationJob[] = [];
-  const modelOverrides = parseModelOverridesFromHeaders(request.headers);
+  const headerOverrides = parseModelOverridesFromHeaders(request.headers);
+  const modelOverrides = await resolveModelOverrides(userId, headerOverrides);
 
   for (const chapter of course.chapters) {
     if (!needsDraftReview(chapter)) continue;
@@ -74,7 +76,7 @@ async function enqueueDraftReviewJobs(course: Course, request: Request, userId: 
       nextCourse,
       chapter.id,
       {
-        status: "queued",
+        status: "draft_ready",
         generationJobId: persistedJob.id,
       },
       request,
@@ -103,7 +105,7 @@ function scheduleDraftReview(request: Request, jobId: string) {
   void runChapterGenerationJob({
     jobId,
     request: runnerRequest,
-  }).catch((error) => {
+  }).catch((error: unknown) => {
     console.error("Background draft quality review failed", error);
   });
 }

@@ -6,7 +6,7 @@ import { GenerationJob } from "./types";
 
 export async function getGenerationJobForRequest(jobId: string, request: Request) {
   const persistedJob = await getServerGenerationJob(jobId, request);
-  const job = getGenerationJob(jobId) ?? (persistedJob ? upsertGenerationJob(persistedJob) : undefined);
+  const job = persistedJob ?? getGenerationJob(jobId);
   return markStaleJobFailed(job, request);
 }
 

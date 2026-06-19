@@ -1,6 +1,7 @@
 "use client";
 
 import { usePathname } from "next/navigation";
+import { ModelConfigWarning } from "./ModelConfigWarning";
 import { Navigation } from "./Navigation";
 
 export function AppShell({ children }: { children: React.ReactNode }) {
@@ -10,7 +11,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   return (
     <>
       {!isAdmin && <Navigation />}
-      <div className={isAdmin ? "" : "pt-14"}>{children}</div>
+      <div className={isAdmin ? "" : "pt-14"}>
+        {!isAdmin && <ModelConfigWarning />}
+        {children}
+      </div>
     </>
   );
 }

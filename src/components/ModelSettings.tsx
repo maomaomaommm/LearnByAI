@@ -15,6 +15,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import {
   MODEL_AGENT_NAMES,
   MODEL_CONFIG_STORAGE_KEY,
@@ -74,12 +75,44 @@ export function ModelSettings({ className, showLabel = false, size }: ModelSetti
   const [open, setOpen] = useState(false);
   const [status, setStatus] = useState("");
   const [settings, setSettings] = useState<ModelSettingsState>(() => emptySettings());
+  const [isLoading, setIsLoading] = useState(false);
   const buttonSize = size ?? (showLabel ? "sm" : "icon-sm");
 
   useEffect(() => {
     if (!open) return;
     setStatus("");
-    setSettings(readStoredSettings());
+    setIsLoading(true);
+    const local = readStoredSettings();
+    setSettings(local);
+
+    let cancelled = false;
+    async function loadServerConfig() {
+      try {
+        const token = await getAccessToken();
+        if (!token) return;
+        const res = await fetch("/api/user/model-config", {
+          headers: { authorization: `Bearer ${token}` },
+        });
+        if (!res.ok) return;
+        const { modelConfig } = (await res.json()) as { modelConfig: unknown };
+        const parsed = normalizeModelOverrides(modelConfig);
+        if (parsed) {
+          const next = overridesToState(parsed);
+          if (!cancelled) {
+            setSettings(next);
+            localStorage.setItem(MODEL_CONFIG_STORAGE_KEY, JSON.stringify(parsed));
+          }
+        }
+      } catch {
+        // silent — localStorage is the offline fallback
+      } finally {
+        if (!cancelled) setIsLoading(false);
+      }
+    }
+    loadServerConfig();
+    return () => {
+      cancelled = true;
+    };
   }, [open]);
 
   function updateDefault(field: keyof ModelOverrideFields, value: string) {
@@ -105,21 +138,64 @@ export function ModelSettings({ className, showLabel = false, size }: ModelSetti
     }));
   }
 
-  function saveSettings() {
+  async function saveSettings() {
+    setStatus("保存中…");
     const normalized = normalizeModelOverrides(toOverrides(settings));
     if (normalized) {
       localStorage.setItem(MODEL_CONFIG_STORAGE_KEY, JSON.stringify(normalized));
-      setStatus("模型设置已保存。");
     } else {
       localStorage.removeItem(MODEL_CONFIG_STORAGE_KEY);
-      setStatus("空设置已清除。");
+    }
+
+    try {
+      const token = await getAccessToken();
+      if (!token) {
+        setStatus(normalized ? "已保存到本地（未登录无法同步到云端）。" : "已清除本地设置。");
+        return;
+      }
+      const res = await fetch("/api/user/model-config", {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify(normalized ?? {}),
+      });
+      if (!res.ok) {
+        const data = (await res.json().catch(() => ({}))) as { error?: string };
+        setStatus(data.error ?? "同步到云端失败。");
+        return;
+      }
+      setStatus(normalized ? "模型设置已保存并同步到云端。" : "云端设置已清除。");
+    } catch {
+      setStatus("网络错误，云端同步失败，但本地已保存。");
     }
   }
 
-  function clearSettings() {
+  async function clearSettings() {
     localStorage.removeItem(MODEL_CONFIG_STORAGE_KEY);
     setSettings(emptySettings());
-    setStatus("模型设置已清除。");
+    setStatus("清除中…");
+
+    try {
+      const token = await getAccessToken();
+      if (!token) {
+        setStatus("已清除本地设置。");
+        return;
+      }
+      const res = await fetch("/api/user/model-config", {
+        method: "DELETE",
+        headers: { authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) {
+        const data = (await res.json().catch(() => ({}))) as { error?: string };
+        setStatus(data.error ?? "清除云端设置失败。");
+        return;
+      }
+      setStatus("本地与云端设置已清除。");
+    } catch {
+      setStatus("已清除本地设置，云端清除失败。");
+    }
   }
 
   return (
@@ -250,9 +326,13 @@ function Fields({
     setIsTesting(true);
     setTestResult(null);
     try {
+      const token = await getAccessToken();
       const res = await fetch("/api/test-model", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { authorization: `Bearer ${token}` } : {}),
+        },
         body: JSON.stringify(getTestPayload()),
       });
       const data = await readJsonResponse(res);
@@ -383,18 +463,30 @@ function Field({
   );
 }
 
+async function getAccessToken(): Promise<string | undefined> {
+  const supabase = createSupabaseBrowserClient();
+  if (!supabase) return undefined;
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
+  return session?.access_token;
+}
+
+function overridesToState(overrides: ModelOverrides): ModelSettingsState {
+  return {
+    default: { ...EMPTY_FIELDS, ...overrides.default },
+    agents: MODEL_AGENT_NAMES.reduce((agents, agent) => {
+      agents[agent] = { ...EMPTY_FIELDS, ...overrides.agents?.[agent] };
+      return agents;
+    }, {} as Record<AgentName, ModelOverrideFields>),
+  };
+}
+
 function readStoredSettings(): ModelSettingsState {
   const stored = localStorage.getItem(MODEL_CONFIG_STORAGE_KEY);
   const parsed = parseModelOverrides(stored);
   if (!parsed) return emptySettings();
-
-  return {
-    default: { ...EMPTY_FIELDS, ...parsed.default },
-    agents: MODEL_AGENT_NAMES.reduce((agents, agent) => {
-      agents[agent] = { ...EMPTY_FIELDS, ...parsed.agents?.[agent] };
-      return agents;
-    }, {} as Record<AgentName, ModelOverrideFields>),
-  };
+  return overridesToState(parsed);
 }
 
 function emptySettings(): ModelSettingsState {

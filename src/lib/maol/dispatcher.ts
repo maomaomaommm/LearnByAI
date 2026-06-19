@@ -17,6 +17,7 @@ export async function dispatchAgentText(input: {
   responseFormat?: "json_object";
   overrides?: ModelOverrides;
   mock?: () => string;
+  onChunk?: (chunk: string) => void;
   onJobUpdate?: (job: GenerationJob) => Promise<void> | void;
 }) {
   if (input.jobId) {
@@ -50,6 +51,7 @@ export async function dispatchAgentText(input: {
       stream: input.stream,
       responseFormat: input.responseFormat,
       overrides: input.overrides,
+      onChunk: input.onChunk,
     });
 
     if (input.jobId) {

@@ -11,6 +11,7 @@ export type AdminAppSettings = {
   worker?: {
     globalLimit?: number;
     courseChapterConcurrency?: number;
+    userCourseConcurrency?: number;
   };
 };
 
@@ -109,6 +110,9 @@ function normalizeWorker(value: unknown) {
     ...(readPositiveInteger(record.globalLimit) !== undefined ? { globalLimit: readPositiveInteger(record.globalLimit) } : {}),
     ...(readPositiveInteger(record.courseChapterConcurrency) !== undefined
       ? { courseChapterConcurrency: readPositiveInteger(record.courseChapterConcurrency) }
+      : {}),
+    ...(readPositiveInteger(record.userCourseConcurrency) !== undefined
+      ? { userCourseConcurrency: readPositiveInteger(record.userCourseConcurrency) }
       : {}),
   };
 }

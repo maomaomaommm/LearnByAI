@@ -430,8 +430,12 @@ test("chapter generation job respects generate_chapter quota", async ({ request 
     data: { retry: true },
   });
   expect(allowedRetry.ok()).toBeTruthy();
-  const allowedRetryJson = await allowedRetry.json();
-  expect(allowedRetryJson.job.status).toBe("succeeded");
+  const worker = await request.post("/api/internal/generation-worker", {
+    headers: { ...headers, "x-internal-worker-secret": E2E_WORKER_SECRET },
+    data: { jobId },
+  });
+  expect(worker.ok()).toBeTruthy();
+  await waitForGenerationJobStatus(request, jobId, headers, "succeeded");
 
   const blockedRetry = await request.post(`/api/generation-jobs/${jobId}`, {
     headers,

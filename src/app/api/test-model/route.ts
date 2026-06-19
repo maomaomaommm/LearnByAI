@@ -1,12 +1,13 @@
 import { NextResponse } from "next/server";
+import { requireApiUser } from "@/lib/apiAuth";
 import { chatCompletionsUrl } from "@/lib/aiEndpoint";
-import { getAdminAppSettings, mergeModelOverrides } from "@/lib/adminSettings";
 import { getAgentConfig, getBaseAIConfig } from "@/lib/config";
 import {
   MODEL_AGENT_NAMES,
   normalizeModelOverrides,
 } from "@/lib/modelOverrides";
 import { redactSecrets } from "@/lib/safeError";
+import { resolveModelOverrides } from "@/lib/userModelConfig";
 import type { ModelOverrideFields, ModelOverrides } from "@/lib/modelOverrides";
 import type { AgentName } from "@/lib/types";
 
@@ -14,8 +15,11 @@ const MODEL_TEST_TIMEOUT_MS = readPositiveInteger(process.env.MODEL_TEST_TIMEOUT
 
 export async function POST(request: Request) {
   try {
+    const auth = await requireApiUser(request);
+    if ("response" in auth) return auth.response;
+
     const body = await request.json().catch(() => ({}));
-    const resolved = await resolveTestConfig(body);
+    const resolved = await resolveTestConfig(body, auth.userId);
 
     if ("error" in resolved) {
       return NextResponse.json({ ok: false, error: resolved.error }, { status: 400 });
@@ -89,7 +93,7 @@ export async function POST(request: Request) {
 
 type TestConfig = ReturnType<typeof getBaseAIConfig>;
 
-async function resolveTestConfig(body: unknown): Promise<{ config: TestConfig } | { error: string }> {
+async function resolveTestConfig(body: unknown, userId: string): Promise<{ config: TestConfig } | { error: string }> {
   const record = isRecord(body) ? body : {};
   const agent = readAgent(record.agent);
   if (record.agent && record.agent !== "default" && !agent) {
@@ -99,8 +103,7 @@ async function resolveTestConfig(body: unknown): Promise<{ config: TestConfig } 
   const overrides = normalizeModelOverrides(record.overrides);
   const fields = readFields(record.fields) ?? readFields(record);
   const taskOverrides = overrides ?? fieldsToOverrides(agent, fields);
-  const adminOverrides = (await getAdminAppSettings()).modelOverrides;
-  const effectiveOverrides = mergeModelOverrides(taskOverrides, adminOverrides);
+  const effectiveOverrides = await resolveModelOverrides(userId, taskOverrides);
 
   return {
     config: agent ? getAgentConfig(agent, effectiveOverrides) : getBaseAIConfig(effectiveOverrides),
