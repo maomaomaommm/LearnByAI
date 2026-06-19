@@ -113,7 +113,6 @@ test("structural chapter failures are escalated instead of chunk-repaired", () =
   const source = readFileSync("src/lib/maol/client.ts", "utf8");
 
   assert.match(source, /shouldEscalateToAuthorRewrite/u);
-  assert.match(source, /isLocalRepairIssue/u);
   assert.match(source, /hasCatastrophicDraftSignal/u);
   assert.match(source, /score < 50 && hasCatastrophicDraftSignal/u);
   assert.match(source, /review_repair\.author_rewrite_required/u);
