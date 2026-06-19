@@ -7,6 +7,9 @@ export function preRepairMarkdown(content: string) {
       return `${prefix}$$\n${body.trim()}\n$$`;
     })
     .replace(/[ \t]+\n/g, "\n")
+    // Collapse blank-line runs left behind by removed empty fences so the
+    // result is stable under a second pass (the renderer runs this again).
+    .replace(/\n{3,}/g, "\n\n")
     .trim();
 }
 

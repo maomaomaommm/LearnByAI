@@ -10,7 +10,7 @@ import rehypeKatex from "rehype-katex";
 import rehypeHighlight from "rehype-highlight";
 import "katex/dist/katex.min.css";
 import "highlight.js/styles/github-dark.css";
-import { normalizeMath } from "@/lib/markdownMath";
+import { postRepairMarkdown } from "@/lib/prompts/formatGuard";
 
 interface MarkdownContentProps {
   content: string;
@@ -245,7 +245,7 @@ export function MarkdownContent({
           hr: () => <hr className="my-6 border-border" />,
         }}
       >
-        {normalizeMath(content)}
+        {postRepairMarkdown(content)}
       </ReactMarkdown>
     </div>
   );
