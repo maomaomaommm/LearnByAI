@@ -1,4 +1,5 @@
 import { QualityIssue } from "../types";
+import { canRenderMath } from "../katexValidate";
 
 export function validateFormat(content: string): QualityIssue[] {
   const issues: QualityIssue[] = [];
@@ -70,7 +71,38 @@ export function validateFormat(content: string): QualityIssue[] {
     });
   }
 
+  // Authoritative check: ask KaTeX (the actual renderer) to render every formula
+  // block. Anything it can't render is a real rendering error, caught precisely
+  // rather than guessed at.
+  const broken = findUnrenderableMath(content);
+  if (broken.length) {
+    issues.push({
+      check: "format.unrenderable_math",
+      severity: "error",
+      message: `发现 ${broken.length} 处 KaTeX 无法渲染的公式(语法错误或残缺),例如:${broken[0]}`,
+      suggestion: "修正 LaTeX 语法,使其能被 KaTeX 正确渲染。",
+    });
+  }
+
   return issues;
+}
+
+// Render every $$...$$ and $...$ with KaTeX; report ones that fail (the renderer
+// is the judge, so this catches the exact errors a reader would see).
+function findUnrenderableMath(content: string): string[] {
+  const fenceless = content.replace(/```[\s\S]*?```/gu, "");
+  const broken: string[] = [];
+
+  for (const m of fenceless.matchAll(/\$\$([\s\S]+?)\$\$/gu)) {
+    const inner = m[1]!.trim();
+    if (inner && !canRenderMath(inner, true)) broken.push(inner.slice(0, 60));
+  }
+  const inlineScan = fenceless.replace(/\$\$[\s\S]+?\$\$/gu, "");
+  for (const m of inlineScan.matchAll(/(?<!\\)\$(?!\$)([^\n$]+?)(?<!\\)\$/gu)) {
+    const inner = m[1]!.trim();
+    if (inner && !canRenderMath(inner, false)) broken.push(inner.slice(0, 60));
+  }
+  return broken;
 }
 
 // Detects strong LaTeX commands that leak OUTSIDE any code fence / $$ block /

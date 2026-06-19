@@ -1,21 +1,44 @@
+import { canRenderMath } from "./katexValidate";
+
 type Zone = { type: "normal" | "fenced" | "display_math"; lines: string[] };
 
 export function sanitizeMathDelimiters(content: string): string {
   const normalized = content.replace(/\r\n/g, "\n");
   const zones = splitZones(normalized);
 
+  const repairNormal = (text: string) => scanAndRepairSegment(unescapeRenderableDollarMath(text));
+
   if (zones.length === 1 && zones[0]!.type === "normal") {
-    const repaired = scanAndRepairSegment(zones[0]!.lines.join("\n"));
-    return repaired;
+    return repairNormal(zones[0]!.lines.join("\n"));
   }
 
   return zones
     .map((zone) =>
       zone.type === "normal"
-        ? scanAndRepairSegment(zone.lines.join("\n"))
+        ? repairNormal(zone.lines.join("\n"))
         : zone.lines.join("\n"),
     )
     .join("\n");
+}
+
+// A formula the model accidentally escaped as \$...\$ renders as a literal "$i$"
+// instead of math. Restore it to $...$ — but ONLY when the content looks like
+// math AND KaTeX can actually render it, so genuine literal dollars (currency
+// like "\$5") are left alone. KaTeX is the judge; the regex only finds candidates.
+function unescapeRenderableDollarMath(text: string): string {
+  return text.replace(/\\\$\s*([^\n$]{1,200}?)\s*\\\$/gu, (match, inner: string) => {
+    const candidate = inner.trim();
+    if (candidate && looksLikeInlineMath(candidate) && canRenderMath(candidate)) {
+      return `$${candidate}$`;
+    }
+    return match;
+  });
+}
+
+function looksLikeInlineMath(value: string): boolean {
+  // Lightweight candidate gate: a LaTeX command, a sub/superscript or brace, or a
+  // single math variable. KaTeX makes the final ruling on whether it renders.
+  return /\\[a-zA-Z]+|[_^{}]|^[A-Za-z][')’]?$/u.test(value);
 }
 
 function splitZones(content: string): Zone[] {
