@@ -267,9 +267,21 @@ function collectMathEnvironment(lines: string[], startIndex: number) {
   };
 }
 
+function hasProseCjk(value: string) {
+  // CJK inside LaTeX text commands (\text{\u4e2d\u6587}, \operatorname{...}) is legitimate
+  // formula content \u2014 strip those before deciding whether a line is prose, so a
+  // bare display formula like "\max ... \text{\u5176\u4e2d } a_i^* = ..." is still treated
+  // as math and gets wrapped in $$ instead of leaking as literal LaTeX.
+  const stripped = value.replace(
+    /\\(?:text|textbf|textit|textrm|textsf|texttt|mathrm|mathbf|mathsf|mathtt|operatorname)\s*\{[^{}]*\}/gu,
+    "",
+  );
+  return /[\u4e00-\u9fff]/u.test(stripped);
+}
+
 function isBareDisplayMathLine(trimmed: string) {
   if (!trimmed.startsWith("$") || trimmed.startsWith("$$")) return false;
-  if (/[\u4e00-\u9fff]/u.test(trimmed)) return false;
+  if (hasProseCjk(trimmed)) return false;
   const closingDollarIndex = findUnescapedDollar(trimmed, 1);
   if (closingDollarIndex >= 0 && trimmed.slice(closingDollarIndex + 1).trim()) return false;
 
@@ -285,7 +297,7 @@ function hasClosingSingleDollar(trimmed: string) {
 
 function isLikelyMathContinuation(trimmed: string) {
   if (!trimmed || trimmed === "$" || trimmed === "$$") return false;
-  if (/[\u4e00-\u9fff]/u.test(trimmed)) return false;
+  if (hasProseCjk(trimmed)) return false;
   if (hasPlainTextWords(trimmed) && !/^\\/.test(trimmed) && !hasStrongMathSyntax(trimmed)) return false;
   return (
     isLikelyMathLine(trimmed) ||
@@ -296,7 +308,7 @@ function isLikelyMathContinuation(trimmed: string) {
 }
 
 function isLikelyMathLine(trimmed: string) {
-  if (!trimmed || /[\u4e00-\u9fff]/u.test(trimmed)) return false;
+  if (!trimmed || hasProseCjk(trimmed)) return false;
   if (/^(#{1,6}\s|[-*+]\s|\d+\.\s|>)/u.test(trimmed)) return false;
   if (isMarkdownTableLine(trimmed)) return false;
   if (/^(import|from|def|class|return|const|let|var|if|for|while)\b/u.test(trimmed)) return false;
