@@ -5,7 +5,7 @@ import { repairInvalidJsonEscapes } from "../jsonRepair";
 import { ModelOverrides } from "../modelOverrides";
 import { createMockAnswer, createMockChapter, createMockCourse } from "../mock";
 import { buildAnnotationTutorPrompt } from "../prompts/annotationTutor";
-import { buildChapterRepairPrompt, buildChapterRepairByAuthorPrompt, buildChapterChunkRepairByAuthorPrompt } from "../prompts/chapterRepairer";
+import { buildChapterRepairByAuthorPrompt, buildChapterChunkRepairByAuthorPrompt } from "../prompts/chapterRepairer";
 import { buildChapterReviewPrompt, buildChapterReviewJsonRepairPrompt } from "../prompts/chapterReviewer";
 import { buildChapterWriterPrompt, getEffectiveChapterLengthGuide } from "../prompts/chapterWriter";
 import { buildContentRepairPrompt } from "../prompts/contentRepair";
@@ -753,97 +753,6 @@ function finalizeQualityReport(report: QualityReport, attempts: number): Quality
   };
 }
 
-async function repairChapterContent(
-  course: Course,
-  chapter: Chapter,
-  content: string,
-  repairIssues: QualityIssue[],
-  options: {
-    jobId: string;
-    onJobUpdate?: (job: GenerationJob) => Promise<void> | void;
-    overrides?: ModelOverrides;
-    maxTokens: number;
-  },
-) {
-  if (shouldUseChunkedRepair(content)) {
-    return repairChapterInChunks(course, chapter, content, repairIssues, options);
-  }
-
-  try {
-    return postRepairMarkdown(
-      await dispatchPolisherRepairText({
-        jobId: options.jobId,
-        prompt: buildChapterRepairPrompt(course, chapter, content, repairIssues),
-        temperature: 0.15,
-        maxTokens: options.maxTokens,
-        overrides: options.overrides,
-        onJobUpdate: options.onJobUpdate,
-        mock: () => postRepairMarkdown(content),
-      }),
-    );
-  } catch (error) {
-    if (content.length < CHUNKED_REPAIR_MIN_CHARS) throw error;
-    return repairChapterInChunks(course, chapter, content, repairIssues, options);
-  }
-}
-
-async function repairChapterInChunks(
-  course: Course,
-  chapter: Chapter,
-  content: string,
-  repairIssues: QualityIssue[],
-  options: {
-    jobId: string;
-    onJobUpdate?: (job: GenerationJob) => Promise<void> | void;
-    overrides?: ModelOverrides;
-    maxTokens: number;
-  },
-) {
-  const chunks = splitMarkdownForRepair(content);
-  if (chunks.length <= 1) {
-    return postRepairMarkdown(
-      await dispatchAgentText({
-        agent: "POLISHER",
-        jobId: options.jobId,
-        prompt: buildChapterRepairPrompt(course, chapter, content, repairIssues),
-        temperature: 0.15,
-        maxTokens: options.maxTokens,
-        overrides: options.overrides,
-        onJobUpdate: options.onJobUpdate,
-        mock: () => postRepairMarkdown(content),
-      }),
-    );
-  }
-
-  const repairedChunks = await runInBatches(chunks, REPAIR_CHUNK_CONCURRENCY, async (chunk, index) => {
-    try {
-      const repairedChunk = await dispatchPolisherRepairText({
-        jobId: options.jobId,
-        prompt: buildChapterChunkRepairPrompt(course, chapter, chunk, repairIssues, index + 1, chunks.length),
-        temperature: 0.15,
-        maxTokens: Math.min(options.maxTokens, REPAIR_CHUNK_MAX_TOKENS),
-        timeoutMs: REPAIR_CHUNK_TIMEOUT_MS,
-        maxAttempts: 1,
-        stream: true,
-        overrides: options.overrides,
-        onJobUpdate: options.onJobUpdate,
-        mock: () => chunk,
-      });
-      return postRepairMarkdown(repairedChunk);
-    } catch (error) {
-      const skippedJob = appendJobEvent(options.jobId, {
-        agent: "POLISHER",
-        status: "running",
-        message: `Chunk ${index + 1}/${chunks.length} repair skipped: ${safeErrorMessage(error, "POLISHER chunk failed.")}`,
-      }, { preserveJobStatus: true });
-      if (skippedJob) await options.onJobUpdate?.(skippedJob);
-      return postRepairMarkdown(chunk);
-    }
-  });
-
-  return postRepairMarkdown(repairedChunks.join("\n\n"));
-}
-
 async function repairChapterContentByAuthor(
   course: Course,
   chapter: Chapter,
@@ -1128,33 +1037,6 @@ function splitMarkdownForRepair(content: string) {
   return chunks;
 }
 
-function buildChapterChunkRepairPrompt(
-  course: Course,
-  chapter: Chapter,
-  chunk: string,
-  issues: QualityIssue[],
-  chunkIndex: number,
-  totalChunks: number,
-) {
-  return `# Task: Targeted Chapter Chunk Repair
-
-You are repairing one Markdown chunk from a Chinese textbook chapter.
-Output only the repaired chunk. Do not output JSON, explanations, reports, code fences around the whole answer, or content from other chunks.
-Preserve the existing heading level and section scope. Fix only issues that are relevant to this chunk; if an issue belongs elsewhere, keep this chunk semantically unchanged.
-Standalone formulas must use $$...$$. Code must stay in fenced code blocks.
-
-Course topic: ${course.topic}
-Chapter title: ${chapter.title}
-Chunk: ${chunkIndex}/${totalChunks}
-
-Quality issues to fix when relevant:
-${issues.map((issue, index) => `${index + 1}. [${issue.severity}] ${issue.check}: ${issue.message}${issue.suggestion ? ` Suggestion: ${issue.suggestion}` : ""}`).join("\n")}
-
-Markdown chunk:
-
-${chunk}`;
-}
-
 function hasWarningOrError(issues: QualityIssue[]): boolean {
   return issues.some((issue) => issue.severity === "error" || issue.severity === "warning");
 }
@@ -1186,13 +1068,6 @@ function hasCatastrophicDraftSignal(report: QualityReport) {
   return report.issues.some((issue) =>
     issue.severity === "error" &&
     (/^(structure|contract)\./u.test(issue.check) || issue.check === "format.catastrophic"),
-  );
-}
-
-function isLocalRepairIssue(issue: QualityIssue) {
-  return !(
-    issue.severity === "error" &&
-    (/^(structure|contract)\./u.test(issue.check) || issue.check === "format.catastrophic")
   );
 }
 
