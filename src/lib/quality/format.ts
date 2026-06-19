@@ -61,7 +61,28 @@ export function validateFormat(content: string): QualityIssue[] {
     });
   }
 
+  if (hasBareLatexCommand(content)) {
+    issues.push({
+      check: "format.bare_latex",
+      severity: "error",
+      message: "发现未包裹在 $ 或 $$ 中的裸 LaTeX 命令(公式会被当作普通文本输出)。",
+      suggestion: "将独立公式放入 $$...$$,行内公式放入 $...$；公式内中文用 \\text{} 包裹。",
+    });
+  }
+
   return issues;
+}
+
+// Detects strong LaTeX commands that leak OUTSIDE any code fence / $$ block /
+// inline $...$ — i.e. a bare formula the model forgot to wrap. CJK inside the
+// formula (e.g. \text{中文}) does not hide it; ordinary prose that merely says
+// "argmax" (no backslash) is not flagged.
+function hasBareLatexCommand(content: string) {
+  const stripped = content
+    .replace(/```[\s\S]*?```/gu, "")
+    .replace(/\$\$[\s\S]*?\$\$/gu, "")
+    .replace(/(?<!\\)\$[^\n$]+?(?<!\\)\$/gu, "");
+  return /\\(?:max|min|arg|sup|inf|quad|qquad|mathbf|mathbb|mathcal|mathrm|operatorname|frac|dfrac|tfrac|sum|prod|int|begin|partial|nabla|cdot|times|leq|geq|sqrt|hat|bar|vec|alpha|beta|gamma|theta|lambda|sigma|mu|pi|infty)\b/u.test(stripped);
 }
 
 function hasEmptyFencePair(content: string) {

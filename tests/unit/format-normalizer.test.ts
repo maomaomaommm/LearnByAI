@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { postRepairMarkdown } from "../../src/lib/prompts/formatGuard";
+import { validateFormat } from "../../src/lib/quality/format";
 
 // postRepairMarkdown is the deterministic, render-time format guard. Its job:
 // whatever it emits must render correctly (no literal stray "$", no empty code
@@ -117,4 +118,30 @@ test("is idempotent on all representative cases", () => {
     const twice = postRepairMarkdown(once);
     assert.equal(twice, once, `not idempotent for: ${JSON.stringify(s)}\n once: ${JSON.stringify(once)}\n twice: ${JSON.stringify(twice)}`);
   }
+});
+
+// Regression: MAS ch.3 — a bare display formula that embeds \text{CJK}. The CJK
+// inside \text{} must NOT make the line be treated as prose; it must still be
+// wrapped as display math so it renders instead of leaking literal LaTeX.
+test("wraps bare display LaTeX that contains text-command CJK", () => {
+  const input = String.raw`也就是说：
+\max_{\mathbf{a}'} Q_{tot}(\mathbf{o}', \mathbf{a}') = Q_{tot}(\mathbf{o}', \mathbf{a}^*) \quad \text{其中 } a_i^* = \arg\max_{a_i} Q_i(o_i', a_i)
+下面分析。`;
+  const out = postRepairMarkdown(input);
+  assert.ok(out.includes("$$"), `bare display LaTeX should be wrapped: ${JSON.stringify(out)}`);
+  assert.equal(postRepairMarkdown(out), out, "must stay idempotent");
+});
+
+test("validateFormat flags bare strong-LaTeX line not wrapped in $/$$", () => {
+  const bare = String.raw`也就是说：
+\max_{\mathbf{a}'} Q_{tot}(\mathbf{o}') = Q_{tot}(\mathbf{a}^*) \quad \text{其中 } a_i^*
+下面分析。`;
+  const issues = validateFormat(bare);
+  assert.ok(issues.some((i) => i.severity === "error"), `should flag an error: ${JSON.stringify(issues)}`);
+});
+
+test("validateFormat does not flag prose that merely mentions a command word", () => {
+  const prose = "本节介绍最大化期望回报的方法,并讨论 argmax 的直觉。";
+  const issues = validateFormat(prose);
+  assert.ok(!issues.some((i) => i.check === "format.bare_latex"), `no false positive: ${JSON.stringify(issues)}`);
 });
