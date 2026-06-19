@@ -22,3 +22,10 @@ export function readQuotaLimit(action: UsageEvent["action"]) {
   if (!Number.isFinite(parsed) || parsed < 0) return LIMITS[action];
   return Math.floor(parsed);
 }
+
+export async function readEffectiveQuotaLimit(action: UsageEvent["action"]) {
+  const { getAdminAppSettings } = await import("./adminSettings");
+  const settings = await getAdminAppSettings();
+  const configured = settings.quotas?.[action];
+  return configured ?? readQuotaLimit(action);
+}

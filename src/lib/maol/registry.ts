@@ -8,5 +8,7 @@ export function resolveAgent(agent: AgentName, overrides?: ModelOverrides): Agen
 }
 
 export function canCallAgent(agent: AgentName, overrides?: ModelOverrides) {
-  return process.env.AI_MOCK_MODE !== "true" && Boolean(resolveAgent(agent, overrides).apiKey);
+  if (process.env.AI_MOCK_MODE === "true") return false;
+  const config = resolveAgent(agent, overrides);
+  return Boolean(config.apiKey && config.baseUrl && config.model);
 }

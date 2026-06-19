@@ -54,3 +54,30 @@ test("reader page subscribes to course SSE snapshots", () => {
   assert.match(pageSource, /message\.event === "course"/u);
   assert.doesNotMatch(pageSource, /setInterval\(\(\) => void poll/u);
 });
+
+test("reader page uses authenticated abortable tutor and repair requests", () => {
+  const pageSource = readFileSync("src/app/courses/[id]/chapters/[chapterId]/page.tsx", "utf8");
+
+  assert.match(pageSource, /TUTOR_REQUEST_TIMEOUT_MS = 70_000/u);
+  assert.match(pageSource, /REPAIR_REQUEST_TIMEOUT_MS = 70_000/u);
+  assert.match(pageSource, /new AbortController\(\)/u);
+  assert.match(pageSource, /apiFetch\("\/api\/annotations"/u);
+  assert.doesNotMatch(pageSource, /fetch\("\/api\/annotations"/u);
+  assert.match(pageSource, /signal: input\.signal/u);
+  assert.match(pageSource, /function closestSectionId/u);
+  assert.match(pageSource, /requestRepair\("请检查这段内容是否有公式、Markdown 或概念错误/u);
+  assert.match(pageSource, /requestRepair\("请修复这段内容中的格式、公式或明显表述问题/u);
+  assert.match(pageSource, /apiFetch\("\/api\/repairs"/u);
+  assert.match(pageSource, /apiFetch\("\/api\/repairs\/apply"/u);
+});
+
+test("annotations route bounds tutor streaming requests with friendly SSE errors", () => {
+  const routeSource = readFileSync("src/app/api/annotations/route.ts", "utf8");
+
+  assert.match(routeSource, /TUTOR_ROUTE_TIMEOUT_MS = 65_000/u);
+  assert.match(routeSource, /function withDeadline/u);
+  assert.match(routeSource, /function tutorErrorMessage/u);
+  assert.match(routeSource, /withDeadline\(withQuotaConsumption\(userId, "ask_tutor"/u);
+  assert.match(routeSource, /enqueue\("error", JSON\.stringify\(\{\s+error: tutorErrorMessage\(error\),/u);
+  assert.match(routeSource, /controller\.close\(\)/u);
+});

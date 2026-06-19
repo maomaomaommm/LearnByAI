@@ -3,9 +3,12 @@ import { requireApiUser } from "@/lib/apiAuth";
 import { shouldRunInlineGeneration } from "@/lib/config";
 import { runCourseGenerationJob } from "@/lib/generationRunner";
 import { createGenerationJob } from "@/lib/jobs";
+import { parseModelOverridesFromHeaders } from "@/lib/modelOverrides";
+import { publicGenerationJob } from "@/lib/publicGenerationJob";
 import { withQuotaConsumption } from "@/lib/quota";
 import { listServerCourses, saveServerCourse, saveServerGenerationJob } from "@/lib/serverStore";
-import { Course } from "@/lib/types";
+import { resolveModelOverrides } from "@/lib/userModelConfig";
+import { ChapterLength, Course, GenerationProfile } from "@/lib/types";
 
 type CourseInput = {
   topic: string;
@@ -13,6 +16,8 @@ type CourseInput = {
   background: string;
   preference: string;
   weeklyHours: number;
+  chapterLength?: ChapterLength;
+  generationProfile?: GenerationProfile;
 };
 
 export async function GET(request: Request) {
@@ -28,6 +33,8 @@ export async function POST(request: Request) {
   if ("response" in auth) return auth.response;
 
   const userId = auth.userId;
+  const headerOverrides = parseModelOverridesFromHeaders(request.headers);
+  const modelOverrides = await resolveModelOverrides(userId, headerOverrides);
   const result = await withQuotaConsumption(userId, "create_course", async () => {
     const course = await saveServerCourse(createPendingCourse(input, userId), request);
     const job = createGenerationJob({
@@ -36,6 +43,7 @@ export async function POST(request: Request) {
       userId,
       activeAgent: "ARCHITECT",
       status: "pending",
+      modelOverrides,
       message: "课程大纲规划已进入队列。",
     });
     const linkedCourse = await saveServerCourse({ ...course, generationJobId: job.id }, request);
@@ -51,7 +59,7 @@ export async function POST(request: Request) {
   if (shouldRunInlineGeneration(request)) {
     scheduleCoursePlanning(request, persistedJob.id);
   }
-  return NextResponse.json({ course: linkedCourse, job: persistedJob });
+  return NextResponse.json({ course: linkedCourse, job: publicGenerationJob(persistedJob) });
 }
 
 function scheduleCoursePlanning(request: Request, jobId: string) {
@@ -72,6 +80,8 @@ function createPendingCourse(input: CourseInput, userId: string): Course {
     id: crypto.randomUUID(),
     userId,
     ...input,
+    chapterLength: normalizeChapterLength(input.chapterLength),
+    generationProfile: normalizeGenerationProfile(input.generationProfile),
     profile: "课程规划队列中。",
     courseBible: {
       targetLearner: input.background,
@@ -86,4 +96,12 @@ function createPendingCourse(input: CourseInput, userId: string): Course {
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   };
+}
+
+function normalizeChapterLength(value: unknown): ChapterLength {
+  return value === "short" || value === "long" ? value : "medium";
+}
+
+function normalizeGenerationProfile(value: unknown): GenerationProfile {
+  return value === "standard" || value === "deep" ? value : "fast";
 }

@@ -12,3 +12,13 @@ test-results/
 
 Kimi_Agent_LearnByAI/
 Kimi_Agent_LearnByAI.zip
+
+# Python cache & local logs & scratch
+__pycache__/
+*.pyc
+dev.log
+tmp/
+
+# Deploy script embeds plaintext SSH credentials — keep out of VCS until secrets
+# are externalized to env vars / key auth (see TODO P1-4). Do NOT commit as-is.
+deploy_remote.py

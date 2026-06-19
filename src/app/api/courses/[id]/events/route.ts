@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { requireApiUser } from "@/lib/apiAuth";
 import { getCourseEventSnapshot, hasActiveGenerationJobs } from "@/lib/courseEventSnapshot";
 import { subscribeCourseEvents } from "@/lib/courseEvents";
+import { publicGenerationJob, publicGenerationJobs } from "@/lib/publicGenerationJob";
 import { encodeSseEvent } from "@/lib/sse";
 
 export const dynamic = "force-dynamic";
@@ -59,14 +60,14 @@ export async function GET(
           const jobFingerprint = fingerprintJobs(snapshot.jobs);
 
           if (reason === "initial") {
-            send("snapshot", snapshot);
+            send("snapshot", { ...snapshot, jobs: publicGenerationJobs(snapshot.jobs) });
           } else {
             if (courseUpdatedAt !== lastCourseUpdatedAt || reason === "course") {
               send("course", { course: snapshot.course });
             }
             if (jobFingerprint !== lastJobFingerprint || reason === "job") {
               for (const job of snapshot.jobs) {
-                send("job", { job });
+                send("job", { job: publicGenerationJob(job) });
               }
             }
           }

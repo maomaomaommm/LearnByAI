@@ -62,6 +62,8 @@ export default function CreateCoursePage() {
       background: String(values.background),
       preference: String(values.preference),
       weeklyHours: Number(values.weeklyHours),
+      chapterLength: String(values.chapterLength || "medium"),
+      generationProfile: String(values.generationProfile || "fast"),
     };
 
     try {
@@ -71,6 +73,12 @@ export default function CreateCoursePage() {
       });
       
       if (!response.ok) {
+        if (response.status === 401) {
+          setError("请先登录后再生成课程。正在打开登录页...");
+          setLoading(false);
+          router.push("/login");
+          return;
+        }
         const data = (await response.json().catch(() => undefined)) as { error?: string } | undefined;
         throw new Error(data?.error ?? "Course creation failed.");
       }
@@ -159,6 +167,56 @@ export default function CreateCoursePage() {
                       <option value="6">6 小时</option>
                       <option value="10">10 小时</option>
                     </select>
+                  </div>
+                  <div className="rounded-lg border border-border bg-card p-5 md:col-span-2">
+                    <div className="mb-3 flex items-center gap-2">
+                      <BookOpen size={16} className="text-foreground" />
+                      <h2 className="text-sm font-semibold text-foreground">章节篇幅</h2>
+                    </div>
+                    <div className="grid gap-2 sm:grid-cols-3">
+                      {[
+                        ["short", "短", "6k-9k 字，最快最稳"],
+                        ["medium", "中", "10k-14k 字，推荐"],
+                        ["long", "长", "16k-24k 字，更深入但更慢"],
+                      ].map(([value, label, description]) => (
+                        <label key={value} className="rounded-md border border-border bg-background p-3 text-sm">
+                          <input
+                            type="radio"
+                            name="chapterLength"
+                            value={value}
+                            defaultChecked={value === "medium"}
+                            className="mr-2"
+                          />
+                          <span className="font-medium text-foreground">{label}</span>
+                          <span className="mt-1 block text-xs text-muted-foreground">{description}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="rounded-lg border border-border bg-card p-5 md:col-span-2">
+                    <div className="mb-3 flex items-center gap-2">
+                      <Zap size={16} className="text-foreground" />
+                      <h2 className="text-sm font-semibold text-foreground">生成模式</h2>
+                    </div>
+                    <div className="grid gap-2 sm:grid-cols-3">
+                      {[
+                        ["fast", "快速", "先出可读草稿，后台质检"],
+                        ["standard", "标准", "草稿优先，质检更积极"],
+                        ["deep", "深度", "完整质检后再完成"],
+                      ].map(([value, label, description]) => (
+                        <label key={value} className="rounded-md border border-border bg-background p-3 text-sm">
+                          <input
+                            type="radio"
+                            name="generationProfile"
+                            value={value}
+                            defaultChecked={value === "fast"}
+                            className="mr-2"
+                          />
+                          <span className="font-medium text-foreground">{label}</span>
+                          <span className="mt-1 block text-xs text-muted-foreground">{description}</span>
+                        </label>
+                      ))}
+                    </div>
                   </div>
                 </div>
 

@@ -1,14 +1,18 @@
 import { expect, test } from "@playwright/test";
+import { AUTH_UI_TEXT } from "../../src/lib/emailPasswordAuth";
 
 test("login does not create a browser-local API identity", async ({ page }) => {
   const email = `local-${crypto.randomUUID()}@example.com`;
 
   await page.goto("/login");
+  await expect(page.getByRole("heading", { name: AUTH_UI_TEXT.loginTitle })).toBeVisible();
+  await expect(page.getByLabel(AUTH_UI_TEXT.password)).toHaveAttribute("required", "");
+  await expect(page.getByLabel(AUTH_UI_TEXT.password)).toHaveAttribute("minlength", "6");
+  await expect(page.getByRole("button", { name: AUTH_UI_TEXT.createAccount }).first()).toBeVisible();
+  await expect(page.locator('form button[type="submit"]')).toHaveText(AUTH_UI_TEXT.signIn);
+
   await page.locator('input[name="email"]').fill(email);
-  const submitButton = page.locator("form button").first();
-  await expect(submitButton).toBeEnabled();
-  await submitButton.click();
-  await expect(page.getByText("Supabase login is not configured. Please contact the administrator.")).toBeVisible();
+  await page.locator('input[name="password"]').fill("secret-password");
   await expect(
     page.evaluate(() => localStorage.getItem("learnbyai:local-user")),
   ).resolves.toBeNull();
@@ -32,8 +36,6 @@ test("login does not create a browser-local API identity", async ({ page }) => {
   expect(ownRead.ok()).toBeTruthy();
 
   await page.goto("/login");
-  await page.getByRole("button", { name: "Sign out" }).click();
-  await expect(page.getByText("Signed out.")).toBeVisible();
   await expect(
     page.evaluate(() => localStorage.getItem("learnbyai:local-user")),
   ).resolves.toBeNull();

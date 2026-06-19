@@ -6,6 +6,7 @@ export function createMockCourse(input: {
   background: string;
   preference: string;
   weeklyHours: number;
+  chapterLength?: "short" | "medium" | "long";
 }): Course {
   const firstChapterId = crypto.randomUUID();
   return {

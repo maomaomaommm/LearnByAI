@@ -64,7 +64,14 @@ export default function CoursesPage() {
         throw new Error(data.error ?? "删除课程失败。");
       }
 
-      setCourses((current) => current.filter((course) => course.id !== target.id));
+      // Refresh from backend to ensure sync with admin/other sessions.
+      const listResponse = await apiFetch("/api/courses");
+      if (listResponse.ok) {
+        const data = (await listResponse.json()) as { courses?: Course[] };
+        setCourses(data.courses ?? []);
+      } else {
+        setCourses((current) => current.filter((course) => course.id !== target.id));
+      }
       setCourseToDelete(undefined);
     } catch (error) {
       setDeleteError(error instanceof Error ? error.message : "删除课程失败。");
@@ -80,7 +87,7 @@ export default function CoursesPage() {
           <div>
             <h1 className="font-mono text-2xl font-bold text-foreground">我的课程</h1>
             <p className="mt-2 text-sm text-muted-foreground">
-              登录 Supabase 后这里会读取云端课程；本地开发时使用浏览器草稿。
+              这里会展示你创建的学习课程，方便继续阅读、查看生成进度和管理章节内容。
             </p>
           </div>
           <Link
