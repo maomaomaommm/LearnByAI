@@ -93,6 +93,10 @@ function scanAndRepairSegment(text: string): string {
   if (dollars.length === 0) return text;
 
   const escapePositions = new Set<number>();
+  // Inner whitespace positions to delete so "$ x $" becomes "$x$" (remark-math
+  // does not recognize a delimiter with adjacent inner whitespace, so the pair
+  // would otherwise leak as literal "$").
+  const deletePositions = new Set<number>();
 
   // Phase 1: handle odd count — escape last unpaired $
   let pairCount = dollars.length;
@@ -113,14 +117,29 @@ function scanAndRepairSegment(text: string): string {
     if (isSuspiciousInlineMath(enclosed)) {
       escapePositions.add(openIdx);
       escapePositions.add(closeIdx);
+      continue;
+    }
+    // Valid inline math but padded with inner whitespace → tighten the delimiters.
+    if (enclosed !== enclosed.trim() && /^[ \t]|[ \t]$/.test(enclosed)) {
+      let j = openIdx + 1;
+      while (j < closeIdx && (text[j] === " " || text[j] === "\t")) {
+        deletePositions.add(j);
+        j += 1;
+      }
+      let k = closeIdx - 1;
+      while (k > openIdx && (text[k] === " " || text[k] === "\t")) {
+        deletePositions.add(k);
+        k -= 1;
+      }
     }
   }
 
-  if (escapePositions.size === 0) return text;
+  if (escapePositions.size === 0 && deletePositions.size === 0) return text;
 
   // Phase 3: build result character by character
   let result = "";
   for (let i = 0; i < text.length; i++) {
+    if (deletePositions.has(i)) continue;
     if (escapePositions.has(i)) {
       result += "\\$";
     } else {
