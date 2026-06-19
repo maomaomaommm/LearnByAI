@@ -479,7 +479,9 @@ async function reviewChapter(
   onJobUpdate?: (job: GenerationJob) => Promise<void> | void,
   overrides?: ModelOverrides,
 ) {
-  const quality = runChapterQualityPipelineWithRepair(chapter, content, postRepairMarkdown);
+  // Always resolve format deterministically before scoring: format is a solved,
+  // deterministic problem and must not depend on (or consume) the LLM repair loop.
+  const quality = runChapterQualityPipelineWithRepair(chapter, postRepairMarkdown(content), postRepairMarkdown);
   const report = quality.report;
   let lastReviewerText: string | undefined;
 
@@ -637,7 +639,9 @@ async function parseReviewerJsonWithRepair(
 }
 
 function shouldSkipRemoteFormatGuard(content: string) {
-  return false;
+  // Long drafts skip the expensive full-rewrite remote FormatGuard and rely on
+  // the deterministic local normalizer (postRepairMarkdown) instead.
+  return content.length >= REMOTE_FORMAT_GUARD_MAX_CHARS;
 }
 
 async function reviewChapterWithRepair(
@@ -666,8 +670,11 @@ async function reviewChapterWithRepair(
   const maxRepairAttempts = shouldUseChunkedRepair(content) ? MAX_LONG_TEXT_REPAIR_ATTEMPTS : MAX_REVIEW_REPAIR_ATTEMPTS;
 
   for (let attempt = 1; attempt <= maxRepairAttempts && shouldRepairQuality(best.report.issues, best.report.score); attempt += 1) {
+    // Format issues are resolved deterministically (postRepairMarkdown) and at
+    // render time; never spend an LLM repair round on them. Only content-level
+    // issues (REVIEWER, structure, continuity, facts) drive the repair loop.
     const repairIssues = best.report.issues
-      .filter((issue) => issue.severity === "error" || issue.severity === "warning")
+      .filter((issue) => (issue.severity === "error" || issue.severity === "warning") && !issue.check.startsWith("format."))
       .slice(0, 10);
     if (!repairIssues.length) break;
 
@@ -693,22 +700,10 @@ async function reviewChapterWithRepair(
     }
     currentContent = repaired;
 
-    try {
-      const polished = await runFormatGuard(repaired, {
-        jobId,
-        overrides,
-        maxTokens,
-        onJobUpdate,
-      });
-      currentContent = polished;
-    } catch (error) {
-      const polishErrorMessage = safeErrorMessage(error, "Format guard after repair failed");
-      appendJobEvent(jobId, {
-        agent: "POLISHER",
-        status: "running",
-        message: `Post-repair format guard failed: ${polishErrorMessage}. Continuing with AUTHOR repaired content.`,
-      }, { preserveJobStatus: true });
-    }
+    // Normalize format deterministically after the content repair instead of
+    // spending another full-chapter FormatGuard LLM round. The deterministic
+    // normalizer is the single source of truth for format correctness.
+    currentContent = postRepairMarkdown(repaired);
 
     let reviewed: Awaited<ReturnType<typeof reviewChapter>>;
     try {
