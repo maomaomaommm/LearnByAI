@@ -145,3 +145,26 @@ test("validateFormat does not flag prose that merely mentions a command word", (
   const issues = validateFormat(prose);
   assert.ok(!issues.some((i) => i.check === "format.bare_latex"), `no false positive: ${JSON.stringify(issues)}`);
 });
+
+
+// KaTeX-as-judge: escaped-dollar math and render validation
+test("unescapes \$...\$ when KaTeX can render it (\$i\$ -> $i$)", () => {
+  const out = postRepairMarkdown(String.raw`其中 \$i\$ 表示第 i 个智能体。`);
+  assert.ok(out.includes("$i$"), out);
+  assert.ok(!out.includes(String.raw`\$i\$`), out);
+});
+
+test("keeps literal currency \$5 (not renderable as intended math)", () => {
+  const out = postRepairMarkdown(String.raw`成本约 \$5 美元。`);
+  assert.ok(out.includes(String.raw`\$5`), out);
+});
+
+test("validateFormat flags a formula KaTeX cannot render", () => {
+  const issues = validateFormat(String.raw`公式:$$\frac{1}$$ 完成。`);
+  assert.ok(issues.some((i) => i.check === "format.unrenderable_math"), JSON.stringify(issues));
+});
+
+test("validateFormat does not flag a valid formula", () => {
+  const issues = validateFormat(String.raw`公式:$$\frac{\partial Q}{\partial Q_i} \geq 0$$ 和行内 $Q_{tot}$。`);
+  assert.ok(!issues.some((i) => i.check === "format.unrenderable_math"), JSON.stringify(issues));
+});
