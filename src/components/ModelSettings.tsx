@@ -15,6 +15,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import {
   MODEL_AGENT_NAMES,
   MODEL_CONFIG_STORAGE_KEY,
@@ -38,21 +39,30 @@ type ModelSettingsState = {
 };
 
 const AGENT_LABELS: Record<AgentName, string> = {
-  ASSISTANT: "Assistant",
-  ARCHITECT: "Architect",
-  AUTHOR: "Author",
-  POLISHER: "Polisher",
-  REVIEWER: "Reviewer",
-  TUTOR: "Tutor",
+  ASSISTANT: "通用助手",
+  ARCHITECT: "课程规划师",
+  AUTHOR: "教材作者",
+  POLISHER: "格式润色员",
+  REVIEWER: "质量评审员",
+  TUTOR: "阅读导师",
 };
 
 const AGENT_DESCRIPTIONS: Record<AgentName, string> = {
-  ASSISTANT: "General coordination and Q&A.",
-  ARCHITECT: "Course structure and Course Bible planning.",
-  AUTHOR: "Chapter textbook drafting.",
-  POLISHER: "Chapter polish and expression cleanup.",
-  REVIEWER: "Quality review and issue checks.",
-  TUTOR: "Reader-side tutoring.",
+  ASSISTANT: "负责通用协调、问答和兜底回复。",
+  ARCHITECT: "负责课程结构、课程全局设定和章节规划。",
+  AUTHOR: "负责撰写章节教材正文。",
+  POLISHER: "负责章节排版、表达润色和格式修复。",
+  REVIEWER: "负责质量评审、问题检查和改进建议。",
+  TUTOR: "负责阅读页中的批注问答和辅导。",
+};
+
+const AGENT_BADGES: Record<AgentName, string> = {
+  ASSISTANT: "助",
+  ARCHITECT: "规",
+  AUTHOR: "写",
+  POLISHER: "润",
+  REVIEWER: "审",
+  TUTOR: "导",
 };
 
 const EMPTY_FIELDS: ModelOverrideFields = {
@@ -65,12 +75,44 @@ export function ModelSettings({ className, showLabel = false, size }: ModelSetti
   const [open, setOpen] = useState(false);
   const [status, setStatus] = useState("");
   const [settings, setSettings] = useState<ModelSettingsState>(() => emptySettings());
+  const [isLoading, setIsLoading] = useState(false);
   const buttonSize = size ?? (showLabel ? "sm" : "icon-sm");
 
   useEffect(() => {
     if (!open) return;
     setStatus("");
-    setSettings(readStoredSettings());
+    setIsLoading(true);
+    const local = readStoredSettings();
+    setSettings(local);
+
+    let cancelled = false;
+    async function loadServerConfig() {
+      try {
+        const token = await getAccessToken();
+        if (!token) return;
+        const res = await fetch("/api/user/model-config", {
+          headers: { authorization: `Bearer ${token}` },
+        });
+        if (!res.ok) return;
+        const { modelConfig } = (await res.json()) as { modelConfig: unknown };
+        const parsed = normalizeModelOverrides(modelConfig);
+        if (parsed) {
+          const next = overridesToState(parsed);
+          if (!cancelled) {
+            setSettings(next);
+            localStorage.setItem(MODEL_CONFIG_STORAGE_KEY, JSON.stringify(parsed));
+          }
+        }
+      } catch {
+        // silent — localStorage is the offline fallback
+      } finally {
+        if (!cancelled) setIsLoading(false);
+      }
+    }
+    loadServerConfig();
+    return () => {
+      cancelled = true;
+    };
   }, [open]);
 
   function updateDefault(field: keyof ModelOverrideFields, value: string) {
@@ -96,21 +138,64 @@ export function ModelSettings({ className, showLabel = false, size }: ModelSetti
     }));
   }
 
-  function saveSettings() {
+  async function saveSettings() {
+    setStatus("保存中…");
     const normalized = normalizeModelOverrides(toOverrides(settings));
     if (normalized) {
       localStorage.setItem(MODEL_CONFIG_STORAGE_KEY, JSON.stringify(normalized));
-      setStatus("Model settings saved.");
     } else {
       localStorage.removeItem(MODEL_CONFIG_STORAGE_KEY);
-      setStatus("Empty settings cleared.");
+    }
+
+    try {
+      const token = await getAccessToken();
+      if (!token) {
+        setStatus(normalized ? "已保存到本地（未登录无法同步到云端）。" : "已清除本地设置。");
+        return;
+      }
+      const res = await fetch("/api/user/model-config", {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify(normalized ?? {}),
+      });
+      if (!res.ok) {
+        const data = (await res.json().catch(() => ({}))) as { error?: string };
+        setStatus(data.error ?? "同步到云端失败。");
+        return;
+      }
+      setStatus(normalized ? "模型设置已保存并同步到云端。" : "云端设置已清除。");
+    } catch {
+      setStatus("网络错误，云端同步失败，但本地已保存。");
     }
   }
 
-  function clearSettings() {
+  async function clearSettings() {
     localStorage.removeItem(MODEL_CONFIG_STORAGE_KEY);
     setSettings(emptySettings());
-    setStatus("Model settings cleared.");
+    setStatus("清除中…");
+
+    try {
+      const token = await getAccessToken();
+      if (!token) {
+        setStatus("已清除本地设置。");
+        return;
+      }
+      const res = await fetch("/api/user/model-config", {
+        method: "DELETE",
+        headers: { authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) {
+        const data = (await res.json().catch(() => ({}))) as { error?: string };
+        setStatus(data.error ?? "清除云端设置失败。");
+        return;
+      }
+      setStatus("本地与云端设置已清除。");
+    } catch {
+      setStatus("已清除本地设置，云端清除失败。");
+    }
   }
 
   return (
@@ -126,23 +211,23 @@ export function ModelSettings({ className, showLabel = false, size }: ModelSetti
               showLabel && "bg-secondary/40 px-3.5 font-mono text-xs hover:bg-secondary",
               className,
             )}
-            aria-label="Model settings"
+            aria-label="模型设置"
             onClick={() => setOpen(true)}
           >
             <Settings2 className={cn("h-4 w-4", showLabel && "mr-2")} />
-            {showLabel && <span>Model settings</span>}
+            {showLabel && <span>模型设置</span>}
           </Button>
         </TooltipTrigger>
         <TooltipContent sideOffset={6} className="text-xs">
-          Model settings
+          模型设置
         </TooltipContent>
       </Tooltip>
 
       <DialogContent className="max-h-[90vh] overflow-hidden sm:max-w-2xl">
         <DialogHeader>
-          <DialogTitle>Model Settings</DialogTitle>
+          <DialogTitle>模型设置</DialogTitle>
           <DialogDescription>
-            Configure a default model endpoint, or override individual agents.
+            配置默认模型接口，或为不同 Agent 单独设置模型。
           </DialogDescription>
         </DialogHeader>
 
@@ -151,14 +236,19 @@ export function ModelSettings({ className, showLabel = false, size }: ModelSetti
             <div className="absolute left-0 top-0 h-full w-1 bg-primary/40" />
             <h3 className="mb-5 flex items-center gap-2 text-sm font-semibold tracking-tight text-foreground">
               <Sparkles className="h-4 w-4 text-primary" />
-              Default Configuration
+              默认配置
             </h3>
-            <Fields idPrefix="model-default" values={settings.default} onChange={updateDefault} />
+            <Fields
+              idPrefix="model-default"
+              values={settings.default}
+              onChange={updateDefault}
+              getTestPayload={() => ({ agent: "default", overrides: toOverrides(settings) })}
+            />
           </section>
 
           <div className="mb-3 px-1">
             <h4 className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/70">
-              Agent Overrides
+              智能体单独配置
             </h4>
           </div>
 
@@ -172,12 +262,12 @@ export function ModelSettings({ className, showLabel = false, size }: ModelSetti
                 <AccordionTrigger className="py-3.5 hover:no-underline">
                   <span className="flex min-w-0 items-center gap-3 text-left">
                     <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-secondary font-mono text-[11px] font-bold text-secondary-foreground">
-                      {agent.substring(0, 2)}
+                      {AGENT_BADGES[agent]}
                     </span>
                     <span className="flex flex-col gap-0.5">
-                      <span className="font-mono text-sm font-medium tracking-tight">{agent}</span>
+                      <span className="text-sm font-medium tracking-tight">{AGENT_LABELS[agent]}</span>
                       <span className="text-[10px] font-normal text-muted-foreground">
-                        {AGENT_LABELS[agent]}
+                        {agent}
                       </span>
                     </span>
                   </span>
@@ -192,6 +282,7 @@ export function ModelSettings({ className, showLabel = false, size }: ModelSetti
                     idPrefix={`model-${agent.toLowerCase()}`}
                     values={settings.agents[agent]}
                     onChange={(field, value) => updateAgent(agent, field, value)}
+                    getTestPayload={() => ({ agent, overrides: toOverrides(settings) })}
                   />
                 </AccordionContent>
               </AccordionItem>
@@ -205,10 +296,10 @@ export function ModelSettings({ className, showLabel = false, size }: ModelSetti
           </div>
           <div className="flex flex-col-reverse gap-2 sm:flex-row">
             <Button type="button" variant="outline" onClick={clearSettings}>
-              Clear
+              清除
             </Button>
             <Button type="button" onClick={saveSettings}>
-              Save
+              保存
             </Button>
           </div>
         </DialogFooter>
@@ -221,10 +312,12 @@ function Fields({
   idPrefix,
   values,
   onChange,
+  getTestPayload,
 }: {
   idPrefix: string;
   values: ModelOverrideFields;
   onChange: (field: keyof ModelOverrideFields, value: string) => void;
+  getTestPayload: () => unknown;
 }) {
   const [isTesting, setIsTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ ok: boolean; msg: string } | null>(null);
@@ -233,20 +326,24 @@ function Fields({
     setIsTesting(true);
     setTestResult(null);
     try {
+      const token = await getAccessToken();
       const res = await fetch("/api/test-model", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(values),
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify(getTestPayload()),
       });
-      const data = await res.json();
+      const data = await readJsonResponse(res);
       if (data.ok) {
-        setTestResult({ ok: true, msg: `Connected (${data.elapsed}ms)` });
+        setTestResult({ ok: true, msg: `连接成功（${data.elapsed}ms）` });
       } else {
-        setTestResult({ ok: false, msg: data.error || "Request failed" });
+        setTestResult({ ok: false, msg: data.error || "请求失败" });
       }
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : "Unknown error";
-      setTestResult({ ok: false, msg: `Network error: ${message}` });
+      const message = err instanceof Error ? err.message : "未知错误";
+      setTestResult({ ok: false, msg: `网络错误：${message}` });
     } finally {
       setIsTesting(false);
     }
@@ -257,7 +354,7 @@ function Fields({
       <div className="grid gap-4 sm:grid-cols-3">
         <Field
           id={`${idPrefix}-api-key`}
-          label="API Key"
+          label="接口密钥"
           type="password"
           autoComplete="off"
           value={values.apiKey ?? ""}
@@ -268,7 +365,7 @@ function Fields({
         />
         <Field
           id={`${idPrefix}-base-url`}
-          label="Base URL"
+          label="接口地址"
           type="url"
           value={values.baseUrl ?? ""}
           onChange={(value) => {
@@ -278,7 +375,7 @@ function Fields({
         />
         <Field
           id={`${idPrefix}-model`}
-          label="Model"
+          label="模型"
           type="text"
           value={values.model ?? ""}
           onChange={(value) => {
@@ -301,7 +398,7 @@ function Fields({
           ) : (
             <Activity className="mr-1.5 h-3 w-3" />
           )}
-          Test
+          测试
         </Button>
         {testResult && (
           <span
@@ -311,13 +408,25 @@ function Fields({
             )}
             title={testResult.msg}
           >
-            {testResult.ok ? "OK: " : "Error: "}
+            {testResult.ok ? "成功：" : "错误："}
             {testResult.msg}
           </span>
         )}
       </div>
     </div>
   );
+}
+
+async function readJsonResponse(res: Response) {
+  const text = await res.text();
+  try {
+    return JSON.parse(text);
+  } catch {
+    return {
+      ok: false,
+      error: `服务器返回了非 JSON 响应（HTTP ${res.status}），请检查应用服务或网关是否正常。`,
+    };
+  }
 }
 
 function Field({
@@ -347,25 +456,37 @@ function Field({
         autoComplete={autoComplete}
         spellCheck={false}
         onChange={(event) => onChange(event.target.value)}
-        placeholder={label === "API Key" ? "Use server default" : ""}
+        placeholder={type === "password" ? "使用服务器默认配置" : ""}
         className="h-8 border-border/60 bg-secondary/30 font-mono text-xs transition-colors placeholder:text-muted-foreground/40 focus-visible:bg-background"
       />
     </div>
   );
 }
 
+async function getAccessToken(): Promise<string | undefined> {
+  const supabase = createSupabaseBrowserClient();
+  if (!supabase) return undefined;
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
+  return session?.access_token;
+}
+
+function overridesToState(overrides: ModelOverrides): ModelSettingsState {
+  return {
+    default: { ...EMPTY_FIELDS, ...overrides.default },
+    agents: MODEL_AGENT_NAMES.reduce((agents, agent) => {
+      agents[agent] = { ...EMPTY_FIELDS, ...overrides.agents?.[agent] };
+      return agents;
+    }, {} as Record<AgentName, ModelOverrideFields>),
+  };
+}
+
 function readStoredSettings(): ModelSettingsState {
   const stored = localStorage.getItem(MODEL_CONFIG_STORAGE_KEY);
   const parsed = parseModelOverrides(stored);
   if (!parsed) return emptySettings();
-
-  return {
-    default: { ...EMPTY_FIELDS, ...parsed.default },
-    agents: MODEL_AGENT_NAMES.reduce((agents, agent) => {
-      agents[agent] = { ...EMPTY_FIELDS, ...parsed.agents?.[agent] };
-      return agents;
-    }, {} as Record<AgentName, ModelOverrideFields>),
-  };
+  return overridesToState(parsed);
 }
 
 function emptySettings(): ModelSettingsState {

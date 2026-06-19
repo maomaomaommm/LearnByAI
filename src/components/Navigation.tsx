@@ -16,11 +16,11 @@ export function Navigation() {
   }
 
   const navLinks = [
-    { label: "Home", href: "/" },
-    { label: "Courses", href: "/courses" },
-    { label: "Create", href: "/create" },
-    { label: "Login", href: "/login" },
-    { label: "About", href: "/about" },
+    { label: "首页", href: "/" },
+    { label: "课程", href: "/courses" },
+    { label: "创建", href: "/create" },
+    { label: "登录", href: "/login" },
+    { label: "关于", href: "/about" },
   ];
 
   const isActive = (href: string) =>
@@ -60,7 +60,7 @@ export function Navigation() {
           type="button"
           className="p-2 -mr-2 md:hidden"
           onClick={() => setMobileOpen((open) => !open)}
-          aria-label={mobileOpen ? "Close navigation menu" : "Open navigation menu"}
+          aria-label={mobileOpen ? "关闭导航菜单" : "打开导航菜单"}
         >
           {mobileOpen ? (
             <X size={22} className="text-foreground" />

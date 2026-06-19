@@ -9,6 +9,8 @@ test("generation worker script posts to internal worker without printing secrets
     internalWorkerSecret: "worker-secret",
     jobId: "job-123",
     limit: "3",
+    recover: "true",
+    timeoutMs: "60000",
     fetchImpl: async (url, init) => {
       calls.push({ url, init });
       return jsonResponse({ processed: 2, results: [{ id: "a" }, { id: "b" }] });
@@ -20,7 +22,8 @@ test("generation worker script posts to internal worker without printing secrets
   assert.equal(calls[0].url, "https://learnbyai.example.com/api/internal/generation-worker");
   assert.equal(calls[0].init.method, "POST");
   assert.equal(calls[0].init.headers.authorization, "Bearer worker-secret");
-  assert.deepEqual(JSON.parse(calls[0].init.body), { jobId: "job-123", limit: 3 });
+  assert.ok(calls[0].init.signal instanceof AbortSignal);
+  assert.deepEqual(JSON.parse(calls[0].init.body), { jobId: "job-123", limit: 3, recover: true });
 });
 
 test("generation worker script requires base url and worker secret", async () => {
@@ -48,6 +51,15 @@ test("generation worker script validates app url and limit", async () => {
       }),
     /positive integer/,
   );
+  await assert.rejects(
+    () =>
+      runGenerationWorkerOnce({
+        appBaseUrl: "https://learnbyai.example.com",
+        internalWorkerSecret: "worker-secret",
+        timeoutMs: "0",
+      }),
+    /positive integer/,
+  );
 });
 
 test("generation worker script redacts bearer tokens from worker errors", async () => {
@@ -63,6 +75,26 @@ test("generation worker script redacts bearer tokens from worker errors", async 
       assert.doesNotMatch(error.message, /worker-secret/);
       return true;
     },
+  );
+});
+
+test("generation worker script times out stuck worker requests", async () => {
+  await assert.rejects(
+    () =>
+      runGenerationWorkerOnce({
+        appBaseUrl: "https://learnbyai.example.com",
+        internalWorkerSecret: "worker-secret",
+        timeoutMs: "1",
+        fetchImpl: (_url, init) =>
+          new Promise((resolve, reject) => {
+            init.signal.addEventListener(
+              "abort",
+              () => reject(Object.assign(new Error("aborted"), { name: "AbortError" })),
+              { once: true },
+            );
+          }),
+      }),
+    /timed out after 1ms/u,
   );
 });
 
