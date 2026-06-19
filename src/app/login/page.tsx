@@ -2,6 +2,7 @@
 
 import { FormEvent, useEffect, useState } from "react";
 import { LogIn, UserPlus } from "lucide-react";
+import { toast } from "sonner";
 import {
   AUTH_MESSAGES,
   AUTH_UI_TEXT,
@@ -44,7 +45,12 @@ export default function LoginPage() {
         return;
       }
 
-      window.location.assign("/courses");
+      toast.success(mode === "login" ? "登录成功" : "注册并登录成功", {
+        description: "正在进入课程中心...",
+      });
+      setTimeout(() => {
+        window.location.assign("/courses");
+      }, 900);
     } finally {
       setLoading(false);
     }

@@ -1,3 +1,8 @@
+"use client";
+
+import { Check, Copy } from "lucide-react";
+import { isValidElement, useEffect, useRef, useState } from "react";
+import type { MouseEvent, ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
@@ -13,6 +18,91 @@ interface MarkdownContentProps {
   onParagraphDoubleClick?: (text: string) => void;
 }
 
+function getCodeText(node: ReactNode): string {
+  if (node === null || node === undefined || typeof node === "boolean") {
+    return "";
+  }
+  if (typeof node === "string" || typeof node === "number") {
+    return String(node);
+  }
+  if (Array.isArray(node)) {
+    return node.map(getCodeText).join("");
+  }
+  if (isValidElement<{ children?: ReactNode }>(node)) {
+    return getCodeText(node.props.children);
+  }
+  return "";
+}
+
+async function copyText(text: string) {
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return;
+    } catch {
+      // Fall back for browsers that expose clipboard but deny the write.
+    }
+  }
+
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "");
+  textarea.style.position = "fixed";
+  textarea.style.left = "-9999px";
+  textarea.style.top = "0";
+  document.body.appendChild(textarea);
+  textarea.select();
+  const didCopy = document.execCommand("copy");
+  document.body.removeChild(textarea);
+  if (!didCopy) {
+    throw new Error("Copy command failed");
+  }
+}
+
+function CodeCopyButton({ code }: { code: string }) {
+  const [copied, setCopied] = useState(false);
+  const timeoutRef = useRef<number | null>(null);
+  const hasCode = code.trim().length > 0;
+
+  useEffect(() => {
+    return () => {
+      if (timeoutRef.current !== null) {
+        window.clearTimeout(timeoutRef.current);
+      }
+    };
+  }, []);
+
+  const handleCopy = async () => {
+    if (!hasCode) return;
+
+    try {
+      await copyText(code);
+      setCopied(true);
+      if (timeoutRef.current !== null) {
+        window.clearTimeout(timeoutRef.current);
+      }
+      timeoutRef.current = window.setTimeout(() => setCopied(false), 1400);
+    } catch {
+      setCopied(false);
+    }
+  };
+
+  const Icon = copied ? Check : Copy;
+
+  return (
+    <button
+      type="button"
+      onClick={handleCopy}
+      disabled={!hasCode}
+      aria-label={copied ? "Copied code" : "Copy code"}
+      title={copied ? "Copied" : "Copy code"}
+      className="absolute right-2 top-2 inline-flex h-8 w-8 items-center justify-center rounded-md border border-white/10 bg-white/5 text-slate-300 shadow-sm transition hover:bg-white/10 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/40 disabled:cursor-not-allowed disabled:opacity-40"
+    >
+      <Icon className="h-4 w-4" aria-hidden="true" />
+    </button>
+  );
+}
+
 export function MarkdownContent({
   content,
   onTextSelect,
@@ -25,7 +115,7 @@ export function MarkdownContent({
     }
   };
 
-  const handleDoubleClick = (e: React.MouseEvent) => {
+  const handleDoubleClick = (e: MouseEvent) => {
     const target = e.target as HTMLElement;
     const paragraph = target.closest("p, li, td");
     if (paragraph) {
@@ -40,8 +130,18 @@ export function MarkdownContent({
       onDoubleClick={handleDoubleClick}
     >
       <ReactMarkdown
-        remarkPlugins={[remarkGfm, remarkMath]}
-        rehypePlugins={[rehypeKatex, rehypeHighlight]}
+        remarkPlugins={[[remarkGfm, { singleTilde: false }], remarkMath]}
+        rehypePlugins={[
+          [
+            rehypeKatex,
+            {
+              throwOnError: false,
+              strict: false,
+              errorColor: "currentColor",
+            },
+          ],
+          rehypeHighlight,
+        ]}
         components={{
           h1: ({ children }) => (
             <h1 className="mb-4 mt-8 text-xl font-bold text-foreground first:mt-0">
@@ -66,19 +166,34 @@ export function MarkdownContent({
               {children}
             </blockquote>
           ),
-          code: ({ children, className }) => {
-            const isInline = !className;
-            if (isInline) {
+          pre: ({ children }) => {
+            const code = getCodeText(children);
+            return (
+              <div className="group relative my-4">
+                <pre className="my-0 overflow-x-auto rounded-lg bg-[#0d1117] p-4 pr-14 [&_*]:!bg-transparent [&_code]:!p-0 [&_code]:text-xs [&_code]:text-[#c9d1d9]">
+                  {children}
+                </pre>
+                <CodeCopyButton code={code} />
+              </div>
+            );
+          },
+          code: ({ children, className, ...props }) => {
+            const text = String(children ?? "");
+            const isBlock = Boolean(className) || text.includes("\n");
+            if (isBlock) {
               return (
-                <code className="rounded bg-muted px-1.5 py-0.5 text-xs text-foreground">
+                <code className={`${className ?? ""} !bg-transparent`} {...props}>
                   {children}
                 </code>
               );
             }
             return (
-              <pre className="overflow-x-auto rounded-lg bg-[#0d1117] p-4 my-4">
-                <code className={`${className} text-xs`}>{children}</code>
-              </pre>
+              <code
+                className="rounded bg-muted px-1.5 py-0.5 text-xs text-foreground"
+                {...props}
+              >
+                {children}
+              </code>
             );
           },
           table: ({ children }) => (

@@ -2,7 +2,7 @@ import "server-only";
 
 import { mkdir, readFile, rename, rm, stat, unlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { claimGenerationJob, deleteGenerationJobsForCourse, releaseGenerationJob, upsertGenerationJob } from "./jobs";
+import { claimGenerationJob, deleteGenerationJobsForCourse, patchGenerationJob, releaseGenerationJob, upsertGenerationJob } from "./jobs";
 import { publishCourseChanged, publishGenerationJobChanged } from "./courseEvents";
 import { Annotation, Course, ExportJob, GenerationJob, QualityReport, UsageEvent } from "./types";
 import { createSupabaseServiceClient, resolveUserId } from "./supabase/server";
@@ -18,6 +18,7 @@ const localStoreLockPath = `${localStorePath}.lock`;
 const LOCAL_STORE_LOCK_TIMEOUT_MS = 10_000;
 const LOCAL_STORE_STALE_LOCK_MS = 30_000;
 const ACTIVE_GENERATION_JOB_STATUSES: GenerationJob["status"][] = ["pending", "queued", "retrying", "running"];
+const GENERATION_HEARTBEAT_STALE_MS = readPositiveInteger(process.env.GENERATION_HEARTBEAT_STALE_MS, 5 * 60 * 1000);
 let localStoreWriteQueue = Promise.resolve();
 
 type LocalStore = {
@@ -106,6 +107,17 @@ export async function saveServerCourse(course: Course, request?: Request) {
             }),
           )
         : Promise.resolve(),
+      // Delete stale sections for this chapter before inserting the new set to avoid duplicates
+      ...(chapter.sections && chapter.sections.length > 0 && isUuid(chapter.id)
+        ? [
+            requireSupabaseWrite(
+              "Delete stale sections",
+              supabase.from("sections").delete().eq("chapter_id", chapter.id),
+            ).catch(() => {
+              // Ignore delete failure so upserts below still attempt to overwrite by id
+            }),
+          ]
+        : []),
       ...(chapter.sections ?? []).filter((section) => isUuid(section.id) && isUuid(section.chapterId)).map((section) =>
         requireSupabaseWrite(
           "Persist section",
@@ -177,9 +189,91 @@ export async function deleteServerCourse(id: string, request?: Request) {
   const course = await getServerCourse(id, request);
   if (!course) return false;
 
+  // Always delete from Supabase first if available. RLS or user_id mismatch will
+  // cause an error that propagates to the caller.
+  const supabase = createSupabaseServiceClient();
+  if (supabase && isUuid(userId) && isUuid(id)) {
+    const qualityTargetIds = [
+      course.id,
+      ...course.chapters.flatMap((chapter) => [
+        chapter.id,
+        ...(chapter.sections ?? []).map((section) => section.id),
+      ]),
+    ].filter(isUuid);
+
+    if (qualityTargetIds.length) {
+      await requireSupabaseWrite(
+        "Delete course quality reports",
+        supabase
+          .from("quality_reports")
+          .delete()
+          .eq("user_id", userId)
+          .in("target_id", qualityTargetIds),
+      );
+    }
+
+    await requireSupabaseWrite(
+      "Delete course",
+      supabase.from("courses").delete().eq("id", id).eq("user_id", userId),
+    );
+  }
+
+  // Clean up local fallback cache after Supabase succeeds.
+  await clearLocalCourseData(course);
+  return true;
+}
+
+export async function deleteServerCourseByAdmin(id: string) {
+  const supabase = createSupabaseServiceClient();
+  if (!supabase || !isUuid(id)) {
+    throw new Error("Supabase 服务未配置，无法删除课程。");
+  }
+
+  const { data, error: readError } = await supabase
+    .from("courses")
+    .select("payload")
+    .eq("id", id)
+    .maybeSingle();
+
+  if (readError) throw new Error(`读取课程失败：${readError.message}`);
+  const course = data?.payload as Course | undefined;
+
+  // Deleting the course row cascades to chapters, sections, annotations,
+  // exports and generation_jobs. Quality reports are deleted explicitly.
+  if (course) {
+    const qualityTargetIds = [
+      course.id,
+      ...course.chapters.flatMap((chapter) => [
+        chapter.id,
+        ...(chapter.sections ?? []).map((section) => section.id),
+      ]),
+    ].filter(isUuid);
+
+    if (qualityTargetIds.length) {
+      await requireSupabaseWrite(
+        "Delete course quality reports",
+        supabase.from("quality_reports").delete().in("target_id", qualityTargetIds),
+      );
+    }
+  }
+
+  await requireSupabaseWrite(
+    "Delete course",
+    supabase.from("courses").delete().eq("id", id),
+  );
+
+  if (course) {
+    await clearLocalCourseData(course);
+  }
+
+  return true;
+}
+
+async function clearLocalCourseData(course: Course) {
+  const id = course.id;
   const chapterIds = new Set(course.chapters.map((chapter) => chapter.id));
   const qualityTargetIds = new Set([
-    course.id,
+    id,
     ...course.chapters.flatMap((chapter) => [
       chapter.id,
       ...(chapter.sections ?? []).map((section) => section.id),
@@ -209,28 +303,6 @@ export async function deleteServerCourse(id: string, request?: Request) {
   }
   deleteGenerationJobsForCourse(id);
   await persistLocalStore({ mergeDisk: false });
-
-  const supabase = createSupabaseServiceClient();
-  if (supabase && isUuid(userId) && isUuid(id)) {
-    const qualityTargetIdsToDelete = [...qualityTargetIds].filter(isUuid);
-    if (qualityTargetIdsToDelete.length) {
-      await requireSupabaseWrite(
-        "Delete course quality reports",
-        supabase
-          .from("quality_reports")
-          .delete()
-          .eq("user_id", userId)
-          .in("target_id", qualityTargetIdsToDelete),
-      );
-    }
-
-    await requireSupabaseWrite(
-      "Delete course",
-      supabase.from("courses").delete().eq("id", id).eq("user_id", userId),
-    );
-  }
-
-  return true;
 }
 
 export async function updateServerChapter(
@@ -494,6 +566,7 @@ export async function getServerGenerationJobForWorker(id: string) {
 export async function listRunnableGenerationJobs(limit = 10) {
   const statuses: GenerationJob["status"][] = ["pending", "queued", "retrying"];
   const supabase = createSupabaseServiceClient();
+  const scanLimit = Math.max(limit, Math.min(100, limit * 5));
 
   if (supabase) {
     const { data, error } = await supabase
@@ -502,36 +575,41 @@ export async function listRunnableGenerationJobs(limit = 10) {
       .in("status", statuses)
       .or(`locked_until.is.null,locked_until.lte.${new Date().toISOString()}`)
       .order("created_at", { ascending: true })
-      .limit(limit);
+      .limit(scanLimit);
 
     assertSupabaseNoError("List runnable generation jobs", error);
-    return (data ?? []).map((row) => row.payload as GenerationJob);
+    return sortRunnableGenerationJobs((data ?? []).map((row) => row.payload as GenerationJob)).slice(0, limit);
   }
 
   await hydrateLocalStore();
-  return [...localGenerationJobs.values()]
+  return sortRunnableGenerationJobs([...localGenerationJobs.values()]
     .filter((job) => statuses.includes(job.status))
-    .filter((job) => !job.lockedUntil || Date.parse(job.lockedUntil) <= Date.now())
-    .sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt))
+    .filter((job) => !job.lockedUntil || Date.parse(job.lockedUntil) <= Date.now()))
     .slice(0, limit);
 }
 
 export async function recoverInterruptedGenerationJobs() {
+  return recoverExpiredGenerationJobs();
+}
+
+export async function recoverExpiredGenerationJobs() {
   const supabase = createSupabaseServiceClient();
   const now = new Date().toISOString();
-  const message = "Generation worker restarted before this job finished; returning it to the queue.";
+  const message = "Generation job lock expired without a usable draft heartbeat; returning it to the queue.";
 
   if (supabase) {
     const { data, error } = await supabase
       .from("generation_jobs")
-      .select("id, payload")
+      .select("id, payload, locked_until, updated_at")
       .in("status", ["running", "retrying"])
       .not("locked_until", "is", null);
 
-    assertSupabaseNoError("List interrupted generation jobs", error);
-    const interrupted = data ?? [];
-    for (const row of interrupted) {
+    assertSupabaseNoError("List expired generation jobs", error);
+    const expired = (data ?? []).filter((row) => shouldRecoverStaleLockedRow(row.payload as GenerationJob, row.locked_until as string | null, row.updated_at as string | null));
+    let recovered = 0;
+    for (const row of expired) {
       const job = row.payload as GenerationJob;
+      if (!(await shouldRecoverExpiredGenerationJob(job, supabase))) continue;
       const recoveredStatus: GenerationJob["status"] = job.status === "running" ? "retrying" : job.status;
       const nextJob: GenerationJob = {
         ...job,
@@ -566,15 +644,18 @@ export async function recoverInterruptedGenerationJobs() {
           .eq("id", nextJob.id),
       );
       publishSavedGenerationJob(nextJob);
+      recovered += 1;
     }
-    if (interrupted.length) await persistLocalStore();
-    return interrupted.length;
+    if (recovered) await persistLocalStore();
+    return recovered;
   }
 
   await hydrateLocalStore();
   let recovered = 0;
   for (const job of localGenerationJobs.values()) {
     if (!["running", "retrying"].includes(job.status) || !job.lockedUntil) continue;
+    if (!shouldRecoverStaleLockedRow(job, job.lockedUntil, job.updatedAt)) continue;
+    if (!shouldRecoverExpiredLocalGenerationJob(job)) continue;
     const recoveredStatus: GenerationJob["status"] = job.status === "running" ? "retrying" : job.status;
     const nextJob: GenerationJob = {
       ...job,
@@ -600,6 +681,65 @@ export async function recoverInterruptedGenerationJobs() {
   }
   if (recovered) await persistLocalStore();
   return recovered;
+}
+
+export async function refreshServerGenerationJobLease(
+  jobId: string,
+  workerId: string,
+  leaseMs: number,
+  request?: Request,
+) {
+  const lockedUntil = new Date(Date.now() + leaseMs).toISOString();
+  const now = new Date().toISOString();
+  const supabase = createSupabaseServiceClient();
+
+  if (supabase) {
+    const { data, error } = await supabase
+      .from("generation_jobs")
+      .select("payload")
+      .eq("id", jobId)
+      .eq("locked_by", workerId)
+      .in("status", ["running", "retrying"])
+      .maybeSingle();
+
+    assertSupabaseNoError("Read generation job before lease refresh", error);
+    if (!data?.payload) return undefined;
+
+    const refreshed: GenerationJob = {
+      ...(data.payload as GenerationJob),
+      lockedBy: workerId,
+      lockedUntil,
+      updatedAt: now,
+    };
+    localGenerationJobs.set(refreshed.id, refreshed);
+    upsertGenerationJob(refreshed);
+    await requireSupabaseWrite(
+      "Refresh generation job lease",
+      supabase
+        .from("generation_jobs")
+        .update({
+          locked_until: lockedUntil,
+          payload: refreshed,
+          updated_at: now,
+        })
+        .eq("id", jobId)
+        .eq("locked_by", workerId),
+    );
+    await persistLocalStore();
+    return publishSavedGenerationJob(refreshed);
+  }
+
+  await hydrateLocalStore();
+  const existing = await getServerGenerationJob(jobId, request);
+  if (!existing || existing.lockedBy !== workerId) return existing;
+  const refreshed = patchGenerationJob(jobId, {
+    lockedBy: workerId,
+    lockedUntil,
+  });
+  if (!refreshed) return existing;
+  localGenerationJobs.set(refreshed.id, refreshed);
+  await persistLocalStore();
+  return publishSavedGenerationJob(refreshed);
 }
 
 async function getActiveServerGenerationJob(
@@ -643,6 +783,7 @@ export async function claimServerGenerationJob(
   workerId: string,
   leaseMs: number,
   maxCourseChapterJobs = 2,
+  maxUserCourses = 3,
 ) {
   const supabase = createSupabaseServiceClient();
   if (supabase) {
@@ -651,6 +792,7 @@ export async function claimServerGenerationJob(
       worker_id: workerId,
       lease_ms: leaseMs,
       max_course_chapter_jobs: maxCourseChapterJobs,
+      max_user_courses: maxUserCourses,
     });
     assertSupabaseNoError("Claim generation job", error);
     const claimed = Array.isArray(data) ? data[0] : data;
@@ -968,6 +1110,66 @@ function jobStatusRank(status: GenerationJob["status"]) {
     failed: 4,
     succeeded: 5,
   }[status];
+}
+
+function sortRunnableGenerationJobs(jobs: GenerationJob[]) {
+  return [...jobs].sort((a, b) =>
+    generationJobQueuePriority(a) - generationJobQueuePriority(b) ||
+    Date.parse(a.createdAt) - Date.parse(b.createdAt),
+  );
+}
+
+function generationJobQueuePriority(job: GenerationJob) {
+  if (job.type === "course") return 0;
+  if (job.type === "chapter" && job.mode !== "review_draft") return 1;
+  if (job.type === "chapter" && job.mode === "review_draft") return 2;
+  return 3;
+}
+
+async function shouldRecoverExpiredGenerationJob(
+  job: GenerationJob,
+  supabase: NonNullable<ReturnType<typeof createSupabaseServiceClient>>,
+) {
+  if (job.type !== "chapter") return true;
+  return !(await hasPersistedChapterBody(job, supabase));
+}
+
+async function hasPersistedChapterBody(
+  job: GenerationJob,
+  supabase: NonNullable<ReturnType<typeof createSupabaseServiceClient>>,
+) {
+  if (!isUuid(job.chapterId)) return false;
+  const { data, error } = await supabase
+    .from("chapters")
+    .select("payload")
+    .eq("id", job.chapterId)
+    .maybeSingle();
+
+  assertSupabaseNoError("Read chapter before generation job recovery", error);
+  const chapter = data?.payload as { content?: unknown; sections?: unknown[] } | undefined;
+  return Boolean(chapter?.content || chapter?.sections?.length);
+}
+
+function shouldRecoverExpiredLocalGenerationJob(job: GenerationJob) {
+  if (job.type !== "chapter" || !job.chapterId) return true;
+  for (const course of localCourses.values()) {
+    const chapter = course.chapters.find((item) => item.id === job.chapterId);
+    if (chapter?.content || chapter?.sections?.length) return false;
+  }
+  return true;
+}
+
+function shouldRecoverStaleLockedRow(job: GenerationJob, lockedUntil?: string | null, updatedAt?: string | null) {
+  const lockedUntilMs = lockedUntil ? Date.parse(lockedUntil) : NaN;
+  if (Number.isFinite(lockedUntilMs) && lockedUntilMs <= Date.now()) return true;
+  const updatedAtMs = Date.parse(updatedAt ?? job.updatedAt);
+  return Number.isFinite(updatedAtMs) && Date.now() - updatedAtMs >= GENERATION_HEARTBEAT_STALE_MS;
+}
+
+function readPositiveInteger(value: string | undefined, fallback: number) {
+  if (value === undefined || value === "") return fallback;
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
 }
 
 function chooseQualityReport(existing: QualityReport | undefined, incoming: QualityReport) {

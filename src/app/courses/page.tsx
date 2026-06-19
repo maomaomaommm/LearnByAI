@@ -64,7 +64,14 @@ export default function CoursesPage() {
         throw new Error(data.error ?? "删除课程失败。");
       }
 
-      setCourses((current) => current.filter((course) => course.id !== target.id));
+      // Refresh from backend to ensure sync with admin/other sessions.
+      const listResponse = await apiFetch("/api/courses");
+      if (listResponse.ok) {
+        const data = (await listResponse.json()) as { courses?: Course[] };
+        setCourses(data.courses ?? []);
+      } else {
+        setCourses((current) => current.filter((course) => course.id !== target.id));
+      }
       setCourseToDelete(undefined);
     } catch (error) {
       setDeleteError(error instanceof Error ? error.message : "删除课程失败。");

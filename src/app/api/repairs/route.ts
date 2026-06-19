@@ -5,6 +5,7 @@ import { parseModelOverridesFromHeaders } from "@/lib/modelOverrides";
 import { resolveRepairAnchor } from "@/lib/repairAnchor";
 import { safeErrorMessage } from "@/lib/safeError";
 import { getServerCourse } from "@/lib/serverStore";
+import { resolveModelOverrides } from "@/lib/userModelConfig";
 import { Chapter } from "@/lib/types";
 
 export async function POST(request: Request) {
@@ -43,13 +44,16 @@ export async function POST(request: Request) {
       );
     }
 
+    const headerOverrides = parseModelOverridesFromHeaders(request.headers);
+    const overrides = await resolveModelOverrides(auth.userId, headerOverrides);
+
     const suggestion = await proposeContentRepair({
       course,
       chapterId,
       sectionId: resolvedAnchor.sectionId,
       selectedText: resolvedAnchor.text,
       userMessage,
-      overrides: parseModelOverridesFromHeaders(request.headers),
+      overrides,
     });
 
     return NextResponse.json({

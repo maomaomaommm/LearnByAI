@@ -7,7 +7,14 @@ import { formatMinutes, totalMinutes } from "@/lib/time";
 import { AgentEvent, Course, EntityStatus, ExportJob, GenerationJob, JobStatus } from "@/lib/types";
 import { MarkdownContent } from "@/components/MarkdownContent";
 import { ThemeToggle } from "@/components/ThemeToggle";
-import { Target, Lightbulb, GraduationCap, ArrowLeft, FileText, ChevronRight, Clock, Download } from "lucide-react";
+import { GenerationStudio } from "@/components/generation-studio/GenerationStudio";
+import {
+  estimateProgress,
+  flattenStudioEvents,
+  stageForEvent,
+} from "@/components/generation-studio/helpers";
+import { effectiveChapterStatus, hasChapterBody, isChapterReadable } from "@/lib/chapterReadiness";
+import { Target, Lightbulb, GraduationCap, ArrowLeft, FileText, ChevronRight, Clock, Download, Activity } from "lucide-react";
 import { apiFetch, subscribeToSse } from "@/lib/clientApi";
 import { publicSafeErrorMessage } from "@/lib/publicSafeError";
 
@@ -36,21 +43,8 @@ const QUALITY_STATUS_LABEL: Record<string, string> = {
   failed: "\u8d28\u68c0\u672a\u901a\u8fc7",
 };
 
-const ACTIVE_JOB_STATUSES = new Set<JobStatus>(["pending", "queued", "running", "retrying"]);
 const REGENERABLE_CHAPTER_STATUSES = new Set<EntityStatus>(["draft_ready", "quality_failed", "failed"]);
-
-function hasChapterBody(chapter: Course["chapters"][number]) {
-  return Boolean(chapter.content || chapter.sections?.length);
-}
-
-function effectiveChapterStatus(chapter: Course["chapters"][number]): EntityStatus {
-  if (hasChapterBody(chapter)) {
-    if (chapter.qualityReport?.status === "failed" || chapter.status === "quality_failed") return "quality_failed";
-    if (chapter.status === "ready" || chapter.qualityReport?.status === "passed" || chapter.qualityReport?.status === "warning") return "ready";
-    return "draft_ready";
-  }
-  return chapter.status ?? "pending";
-}
+const ACTIVE_JOB_STATUSES = new Set<JobStatus>(["pending", "queued", "running", "retrying"]);
 
 function chapterStatusLabel(chapter: Course["chapters"][number]) {
   if (hasChapterBody(chapter)) {
@@ -78,6 +72,15 @@ function shouldShowChapterJobStatus(chapter: Course["chapters"][number], current
   return !hasChapterBody(chapter) && currentJobStatus === "failed";
 }
 
+function chapterTone(chapter: Course["chapters"][number], currentJobStatus?: JobStatus) {
+  if (isActiveChapterJob(currentJobStatus)) return "border-primary/30 bg-primary/5 text-primary";
+  const status = effectiveChapterStatus(chapter);
+  if (status === "ready") return "border-emerald-500/30 bg-emerald-500/5 text-emerald-600 dark:text-emerald-400";
+  if (status === "quality_failed") return "border-amber-500/30 bg-amber-500/5 text-amber-600 dark:text-amber-400";
+  if (status === "failed") return "border-destructive/30 bg-destructive/5 text-destructive";
+  return "border-border bg-background text-muted-foreground";
+}
+
 export default function CourseOverviewPage() {
   const { id } = useParams<{ id: string }>();
   const [course, setCourse] = useState<Course>();
@@ -88,6 +91,9 @@ export default function CourseOverviewPage() {
   const [jobErrors, setJobErrors] = useState<Record<string, string>>({});
   const [jobEvents, setJobEvents] = useState<Record<string, AgentEvent[]>>({});
   const [loadError, setLoadError] = useState("");
+  const [studioSettled, setStudioSettled] = useState(false);
+  const [sawStudioActivity, setSawStudioActivity] = useState(false);
+  const [studioExpanded, setStudioExpanded] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -244,6 +250,31 @@ export default function CourseOverviewPage() {
     }
   }
 
+  const hasLoadedCourse = Boolean(course);
+  const coursePlanningStatus = course?.generationJobId ? jobStatus[course.generationJobId] : undefined;
+  const isCoursePlanning =
+    hasLoadedCourse && (
+    (course?.chapters.length ?? 0) === 0 ||
+    coursePlanningStatus === "pending" ||
+    coursePlanningStatus === "queued" ||
+    coursePlanningStatus === "retrying" ||
+    coursePlanningStatus === "running");
+  const hasActiveChapterJobs = course?.chapters.some((chapter) => {
+    if (!chapter.generationJobId) return false;
+    return ACTIVE_JOB_STATUSES.has(jobStatus[chapter.generationJobId] ?? "pending");
+  }) ?? false;
+  const readableChapters = course?.chapters.filter(isChapterReadable) ?? [];
+  const hasReadableChapters = readableChapters.length > 0;
+  const hasGenerationActivity = isCoursePlanning || hasActiveChapterJobs;
+  const showStudio = isCoursePlanning || (hasActiveChapterJobs && !hasReadableChapters) || (sawStudioActivity && !studioSettled && !hasReadableChapters && Boolean(course?.chapters.length));
+
+  useEffect(() => {
+    if (hasGenerationActivity) {
+      setSawStudioActivity(true);
+      setStudioSettled(false);
+    }
+  }, [hasGenerationActivity]);
+
   if (!course) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background text-muted-foreground">
@@ -251,15 +282,6 @@ export default function CourseOverviewPage() {
       </div>
     );
   }
-
-  const coursePlanningStatus = course.generationJobId ? jobStatus[course.generationJobId] : undefined;
-  const coursePlanningEvents = course.generationJobId ? (jobEvents[course.generationJobId] ?? []) : [];
-  const isCoursePlanning =
-    course.chapters.length === 0 ||
-    coursePlanningStatus === "pending" ||
-    coursePlanningStatus === "queued" ||
-    coursePlanningStatus === "retrying" ||
-    coursePlanningStatus === "running";
 
   return (
     <div className="min-h-screen bg-background">
@@ -307,50 +329,42 @@ export default function CourseOverviewPage() {
           {exportError && <p className="mt-4 text-sm text-destructive">{exportError}</p>}
         </div>
 
-        {isCoursePlanning ? (
-          <div className="rounded-lg border border-border bg-card p-8">
-            <div className="mb-3 font-mono text-xs uppercase tracking-widest text-muted-foreground">
-              任务状态: {(coursePlanningStatus ?? "pending").toUpperCase()}
-            </div>
-            <h2 className="font-mono text-lg font-semibold text-foreground">ARCHITECT 正在为您规划课程大纲</h2>
-            <p className="mt-3 max-w-2xl text-sm leading-relaxed text-muted-foreground">
-              Course Bible（课程全局设定）和各章节大纲正在后台生成中。生成完成后本页面将自动刷新。
-            </p>
-            {course.generationJobId && jobErrors[course.generationJobId] && (
-              <div className="mt-5 rounded-md border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
-                {jobErrors[course.generationJobId]}
-              </div>
-            )}
-            {coursePlanningEvents.length > 0 && (
-              <ol className="mt-5 space-y-2 rounded-md border border-border bg-background p-4 text-xs text-muted-foreground">
-                {coursePlanningEvents.slice(-6).map((event) => (
-                  <li key={event.id} className="flex flex-col gap-1 sm:flex-row sm:items-center sm:gap-3">
-                    <span className="font-mono uppercase text-foreground">{event.agent}</span>
-                    <span className="font-mono uppercase">{event.status}</span>
-                    <span className="min-w-0 flex-1">{event.message}</span>
-                    <time className="font-mono text-[10px] uppercase">
-                      {new Date(event.createdAt).toLocaleTimeString([], {
-                        hour: "2-digit",
-                        minute: "2-digit",
-                        second: "2-digit",
-                      })}
-                    </time>
-                  </li>
-                ))}
-              </ol>
-            )}
-            {course.generationJobId && coursePlanningStatus === "failed" && (
-              <button
-                type="button"
-                onClick={() => void retryCoursePlanning(course.generationJobId)}
-                disabled={backgroundJob === course.generationJobId}
-                className="mt-5 rounded-md border border-border bg-background px-4 py-2 text-xs font-medium text-muted-foreground hover:text-foreground disabled:opacity-50"
-              >
-                {backgroundJob === course.generationJobId ? "正在重试..." : "重新规划课程大纲"}
-              </button>
-            )}
-          </div>
+        {showStudio ? (
+          <GenerationStudio
+            course={course}
+            isCoursePlanning={isCoursePlanning}
+            jobStatus={jobStatus}
+            jobEvents={jobEvents}
+            jobErrors={jobErrors}
+            backgroundJob={backgroundJob}
+            onRetryCoursePlanning={(generationJobId) => void retryCoursePlanning(generationJobId)}
+            onRetryChapter={(chapterId, generationJobId) => void retryChapter(chapterId, generationJobId)}
+            onCompleteSettled={() => setStudioSettled(true)}
+          />
         ) : (
+        <>
+        {hasActiveChapterJobs && (
+          <MiniGenerationProgress
+            course={course}
+            isCoursePlanning={isCoursePlanning}
+            jobStatus={jobStatus}
+            jobEvents={jobEvents}
+            jobErrors={jobErrors}
+            expanded={studioExpanded}
+            onToggle={() => setStudioExpanded((current) => !current)}
+          >
+            <GenerationStudio
+              course={course}
+              isCoursePlanning={isCoursePlanning}
+              jobStatus={jobStatus}
+              jobEvents={jobEvents}
+              jobErrors={jobErrors}
+              backgroundJob={backgroundJob}
+              onRetryCoursePlanning={(generationJobId) => void retryCoursePlanning(generationJobId)}
+              onRetryChapter={(chapterId, generationJobId) => void retryChapter(chapterId, generationJobId)}
+            />
+          </MiniGenerationProgress>
+        )}
         <div className="grid gap-8 lg:grid-cols-[1fr_1fr]">
           {/* Left: Course Bible */}
           <div className="space-y-6">
@@ -399,14 +413,11 @@ export default function CourseOverviewPage() {
                   ? JOB_STATUS_LABEL[currentJobStatus]
                   : "";
                 const pendingKey = chapter.generationJobId ?? chapter.id;
-                return (
-                  <Link
-                    key={chapter.id}
-                    href={`/courses/${course.id}/chapters/${chapter.id}`}
-                    className="group block rounded-lg border border-border bg-card p-5 transition-all hover:-translate-y-1 hover:border-foreground/30 hover:shadow-md"
-                  >
+                const readable = isChapterReadable(chapter);
+                const content = (
+                  <>
                   <div className="mb-2 flex items-start justify-between gap-4">
-                    <h3 className="font-mono text-base font-semibold text-foreground group-hover:text-primary transition-colors">
+                    <h3 className={`font-mono text-base font-semibold text-foreground transition-colors ${readable ? "group-hover:text-primary" : ""}`}>
                       <span className="mr-2 text-muted-foreground">{String(index + 1).padStart(2, '0')}.</span>
                       {chapter.title}
                     </h3>
@@ -415,7 +426,7 @@ export default function CourseOverviewPage() {
                         {"\u4efb\u52a1\uff1a"}{currentJobStatusLabel}
                       </span>
                     )}
-                    <span className="shrink-0 rounded-full bg-background px-2.5 py-1 text-[10px] font-medium text-muted-foreground border border-border">
+                    <span className={`shrink-0 rounded-full border px-2.5 py-1 text-[10px] font-medium ${chapterTone(chapter, currentJobStatus)}`}>
                       {chapterStatusLabel(chapter)}
                     </span>
                   </div>
@@ -434,8 +445,8 @@ export default function CourseOverviewPage() {
                         {formatMinutes(totalMinutes(chapter.time))}
                       </span>
                     </div>
-                    <span className="flex items-center gap-1 font-medium text-foreground opacity-0 transition-opacity group-hover:opacity-100">
-                      开始阅读 <ChevronRight size={14} />
+                    <span className={`flex items-center gap-1 font-medium transition-opacity ${readable ? "text-foreground opacity-0 group-hover:opacity-100" : "text-muted-foreground/60"}`}>
+                      {readable ? "开始阅读" : "暂不可读"} <ChevronRight size={14} />
                     </span>
                   </div>
                   {canRegenerateChapter(chapter, currentJobStatus) && (
@@ -452,12 +463,29 @@ export default function CourseOverviewPage() {
                       {backgroundJob === pendingKey ? "正在重试" : "重新生成"}
                     </button>
                   )}
-                </Link>
+                  </>
+                );
+                return readable ? (
+                  <Link
+                    key={chapter.id}
+                    href={`/courses/${course.id}/chapters/${chapter.id}`}
+                    className="group block rounded-lg border border-border bg-card p-5 transition-all hover:-translate-y-1 hover:border-foreground/30 hover:shadow-md"
+                  >
+                    {content}
+                  </Link>
+                ) : (
+                  <div
+                    key={chapter.id}
+                    className="block rounded-lg border border-border bg-card/80 p-5 opacity-90"
+                  >
+                    {content}
+                  </div>
                 );
               })}
             </div>
           </div>
         </div>
+        </>
         )}
       </div>
     </div>
@@ -465,6 +493,65 @@ export default function CourseOverviewPage() {
 }
 
 import { ElementType } from "react";
+function MiniGenerationProgress({
+  course,
+  isCoursePlanning,
+  jobStatus,
+  jobEvents,
+  jobErrors,
+  expanded,
+  onToggle,
+  children,
+}: {
+  course: Course;
+  isCoursePlanning: boolean;
+  jobStatus: Record<string, JobStatus>;
+  jobEvents: Record<string, AgentEvent[]>;
+  jobErrors: Record<string, string>;
+  expanded: boolean;
+  onToggle: () => void;
+  children: React.ReactNode;
+}) {
+  const studioEvents = flattenStudioEvents(course, jobEvents, jobStatus, jobErrors);
+  const latestEvent = studioEvents.at(-1);
+  const stage = stageForEvent(latestEvent);
+  const activeCount = course.chapters.filter((chapter) => {
+    if (!chapter.generationJobId) return false;
+    return ACTIVE_JOB_STATUSES.has(jobStatus[chapter.generationJobId] ?? "pending");
+  }).length;
+  const progress = estimateProgress(course, jobStatus, isCoursePlanning, false);
+
+  return (
+    <section className="mb-8 rounded-lg border border-border bg-card">
+      <div className="flex flex-col gap-4 p-4 md:flex-row md:items-center md:justify-between">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2 text-sm font-medium text-foreground">
+            <Activity size={16} className="text-primary" />
+            <span>{activeCount} 个章节正在后台生成</span>
+            <span className="rounded-full border border-border bg-background px-2 py-0.5 font-mono text-[10px] text-muted-foreground">
+              {stage.agent} · {stage.title}
+            </span>
+          </div>
+          <p className="mt-1 line-clamp-1 text-xs text-muted-foreground">
+            最近：{latestEvent?.chapterTitle ? `「${latestEvent.chapterTitle}」` : ""}{latestEvent?.message ?? "后台正在同步生成进度。"}
+          </p>
+          <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-muted">
+            <div className="h-full rounded-full bg-foreground transition-all" style={{ width: `${progress}%` }} />
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={onToggle}
+          className="shrink-0 rounded-md border border-border bg-background px-3 py-2 text-xs font-medium text-muted-foreground hover:text-foreground"
+        >
+          {expanded ? "收起生成现场" : "查看生成现场"}
+        </button>
+      </div>
+      {expanded && <div className="border-t border-border p-4">{children}</div>}
+    </section>
+  );
+}
+
 function BibleSection({ icon: Icon, title, content }: { icon: ElementType; title: string; content: string }) {
   return (
     <div className="rounded-lg border border-border bg-card p-5">

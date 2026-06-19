@@ -4,6 +4,7 @@ import { createGenerationJob, upsertGenerationJob } from "./jobs";
 import { AdminAppSettings, getAdminAppSettings, saveAdminAppSettings } from "./adminSettings";
 import { MODEL_AGENT_NAMES, ModelOverrides, normalizeModelOverrides } from "./modelOverrides";
 import { createSupabaseServiceClient } from "./supabase/server";
+import { deleteServerCourseByAdmin } from "./serverStore";
 import { Chapter, ChapterLength, Course, ExportJob, GenerationJob, QualityReport, UsageEvent } from "./types";
 
 export const ACTIVE_ADMIN_JOB_STATUSES: GenerationJob["status"][] = ["pending", "queued", "running", "retrying"];
@@ -134,6 +135,8 @@ type ListOptions = {
   query?: string;
   userId?: string;
   status?: string;
+  courseId?: string;
+  latest?: boolean;
   type?: string;
   action?: string;
   page?: number;
@@ -453,30 +456,42 @@ export async function listAdminQualityReports(options: ListOptions = {}): Promis
     }
   }
 
-  return paginate(
-    (data ?? []).map((row) => {
-      const report = row.payload as QualityReport;
-      const course = courseByTarget.get(row.target_id);
-      const chapterMatch = chapterByTarget.get(row.target_id);
-      return {
-        id: row.id,
-        userId: row.user_id,
-        userEmail: usersById.get(row.user_id)?.email,
-        courseId: course?.id ?? chapterMatch?.course.id,
-        courseTopic: course?.topic ?? chapterMatch?.course.topic,
-        chapterId: chapterMatch?.chapter.id,
-        chapterTitle: chapterMatch?.chapter.title,
-        targetType: row.target_type as QualityReport["targetType"],
-        targetId: row.target_id,
-        score: row.score,
-        status: row.status as QualityReport["status"],
-        issueCount: report.issues?.length ?? 0,
-        createdAt: row.created_at,
-        report,
-      };
-    }),
-    options,
-  );
+  const mapped: AdminQualityRow[] = (data ?? []).map((row) => {
+    const report = row.payload as QualityReport;
+    const course = courseByTarget.get(row.target_id);
+    const chapterMatch = chapterByTarget.get(row.target_id);
+    return {
+      id: row.id,
+      userId: row.user_id,
+      userEmail: usersById.get(row.user_id)?.email,
+      courseId: course?.id ?? chapterMatch?.course.id,
+      courseTopic: course?.topic ?? chapterMatch?.course.topic,
+      chapterId: chapterMatch?.chapter.id,
+      chapterTitle: chapterMatch?.chapter.title,
+      targetType: row.target_type as QualityReport["targetType"],
+      targetId: row.target_id,
+      score: row.score,
+      status: row.status as QualityReport["status"],
+      issueCount: report.issues?.length ?? 0,
+      createdAt: row.created_at,
+      report,
+    };
+  });
+
+  let filtered = options.courseId ? mapped.filter((row) => row.courseId === options.courseId) : mapped;
+
+  if (options.latest) {
+    const latestByTarget = new Map<string, AdminQualityRow>();
+    for (const row of filtered) {
+      const existing = latestByTarget.get(row.targetId);
+      if (!existing || new Date(row.createdAt) > new Date(existing.createdAt)) {
+        latestByTarget.set(row.targetId, row);
+      }
+    }
+    filtered = Array.from(latestByTarget.values());
+  }
+
+  return paginate(filtered, options);
 }
 
 export async function listAdminExports(options: ListOptions = {}): Promise<AdminExportRow[]> {
@@ -658,18 +673,7 @@ export async function resetAdminUserPassword(userId: string, password: string, c
 export async function deleteAdminCourse(courseId: string, context: AdminActionContext) {
   await cancelActiveAdminJobs({ courseId }, context, false);
   const course = await readAdminCoursePayload(courseId);
-  const targetIds = [
-    course.id,
-    ...course.chapters.flatMap((chapter) => [chapter.id, ...(chapter.sections ?? []).map((section) => section.id)]),
-  ];
-  const supabase = requireAdminSupabaseClient();
-  const qualityIds = targetIds.filter(isUuid);
-  if (qualityIds.length) {
-    const { error } = await supabase.from("quality_reports").delete().in("target_id", qualityIds);
-    assertAdminNoError("删除课程质检报告", error);
-  }
-  const { error } = await supabase.from("courses").delete().eq("id", courseId);
-  assertAdminNoError("删除课程", error);
+  await deleteServerCourseByAdmin(courseId);
   await recordAdminAudit(context, "delete_course", "course", courseId, `删除课程：${course.topic}`);
   return { ok: true };
 }
@@ -1169,10 +1173,6 @@ function paginate<T>(rows: T[], options: ListOptions) {
   const pageSize = Math.min(Math.max(options.pageSize ?? 100, 1), 500);
   const page = Math.max(options.page ?? 1, 1);
   return rows.slice((page - 1) * pageSize, page * pageSize);
-}
-
-function isUuid(value?: string) {
-  return Boolean(value?.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i));
 }
 
 function assertAdminNoError(label: string, error: { message?: string; code?: string } | null | undefined) {

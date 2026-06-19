@@ -6,6 +6,7 @@ import { createGenerationJob } from "@/lib/jobs";
 import { parseModelOverridesFromHeaders } from "@/lib/modelOverrides";
 import { publicGenerationJob } from "@/lib/publicGenerationJob";
 import { getActiveServerGenerationJobForChapter, getServerCourse, getServerGenerationJob, saveServerGenerationJob, updateServerChapter } from "@/lib/serverStore";
+import { resolveModelOverrides } from "@/lib/userModelConfig";
 import { Chapter } from "@/lib/types";
 
 export async function POST(
@@ -29,7 +30,8 @@ export async function POST(
   }
 
   const userId = auth.userId;
-  const overrides = parseModelOverridesFromHeaders(request.headers);
+  const headerOverrides = parseModelOverridesFromHeaders(request.headers);
+  const overrides = await resolveModelOverrides(userId, headerOverrides);
 
   if (chapter.generationJobId) {
     const existingJob = await getServerGenerationJob(chapter.generationJobId, request);
@@ -134,7 +136,7 @@ function scheduleChapterGeneration(request: Request, jobId: string) {
   void runChapterGenerationJob({
     jobId,
     request: runnerRequest,
-  }).catch((error) => {
+  }).catch((error: unknown) => {
     console.error("Background chapter generation failed", error);
   });
 }

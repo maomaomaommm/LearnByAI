@@ -2,15 +2,17 @@
 
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { FormEvent, MouseEvent, useCallback, useEffect, useRef, useState } from "react";
+import { FormEvent, MouseEvent, useCallback, useEffect, useState } from "react";
 import { MarkdownContent } from "@/components/MarkdownContent";
 import { apiFetch, subscribeToSse } from "@/lib/clientApi";
 import { publicSafeErrorMessage } from "@/lib/publicSafeError";
 import { formatMinutes, totalMinutes } from "@/lib/time";
-import { Annotation, Chapter, ChapterGenerateResponse, Course, EntityStatus, Section } from "@/lib/types";
+import { Annotation, AgentEvent, Chapter, ChapterGenerateResponse, Course, EntityStatus, GenerationJob, Section } from "@/lib/types";
+import { effectiveChapterStatus, hasChapterBody, isChapterAwaitingQuality, isChapterReadable } from "@/lib/chapterReadiness";
+import { stageForEvent } from "@/components/generation-studio/helpers";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { ModelSettings } from "@/components/ModelSettings";
-import { ArrowLeft, ChevronLeft, ChevronRight, Menu, X, Clock, MessageSquareQuote, Bot, Download, Send } from "lucide-react";
+import { ArrowLeft, ChevronLeft, ChevronRight, Menu, X, Clock, MessageSquareQuote, Bot, Download } from "lucide-react";
 
 const quickQuestions = [
   "\u89e3\u91ca\u5f97\u66f4\u7b80\u5355",
@@ -24,22 +26,6 @@ const FORMAT_GUARD_REVIEW = "\u5df2\u901a\u8fc7\u683c\u5f0f\u4fee\u590d\uff0c\u5
 const QUALITY_FAILED_REVIEW = "\u5df2\u751f\u6210\u8349\u7a3f\uff0c\u4f46\u8d28\u91cf\u68c0\u67e5\u672a\u901a\u8fc7\uff0c\u4e0b\u9762\u4ecd\u5c55\u793a\u5df2\u751f\u6210\u5185\u5bb9\u3002";
 const TUTOR_REQUEST_TIMEOUT_MS = 70_000;
 const REPAIR_REQUEST_TIMEOUT_MS = 70_000;
-
-const CHAPTER_STATUS_LABEL: Record<EntityStatus, string> = {
-  pending: "\u5f85\u751f\u6210",
-  queued: "\u961f\u5217\u4e2d",
-  generating: "\u751f\u6210\u4e2d",
-  draft_ready: "\u5f85\u8d28\u68c0\u8349\u7a3f",
-  quality_failed: "\u8d28\u68c0\u672a\u901a\u8fc7",
-  ready: "\u8d28\u68c0\u901a\u8fc7",
-  failed: "\u751f\u6210\u5931\u8d25",
-};
-
-const QUALITY_STATUS_LABEL: Record<string, string> = {
-  passed: "\u8d28\u68c0\u901a\u8fc7",
-  warning: "\u8d28\u68c0\u901a\u8fc7",
-  failed: "\u8d28\u68c0\u672a\u901a\u8fc7",
-};
 
 type RepairSuggestion = {
   id: string;
@@ -57,9 +43,21 @@ type RepairSuggestion = {
   createdAt: string;
 };
 
-function hasChapterBody(chapter: Chapter) {
-  return Boolean(chapter.content || chapter.sections?.length);
-}
+const CHAPTER_STATUS_LABEL: Record<EntityStatus, string> = {
+  pending: "\u5f85\u751f\u6210",
+  queued: "\u961f\u5217\u4e2d",
+  generating: "\u751f\u6210\u4e2d",
+  draft_ready: "\u5f85\u8d28\u68c0\u8349\u7a3f",
+  quality_failed: "\u8d28\u68c0\u672a\u901a\u8fc7",
+  ready: "\u8d28\u68c0\u901a\u8fc7",
+  failed: "\u751f\u6210\u5931\u8d25",
+};
+
+const QUALITY_STATUS_LABEL: Record<string, string> = {
+  passed: "\u8d28\u68c0\u901a\u8fc7",
+  warning: "\u8d28\u68c0\u901a\u8fc7",
+  failed: "\u8d28\u68c0\u672a\u901a\u8fc7",
+};
 
 function getChapterBody(chapter: Chapter) {
   return chapter.content ?? chapter.sections?.map((section) => section.content).join("\n\n") ?? "";
@@ -67,15 +65,6 @@ function getChapterBody(chapter: Chapter) {
 
 function isWaitingForBackgroundGeneration(chapter: Chapter) {
   return Boolean(chapter.generationJobId);
-}
-
-function effectiveChapterStatus(chapter: Chapter): EntityStatus {
-  if (hasChapterBody(chapter)) {
-    if (chapter.qualityReport?.status === "failed" || chapter.status === "quality_failed") return "quality_failed";
-    if (chapter.status === "ready" || chapter.qualityReport?.status === "passed" || chapter.qualityReport?.status === "warning") return "ready";
-    return "draft_ready";
-  }
-  return chapter.status ?? "pending";
 }
 
 function reviewFallbackForChapter(chapter?: Chapter) {
@@ -115,11 +104,24 @@ function localizeReviewText(value?: string, chapter?: Chapter) {
     );
 }
 
+function closestSectionId(node: Node | null) {
+  if (!node) return undefined;
+  const element = node instanceof Element ? node : node.parentElement;
+  return element?.closest<HTMLElement>("[data-section-id]")?.dataset.sectionId;
+}
+
 function chapterStatusLabel(chapter: Chapter) {
   if (hasChapterBody(chapter) && chapter.qualityReport?.status) {
     return QUALITY_STATUS_LABEL[chapter.qualityReport.status] ?? CHAPTER_STATUS_LABEL[effectiveChapterStatus(chapter)];
   }
   return CHAPTER_STATUS_LABEL[effectiveChapterStatus(chapter)];
+}
+
+function awaitingQualityMessage(event?: AgentEvent) {
+  const stage = stageForEvent(event);
+  if (stage.agent === "FORMAT") return "本章草稿已生成，正在整理 Markdown、公式与标题格式...";
+  if (stage.agent === "REPAIRER") return "本章草稿已生成，正在自动返修质检发现的问题...";
+  return "本章草稿已生成，正在由 REVIEWER 进行质量检查...";
 }
 
 export default function ReaderPage() {
@@ -130,35 +132,31 @@ export default function ReaderPage() {
   const [sections, setSections] = useState<Section[]>([]);
   const [review, setReview] = useState("");
   const [selectedText, setSelectedText] = useState("");
-  const [selectedSectionId, setSelectedSectionId] = useState<string | undefined>();
+  const [selectedSectionId, setSelectedSectionId] = useState<string>();
   const [annotations, setAnnotations] = useState<Annotation[]>([]);
   const [active, setActive] = useState<Annotation>();
   const [repair, setRepair] = useState<RepairSuggestion>();
   const [repairing, setRepairing] = useState(false);
   const [repairError, setRepairError] = useState("");
+  const [jobEvents, setJobEvents] = useState<Record<string, AgentEvent[]>>({});
   const [loading, setLoading] = useState(true);
   const [answering, setAnswering] = useState(false);
-  const [question, setQuestion] = useState("");
   const [generationError, setGenerationError] = useState("");
-  const tutorScrollRef = useRef<HTMLDivElement>(null);
 
   const [tocOpen, setTocOpen] = useState(true);
   const [tutorOpen, setTutorOpen] = useState(true);
-
-  useEffect(() => {
-    const container = tutorScrollRef.current;
-    if (!container) return;
-    container.scrollTo({ top: container.scrollHeight, behavior: "smooth" });
-  }, [active, answering, repair, repairing, repairError]);
 
   const chapter = course?.chapters.find((item) => item.id === chapterId);
   const currentIndex = course?.chapters.findIndex((c) => c.id === chapterId) ?? -1;
   const prevChapter = currentIndex > 0 && course ? course.chapters[currentIndex - 1] : null;
   const nextChapter = currentIndex < (course?.chapters.length ?? 0) - 1 && course ? course.chapters[currentIndex + 1] : null;
-  const canPrint = Boolean(chapter && !loading && hasChapterBody(chapter));
-  const chapterHasBody = Boolean(chapter && hasChapterBody(chapter));
+  const canPrint = Boolean(chapter && !loading && isChapterReadable(chapter));
+  const chapterReadable = Boolean(chapter && isChapterReadable(chapter));
+  const chapterAwaitingQuality = Boolean(chapter && isChapterAwaitingQuality(chapter));
   const chapterGenerationJobId = chapter?.generationJobId;
   const chapterStatus = chapter?.status;
+  const latestChapterEvent = chapterGenerationJobId ? jobEvents[chapterGenerationJobId]?.at(-1) : undefined;
+  const waitMessage = chapterAwaitingQuality ? awaitingQualityMessage(latestChapterEvent) : "";
 
   const applyCourseUpdate = useCallback((nextCourse: Course) => {
     setCourse(nextCourse);
@@ -170,12 +168,21 @@ export default function ReaderPage() {
       return;
     }
 
-    if (hasChapterBody(current)) {
+    if (isChapterReadable(current)) {
       setGenerationError(effectiveChapterStatus(current) === "quality_failed" ? "\u672c\u7ae0\u8d28\u91cf\u68c0\u67e5\u672a\u901a\u8fc7\uff0c\u4e0b\u9762\u4ecd\u5c55\u793a\u5df2\u751f\u6210\u8349\u7a3f\u3002" : "");
       setContent(getChapterBody(current));
       setSections(current.sections ?? []);
       setReview(localizeReviewText(current.review, current));
       setLoading(false);
+      return;
+    }
+
+    if (isChapterAwaitingQuality(current)) {
+      setGenerationError("");
+      setContent("");
+      setSections([]);
+      setReview(awaitingQualityMessage());
+      setLoading(true);
       return;
     }
 
@@ -200,7 +207,7 @@ export default function ReaderPage() {
       return;
     }
 
-    if (hasChapterBody(current)) {
+    if (isChapterReadable(current) || isChapterAwaitingQuality(current)) {
       applyCourseUpdate(stored);
       return;
     }
@@ -308,19 +315,34 @@ export default function ReaderPage() {
   useEffect(() => {
     let cancelled = false;
 
+    const applyJobs = (jobs: GenerationJob[]) => {
+      if (cancelled || jobs.length === 0) return;
+      setJobEvents((current) => ({
+        ...current,
+        ...Object.fromEntries(jobs.map((job) => [job.id, job.events ?? []])),
+      }));
+    };
+
     const subscription = subscribeToSse(`/api/courses/${id}/events`, {
       onMessage(message) {
         if (cancelled) return;
 
         if (message.event === "snapshot") {
-          const snapshot = message.data as { course?: Course } | undefined;
+          const snapshot = message.data as { course?: Course; jobs?: GenerationJob[] } | undefined;
           if (snapshot?.course) applyCourseUpdate(snapshot.course);
+          if (snapshot?.jobs) applyJobs(snapshot.jobs);
           return;
         }
 
         if (message.event === "course") {
           const payload = message.data as { course?: Course } | undefined;
           if (payload?.course) applyCourseUpdate(payload.course);
+          return;
+        }
+
+        if (message.event === "job") {
+          const payload = message.data as { job?: GenerationJob } | undefined;
+          if (payload?.job) applyJobs([payload.job]);
         }
       },
     });
@@ -332,7 +354,8 @@ export default function ReaderPage() {
   }, [applyCourseUpdate, id]);
 
   useEffect(() => {
-    if (!chapter || chapterHasBody) return;
+    if (!chapter) return;
+    if (chapterReadable) return;
     if (!chapterGenerationJobId && chapterStatus !== "queued" && chapterStatus !== "generating" && chapterStatus !== "draft_ready") return;
 
     let cancelled = false;
@@ -350,7 +373,7 @@ export default function ReaderPage() {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [applyCourseUpdate, chapter, chapterGenerationJobId, chapterHasBody, chapterStatus, id]);
+  }, [applyCourseUpdate, chapter, chapterGenerationJobId, chapterReadable, chapterStatus, id]);
 
   const handleTextSelect = useCallback((text: string, sectionId?: string) => {
     if (text.length > 2) {
@@ -378,8 +401,7 @@ export default function ReaderPage() {
     const selection = window.getSelection();
     const text = selection?.toString().trim() ?? "";
     if (text.length > 2 && event.currentTarget.contains(selection?.anchorNode ?? null)) {
-      const sectionId = closestSectionId(selection?.anchorNode);
-      handleTextSelect(text, sectionId);
+      handleTextSelect(text, closestSectionId(selection?.anchorNode ?? null));
     }
   }
 
@@ -395,55 +417,57 @@ export default function ReaderPage() {
   async function ask(question: string) {
     if (!course || (!selectedText && !active) || !question.trim()) return;
     setAnswering(true);
-    const baseAnnotation: Annotation =
-      active
-        ? { ...active, messages: [...active.messages] }
-        : ({
-            id: crypto.randomUUID(),
-            courseId: course.id,
-            chapterId,
-            sectionId: selectedSectionId,
-            selectedText,
-            question,
-            messages: [],
-            createdAt: new Date().toISOString(),
-          } satisfies Annotation);
-    const userMessage = { id: crypto.randomUUID(), role: "user" as const, content: question };
-    const pendingAnnotation = {
-      ...baseAnnotation,
-      question: baseAnnotation.question || question,
-      messages: [...baseAnnotation.messages, userMessage],
-    };
+    const annotation: Annotation =
+      active ??
+      ({
+        id: crypto.randomUUID(),
+        courseId: course.id,
+        chapterId,
+        sectionId: selectedSectionId,
+        selectedText,
+        question,
+        messages: [],
+        createdAt: new Date().toISOString(),
+      } satisfies Annotation);
 
-    setActive(pendingAnnotation);
+    annotation.messages.push({ id: crypto.randomUUID(), role: "user", content: question });
+    setActive({ ...annotation });
 
-    let answer: string;
+    // Show a pending assistant message immediately for streaming
+    const pendingMessageId = crypto.randomUUID();
+    const pendingMessage = { id: pendingMessageId, role: "assistant" as const, content: "" };
+    annotation.messages.push(pendingMessage);
+    setActive({ ...annotation });
+
     let savedAnnotation: Annotation | undefined;
     const controller = new AbortController();
     const timeout = window.setTimeout(() => controller.abort(), TUTOR_REQUEST_TIMEOUT_MS);
     try {
-      const response = await apiFetch("/api/annotations", {
-        method: "POST",
+      savedAnnotation = await askTutorStreaming({
+        topic: course.topic,
+        selectedText: annotation.selectedText,
+        question,
+        history: annotation.messages.filter((m) => m.id !== pendingMessageId),
+        sectionId: annotation.sectionId,
+        annotation,
         signal: controller.signal,
-        body: JSON.stringify({
-          topic: course.topic,
-          selectedText: pendingAnnotation.selectedText,
-          question,
-          history: pendingAnnotation.messages,
-          sectionId: pendingAnnotation.sectionId,
-          annotation: pendingAnnotation,
-        }),
+        onToken: (chunk) => {
+          annotation.messages = annotation.messages.map((m) =>
+            m.id === pendingMessageId ? { ...m, content: m.content + chunk } : m,
+          );
+          setActive({ ...annotation });
+        },
       });
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.error ?? "Tutor request failed.");
-      }
-      answer = data.answer;
-      savedAnnotation = data.annotation;
     } catch (error) {
-      answer = controller.signal.aborted
+      const message = controller.signal.aborted
         ? "导师回答超时，请稍后重试。"
         : publicSafeErrorMessage(error, "导师暂时无法回答，请稍后重试。");
+      annotation.messages = annotation.messages.map((m) =>
+        m.id === pendingMessageId
+          ? { ...m, content: message }
+          : m,
+      );
+      setActive({ ...annotation });
     } finally {
       window.clearTimeout(timeout);
       setAnswering(false);
@@ -451,24 +475,27 @@ export default function ReaderPage() {
 
     if (savedAnnotation) {
       setAnnotations((current) => upsertAnnotation(current, savedAnnotation));
-    } else {
-      pendingAnnotation.messages = [
-        ...pendingAnnotation.messages,
-        { id: crypto.randomUUID(), role: "assistant", content: answer },
-      ];
     }
-    setActive(savedAnnotation ?? pendingAnnotation);
+    setActive({ ...(savedAnnotation ?? annotation) });
+  }
+
+  function submitQuestion(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const input = form.elements.namedItem("question") as HTMLInputElement;
+    void ask(input.value);
+    input.value = "";
   }
 
   async function requestRepair(userMessage: string) {
-    if (!course || (!selectedText && !active)) return;
+    const targetText = (active?.selectedText ?? selectedText).trim();
+    if (!course || !chapter || !targetText || !userMessage.trim()) return;
+
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), REPAIR_REQUEST_TIMEOUT_MS);
     setRepairing(true);
     setRepairError("");
     setRepair(undefined);
-    const targetText = active?.selectedText ?? selectedText;
-    const sectionId = active?.sectionId ?? selectedSectionId;
-    const controller = new AbortController();
-    const timeout = window.setTimeout(() => controller.abort(), REPAIR_REQUEST_TIMEOUT_MS);
 
     try {
       const response = await apiFetch("/api/repairs", {
@@ -476,14 +503,15 @@ export default function ReaderPage() {
         signal: controller.signal,
         body: JSON.stringify({
           courseId: course.id,
-          chapterId,
-          sectionId,
+          chapterId: chapter.id,
+          sectionId: active?.sectionId ?? selectedSectionId,
           selectedText: targetText,
           userMessage,
         }),
       });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error ?? "Repair suggestion failed.");
+      const data = await response.json().catch(() => null) as { repair?: RepairSuggestion; error?: string } | null;
+      if (!response.ok) throw new Error(data?.error ?? `Repair request failed (${response.status}).`);
+      if (!data?.repair) throw new Error("Repair suggestion is empty.");
       setRepair(data.repair);
     } catch (error) {
       setRepairError(
@@ -498,10 +526,10 @@ export default function ReaderPage() {
   }
 
   async function applyRepair() {
-    if (!repair) return;
+    if (!repair || repair.status === "applied") return;
+
     setRepairing(true);
     setRepairError("");
-
     try {
       const response = await apiFetch("/api/repairs/apply", {
         method: "POST",
@@ -513,25 +541,18 @@ export default function ReaderPage() {
           afterText: repair.afterText,
         }),
       });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error ?? "Apply repair failed.");
-      if (data.course) applyCourseUpdate(data.course as Course);
+      const data = await response.json().catch(() => null) as { course?: Course; error?: string } | null;
+      if (!response.ok) throw new Error(data?.error ?? `Apply repair failed (${response.status}).`);
+      if (data?.course) applyCourseUpdate(data.course);
       setRepair({ ...repair, status: "applied" });
       setSelectedText(repair.afterText);
-      setRepairError("");
+      setSelectedSectionId(repair.sectionId);
+      setActive(undefined);
     } catch (error) {
-      setRepairError(publicSafeErrorMessage(error, "Apply repair failed."));
+      setRepairError(publicSafeErrorMessage(error, "应用修复失败，请稍后重试。"));
     } finally {
       setRepairing(false);
     }
-  }
-
-  function submitQuestion(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const submittedQuestion = question.trim();
-    if (!submittedQuestion || answering) return;
-    setQuestion("");
-    void ask(submittedQuestion);
   }
 
   if (!course || !chapter) {
@@ -561,12 +582,16 @@ export default function ReaderPage() {
             </div>
             {course.chapters.map((ch, idx) => {
               const isActive = ch.id === chapterId;
+              const readable = isChapterReadable(ch);
               return (
                 <button
                   key={ch.id}
-                  onClick={() => router.push(`/courses/${id}/chapters/${ch.id}`)}
+                  onClick={() => {
+                    if (readable || isActive) router.push(`/courses/${id}/chapters/${ch.id}`);
+                  }}
+                  disabled={!readable && !isActive}
                   className={`w-full px-4 py-3 text-left transition-colors ${
-                    isActive ? "border-l-2 border-foreground bg-foreground/5" : "border-l-2 border-transparent hover:bg-muted/30"
+                    isActive ? "border-l-2 border-foreground bg-foreground/5" : readable ? "border-l-2 border-transparent hover:bg-muted/30" : "cursor-not-allowed border-l-2 border-transparent opacity-55"
                   }`}
                 >
                   <div className="flex items-start gap-2">
@@ -658,7 +683,7 @@ export default function ReaderPage() {
           <div className="mb-12 border-l-2 border-foreground bg-muted/20 p-6">
             <h1 className="mb-4 text-3xl font-bold tracking-tight text-foreground md:text-4xl">{chapter.title}</h1>
             <div className="flex flex-wrap items-center gap-4 font-mono text-xs text-muted-foreground">
-              <span>{loading ? "\u751f\u6210\u4e2d..." : `\u2713 ${review}`}</span>
+              <span>{loading ? (waitMessage || "生成中...") : `\u2713 ${review}`}</span>
             </div>
             <div className="mt-4 text-sm text-muted-foreground leading-relaxed border-t border-border/50 pt-4">
               <p>承接：{chapter.connectionFromPrevious ?? "这是课程起点。"}</p>
@@ -675,8 +700,17 @@ export default function ReaderPage() {
           {loading ? (
             <div className="rounded-lg border border-dashed border-border py-24 text-center">
               <Clock size={32} className="mx-auto mb-4 animate-pulse text-muted-foreground/50" />
-              <p className="font-mono text-sm text-muted-foreground">AI {"\u6b63\u5728\u7f16\u5199\u672c\u7ae0..."}</p>
-              <p className="mt-2 text-xs text-muted-foreground/60">AI {"\u6b63\u5728\u6839\u636e\u8bfe\u7a0b\u5168\u5c40\u8bbe\u5b9a\u7f16\u5199\u672c\u7ae0"}</p>
+              <p className="font-mono text-sm text-muted-foreground">
+                {waitMessage || "AI 正在编写本章..."}
+              </p>
+              <p className="mt-2 text-xs text-muted-foreground/60">
+                {chapterAwaitingQuality ? "质检结束后，本章会自动开放阅读。" : "AI 正在根据课程全局设定编写本章。"}
+              </p>
+              {latestChapterEvent?.message && (
+                <p className="mx-auto mt-4 max-w-lg text-xs leading-relaxed text-muted-foreground">
+                  最近事件：{latestChapterEvent.message}
+                </p>
+              )}
             </div>
           ) : generationError && !hasChapterBody(chapter) ? (
             <div className="rounded-lg border border-destructive/30 bg-destructive/5 py-12 text-center text-destructive">
@@ -713,7 +747,13 @@ export default function ReaderPage() {
           {/* Chapter Nav */}
           <div className="mt-16 flex flex-col gap-4 border-t border-border pt-8 sm:flex-row sm:items-center sm:justify-between print:hidden">
             {prevChapter ? (
-              <button onClick={() => router.push(`/courses/${id}/chapters/${prevChapter.id}`)} className="flex flex-1 items-center gap-3 rounded-lg border border-border bg-card p-4 text-left transition-colors hover:border-foreground/30 hover:bg-muted/20">
+              <button
+                onClick={() => {
+                  if (isChapterReadable(prevChapter)) router.push(`/courses/${id}/chapters/${prevChapter.id}`);
+                }}
+                disabled={!isChapterReadable(prevChapter)}
+                className="flex flex-1 items-center gap-3 rounded-lg border border-border bg-card p-4 text-left transition-colors hover:border-foreground/30 hover:bg-muted/20 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:border-border disabled:hover:bg-card"
+              >
                 <ChevronLeft size={20} className="text-muted-foreground" />
                 <div>
                   <div className="font-mono text-[10px] text-muted-foreground uppercase tracking-wider">上一章</div>
@@ -723,7 +763,13 @@ export default function ReaderPage() {
             ) : <div className="flex-1" />}
             
             {nextChapter ? (
-              <button onClick={() => router.push(`/courses/${id}/chapters/${nextChapter.id}`)} className="flex flex-1 items-center justify-end gap-3 rounded-lg border border-border bg-card p-4 text-right transition-colors hover:border-foreground/30 hover:bg-muted/20">
+              <button
+                onClick={() => {
+                  if (isChapterReadable(nextChapter)) router.push(`/courses/${id}/chapters/${nextChapter.id}`);
+                }}
+                disabled={!isChapterReadable(nextChapter)}
+                className="flex flex-1 items-center justify-end gap-3 rounded-lg border border-border bg-card p-4 text-right transition-colors hover:border-foreground/30 hover:bg-muted/20 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:border-border disabled:hover:bg-card"
+              >
                 <div>
                   <div className="font-mono text-[10px] text-muted-foreground uppercase tracking-wider">下一章</div>
                   <div className="text-sm font-medium text-foreground">{nextChapter.title}</div>
@@ -747,7 +793,7 @@ export default function ReaderPage() {
           </button>
         </div>
 
-        <div ref={tutorScrollRef} className="flex-1 overflow-y-auto p-4 scrollbar-thin scrollbar-thumb-border scrollbar-track-transparent">
+        <div className="flex-1 overflow-y-auto p-4 scrollbar-thin scrollbar-thumb-border scrollbar-track-transparent">
           {selectedText || active ? (
             <div className="space-y-6">
               <div className="border-l-2 border-primary pl-3">
@@ -773,62 +819,41 @@ export default function ReaderPage() {
                     <span className="font-mono text-[10px] animate-pulse">{"\u5904\u7406\u4e2d..."}</span>
                   </div>
                 )}
-                {repair && (
-                  <div className="rounded-md border border-primary/30 bg-background p-3">
-                    <div className="mb-2 flex items-center justify-between gap-2">
-                      <span className="font-mono text-[10px] uppercase tracking-wider text-primary">
-                        REPAIR · {repair.confidence}
-                      </span>
-                      <span className="font-mono text-[10px] text-muted-foreground">
-                        {repair.status === "applied" ? "已应用" : "待确认"}
-                      </span>
-                    </div>
-                    <p className="mb-3 text-xs leading-relaxed text-muted-foreground">{repair.diagnosis}</p>
-                    <div className="space-y-2">
-                      <div>
-                        <p className="mb-1 font-mono text-[10px] text-muted-foreground">原文</p>
-                        <div className="max-h-28 overflow-y-auto rounded border border-border bg-muted/30 p-2 text-xs leading-relaxed text-muted-foreground">
-                          <MarkdownContent content={repair.beforeText} />
-                        </div>
-                      </div>
-                      <div>
-                        <p className="mb-1 font-mono text-[10px] text-muted-foreground">修复后</p>
-                        <div className="max-h-36 overflow-y-auto rounded border border-primary/20 bg-primary/5 p-2 text-xs leading-relaxed text-foreground">
-                          <MarkdownContent content={repair.afterText} />
-                        </div>
-                      </div>
-                    </div>
-                    <div className="mt-3 flex gap-2">
-                      <button
-                        type="button"
-                        onClick={() => void applyRepair()}
-                        disabled={repairing || repair.status === "applied"}
-                        className="rounded border border-primary/40 bg-primary/10 px-2 py-1 font-mono text-[10px] text-primary hover:bg-primary/15 disabled:opacity-50"
-                      >
-                        应用修改
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setRepair(undefined)}
-                        disabled={repairing}
-                        className="rounded border border-border bg-background px-2 py-1 font-mono text-[10px] text-muted-foreground hover:text-foreground disabled:opacity-50"
-                      >
-                        取消
-                      </button>
-                    </div>
-                  </div>
-                )}
-                {repairing && (
-                  <div className="flex items-center gap-2 text-primary">
-                    <span className="font-mono text-[10px] animate-pulse">{"\u4fee\u590d\u5efa\u8bae\u5904\u7406\u4e2d..."}</span>
-                  </div>
-                )}
-                {repairError && (
-                  <div className="rounded border border-destructive/30 bg-destructive/5 p-2 text-xs text-destructive">
-                    {repairError}
-                  </div>
-                )}
               </div>
+
+              {(repair || repairError) && (
+                <div className="space-y-3 border border-border bg-background/70 p-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="font-mono text-[10px] text-primary uppercase tracking-wider">REPAIR_SUGGESTION</span>
+                    {repair?.status === "applied" && (
+                      <span className="font-mono text-[10px] text-muted-foreground">APPLIED</span>
+                    )}
+                  </div>
+                  {repairError && (
+                    <p className="text-xs leading-relaxed text-destructive">{repairError}</p>
+                  )}
+                  {repair && (
+                    <>
+                      <div>
+                        <p className="mb-1 font-mono text-[10px] text-muted-foreground">DIAGNOSIS</p>
+                        <p className="text-xs leading-relaxed text-muted-foreground">{repair.diagnosis}</p>
+                      </div>
+                      <div>
+                        <p className="mb-1 font-mono text-[10px] text-muted-foreground">PATCH_PREVIEW</p>
+                        <pre className="max-h-48 overflow-y-auto whitespace-pre-wrap border border-border bg-muted/40 p-2 text-xs leading-relaxed text-foreground">{repair.afterText}</pre>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={applyRepair}
+                        disabled={repairing || repair.status === "applied"}
+                        className="w-full border border-primary/50 bg-primary/10 px-3 py-2 font-mono text-[11px] text-primary transition-colors hover:bg-primary/15 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {repair.status === "applied" ? "已应用修复" : repairing ? "应用中..." : "应用修复"}
+                      </button>
+                    </>
+                  )}
+                </div>
+              )}
             </div>
           ) : (
             <div className="flex h-full flex-col items-center justify-center text-center text-muted-foreground">
@@ -842,6 +867,24 @@ export default function ReaderPage() {
 
         {(selectedText || active) && (
           <div className="border-t border-border bg-card p-4">
+            <div className="mb-3 grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => requestRepair("请检查这段内容是否有公式、Markdown 或概念错误，先给出修复建议。")}
+                disabled={repairing}
+                className="border border-border bg-background px-2 py-1.5 font-mono text-[10px] text-muted-foreground transition-colors hover:border-primary hover:text-primary disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {repairing ? "检查中..." : "检查/建议"}
+              </button>
+              <button
+                type="button"
+                onClick={() => requestRepair("请修复这段内容中的格式、公式或明显表述问题，只做最小必要修改。")}
+                disabled={repairing}
+                className="border border-border bg-background px-2 py-1.5 font-mono text-[10px] text-muted-foreground transition-colors hover:border-primary hover:text-primary disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {repairing ? "修复中..." : "最小修复"}
+              </button>
+            </div>
             <div className="mb-3 flex flex-wrap gap-2">
               {quickQuestions.map((q) => (
                 <button
@@ -853,45 +896,16 @@ export default function ReaderPage() {
                   {q}
                 </button>
               ))}
-              <button
-                type="button"
-                onClick={() => void requestRepair("请检查这段内容是否有公式、Markdown 或概念错误，先给出修复建议。")}
-                disabled={repairing}
-                className="rounded border border-border bg-background px-2 py-1 font-mono text-[10px] text-muted-foreground hover:border-primary hover:text-primary disabled:opacity-50 transition-colors"
-              >
-                {repairing ? "检查中..." : "检查问题"}
-              </button>
-              <button
-                type="button"
-                onClick={() => void requestRepair("请修复这段内容中的格式、公式或明显表述问题，只做最小必要修改。")}
-                disabled={repairing}
-                className="rounded border border-primary/40 bg-primary/10 px-2 py-1 font-mono text-[10px] text-primary hover:bg-primary/15 disabled:opacity-50 transition-colors"
-              >
-                {repairing ? "修复中..." : "修复这段"}
-              </button>
             </div>
-            <form onSubmit={submitQuestion} className="flex items-stretch gap-2">
-              <div className="relative flex-1">
-                <span className="absolute left-3 font-mono text-[12px] text-primary">{">"}</span>
-                <input
-                  name="question"
-                  placeholder="\u8f93\u5165\u95ee\u9898..."
-                  autoComplete="off"
-                  disabled={answering}
-                  value={question}
-                  onChange={(event) => setQuestion(event.target.value)}
-                  className="h-full w-full bg-background border border-border py-2 pl-7 pr-3 font-mono text-[12px] text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none disabled:opacity-50"
-                />
-              </div>
-              <button
-                type="submit"
-                disabled={answering || !question.trim()}
-                className="inline-flex min-w-16 items-center justify-center gap-1.5 rounded border border-primary/50 bg-primary/10 px-3 font-mono text-[11px] text-primary hover:bg-primary/20 disabled:cursor-not-allowed disabled:opacity-40 transition-colors"
-                aria-label={answering ? "正在发送问题" : "发送问题"}
-              >
-                <Send size={13} />
-                {answering ? "回答中" : "发送"}
-              </button>
+            <form onSubmit={submitQuestion} className="relative flex items-center">
+              <span className="absolute left-3 font-mono text-[12px] text-primary">{">"}</span>
+              <input
+                name="question"
+                placeholder="\u8f93\u5165\u95ee\u9898..."
+                autoComplete="off"
+                disabled={answering}
+                className="w-full bg-background border border-border py-2 pl-7 pr-3 font-mono text-[12px] text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none disabled:opacity-50"
+              />
             </form>
           </div>
         )}
@@ -912,7 +926,80 @@ function upsertAnnotation(annotations: Annotation[], annotation: Annotation) {
   return annotations.map((item) => (item.id === annotation.id ? annotation : item));
 }
 
-function closestSectionId(node: Node | null | undefined) {
-  const element = node instanceof Element ? node : node?.parentElement;
-  return element?.closest<HTMLElement>("[data-section-id]")?.dataset.sectionId;
+async function askTutorStreaming(input: {
+  topic: string;
+  selectedText: string;
+  question: string;
+  history: { role: string; content: string }[];
+  sectionId?: string;
+  annotation: Annotation;
+  signal?: AbortSignal;
+  onToken: (chunk: string) => void;
+}): Promise<Annotation | undefined> {
+  const response = await apiFetch("/api/annotations", {
+    method: "POST",
+    signal: input.signal,
+    body: JSON.stringify({
+      topic: input.topic,
+      selectedText: input.selectedText,
+      question: input.question,
+      history: input.history,
+      sectionId: input.sectionId,
+      annotation: input.annotation,
+      stream: true,
+    }),
+  });
+
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => null);
+    throw new Error(errorData?.error ?? `Tutor request failed (${response.status}).`);
+  }
+
+  const reader = response.body?.getReader();
+  if (!reader) throw new Error("Streaming not supported.");
+
+  const decoder = new TextDecoder("utf-8");
+  let buffer = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+
+    // Split by double newline (SSE message boundary)
+    const parts = buffer.split("\n\n");
+    buffer = parts.pop() ?? "";
+
+    for (const part of parts) {
+      const lines = part.split("\n");
+      let eventType = "message";
+      let data = "";
+
+      for (const line of lines) {
+        if (line.startsWith("event: ")) {
+          eventType = line.slice(7).trim();
+        } else if (line.startsWith("data: ")) {
+          data = line.slice(6);
+        }
+      }
+
+      if (!data) continue;
+
+      try {
+        const parsed = JSON.parse(data);
+        if (eventType === "token") {
+          input.onToken(parsed.text ?? "");
+        } else if (eventType === "done") {
+          return parsed.annotation ?? undefined;
+        } else if (eventType === "error") {
+          throw new Error(parsed.error ?? "Tutor request failed.");
+        }
+      } catch (error) {
+        if (error instanceof SyntaxError) continue;
+        throw error;
+      }
+    }
+  }
+
+  return undefined;
 }

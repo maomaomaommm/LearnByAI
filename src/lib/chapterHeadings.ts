@@ -6,7 +6,7 @@ export function expectedChapterHeading(course: Course, chapter: Chapter) {
   const index = course.chapters.findIndex((item) => item.id === chapter.id);
   const title = stripChapterOrdinal(chapter.title);
   if (index < 0) return title;
-  return `${chapterOrdinalLabel(index)} ${title}`.trim();
+  return `${chapterOrdinalLabel(index)}：${title}`.trim();
 }
 
 export function chapterOrdinalLabel(index: number) {

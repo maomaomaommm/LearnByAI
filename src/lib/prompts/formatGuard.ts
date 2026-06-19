@@ -1,4 +1,5 @@
 import { normalizeMath } from "@/lib/markdownMath";
+import { sanitizeMathDelimiters } from "@/lib/sanitizeMath";
 
 export function preRepairMarkdown(content: string) {
   return repairMarkdownFences(normalizeMath(content))
@@ -10,7 +11,7 @@ export function preRepairMarkdown(content: string) {
 }
 
 export function postRepairMarkdown(content: string) {
-  return preRepairMarkdown(stripOuterFence(content));
+  return sanitizeMathDelimiters(preRepairMarkdown(stripOuterFence(content)));
 }
 
 export function buildFormatGuardPrompt(content: string) {
@@ -38,6 +39,8 @@ $$
 - 代码必须放在 fenced code block 中，并尽量保留语言名。
 - 删除空代码块和多余的连续 fence，例如正文末尾的单独 \`\`\` 或 \`\`\`\n\`\`\`。
 - 不要把中文正文放进 $$...$$。
+- 若发现 $$ 或 $ 包裹的是中文正文 / 习题标题 / 说明文字，删除这对美元符号，把它还原成普通文本。
+- \\text、\\mathrm、\\operatorname 等文本命令的花括号内如含下划线，必须转义为 \\_（如 \\text{\\_\\_end\\_\\_}），禁止出现裸下划线。
 - 不要生成“以下是修复后的内容”之类的前后缀。
 
 待修复正文：

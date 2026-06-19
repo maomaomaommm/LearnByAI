@@ -63,6 +63,7 @@ export default function CreateCoursePage() {
       preference: String(values.preference),
       weeklyHours: Number(values.weeklyHours),
       chapterLength: String(values.chapterLength || "medium"),
+      generationProfile: String(values.generationProfile || "fast"),
     };
 
     try {
@@ -184,6 +185,31 @@ export default function CreateCoursePage() {
                             name="chapterLength"
                             value={value}
                             defaultChecked={value === "medium"}
+                            className="mr-2"
+                          />
+                          <span className="font-medium text-foreground">{label}</span>
+                          <span className="mt-1 block text-xs text-muted-foreground">{description}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="rounded-lg border border-border bg-card p-5 md:col-span-2">
+                    <div className="mb-3 flex items-center gap-2">
+                      <Zap size={16} className="text-foreground" />
+                      <h2 className="text-sm font-semibold text-foreground">生成模式</h2>
+                    </div>
+                    <div className="grid gap-2 sm:grid-cols-3">
+                      {[
+                        ["fast", "快速", "先出可读草稿，后台质检"],
+                        ["standard", "标准", "草稿优先，质检更积极"],
+                        ["deep", "深度", "完整质检后再完成"],
+                      ].map(([value, label, description]) => (
+                        <label key={value} className="rounded-md border border-border bg-background p-3 text-sm">
+                          <input
+                            type="radio"
+                            name="generationProfile"
+                            value={value}
+                            defaultChecked={value === "fast"}
                             className="mr-2"
                           />
                           <span className="font-medium text-foreground">{label}</span>

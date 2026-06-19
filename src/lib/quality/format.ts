@@ -21,6 +21,17 @@ export function validateFormat(content: string): QualityIssue[] {
     });
   }
 
+  // Detect stray $ mid-paragraph surrounded by CJK content
+  // e.g. "状态转移函数 $...给出。策略 $，五元组"
+  if (/[一-鿿　-〿＀-￯]\s*\$[一-鿿　-〿＀-￯]/u.test(content)) {
+    issues.push({
+      check: "format.stray_math_dollar",
+      severity: "error",
+      message: "发现段落中间混入的孤美元符号。",
+      suggestion: "将孤 $ 转义为 \\$，或将数学公式放入正确的 $...$ 或 $$...$$ 块。",
+    });
+  }
+
   if ((content.match(/```/gu)?.length ?? 0) % 2 !== 0) {
     issues.push({
       check: "format.code_fence",

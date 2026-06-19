@@ -1,10 +1,9 @@
 import "server-only";
 
-import { headers } from "next/headers";
 import { chatCompletionsUrl } from "./aiEndpoint";
 import { getAgentConfig, getBaseAIConfig } from "./config";
-import { getAdminAppSettings, mergeModelOverrides } from "./adminSettings";
-import { ModelOverrides, parseModelOverridesFromHeaders } from "./modelOverrides";
+import { extractJsonObjectText, repairInvalidJsonEscapes } from "./jsonRepair";
+import { ModelOverrides } from "./modelOverrides";
 import { safeErrorMessage } from "./safeError";
 import { AgentName } from "./types";
 
@@ -25,11 +24,16 @@ export async function generateText(
     stream?: boolean;
     responseFormat?: "json_object";
     overrides?: ModelOverrides;
+    onChunk?: (chunk: string) => void;
   },
 ) {
-  const overrides = await getEffectiveModelOverrides(options?.overrides);
+  if (process.env.AI_MOCK_MODE === "true") {
+    throw new Error("AI_MOCK_MODE enabled; provider calls are disabled");
+  }
+
+  const overrides = options?.overrides;
   const config = options?.agent ? getAgentConfig(options.agent, overrides) : getBaseAIConfig(overrides);
-  if (!config.apiKey) throw new Error("AI_API_KEY is not configured");
+  if (!config.apiKey) throw new Error("模型 API Key 未配置，请先在「模型设置」中填写并保存。");
 
   const maxAttempts = normalizeMaxAttempts(options?.maxAttempts);
   let lastError = "";
@@ -62,9 +66,9 @@ export async function generateText(
 
       if (response.ok) {
         if (response.headers.get("content-type")?.includes("text/event-stream")) {
-          let fullText = "";
+          let completion: CompletionExtraction = emptyCompletionExtraction();
           try {
-            fullText = await readStreamingCompletion(response, controller.signal);
+            completion = await readStreamingCompletion(response, controller.signal, options?.onChunk);
           } catch (error) {
             lastError = safeErrorMessage(error, `${config.model} stream interrupted`);
             const fallbackText = await requestNonStreamingCompletion(prompt, options, config, requestTimeoutMs).catch((fallbackError) => {
@@ -78,8 +82,8 @@ export async function generateText(
             }
             throw new Error(lastError);
           }
-          if (!fullText) {
-            lastError = `${config.model} returned an empty stream response`;
+          if (!completion.text) {
+            lastError = emptyCompletionError(config.model, "stream", completion);
             const fallbackText = await requestNonStreamingCompletion(prompt, options, config, requestTimeoutMs).catch((error) => {
               lastError = safeErrorMessage(error, lastError);
               return "";
@@ -91,20 +95,36 @@ export async function generateText(
             }
             throw new Error(lastError);
           }
-          return fullText;
+          if (completion.finishReason === "length") {
+            lastError = `${config.model} response truncated by token limit (finish_reason=length)`;
+            if (canRetry) {
+              await waitForRetry(attempt);
+              continue;
+            }
+            throw new Error(lastError);
+          }
+          return completion.text;
         }
 
         const data = await response.json();
-        const text = extractCompletionText(data);
-        if (!text) {
-          lastError = `${config.model} returned an empty response`;
+        const completion = extractCompletion(data);
+        if (!completion.text) {
+          lastError = emptyCompletionError(config.model, "response", completion);
           if (canRetry) {
             await waitForRetry(attempt);
             continue;
           }
           throw new Error(lastError);
         }
-        return text as string;
+        if (completion.finishReason === "length") {
+          lastError = `${config.model} response truncated by token limit (finish_reason=length)`;
+          if (canRetry) {
+            await waitForRetry(attempt);
+            continue;
+          }
+          throw new Error(lastError);
+        }
+        return completion.text;
       }
 
       const body = await response.text();
@@ -179,9 +199,9 @@ async function requestNonStreamingCompletion(
     }
 
     const data = await response.json();
-    const text = extractCompletionText(data);
-    if (!text) throw new Error(`${config.model} returned an empty non-stream response`);
-    return text;
+    const completion = extractCompletion(data);
+    if (!completion.text) throw new Error(emptyCompletionError(config.model, "non-stream", completion));
+    return completion.text;
   } catch (error) {
     if (isAbortError(error)) {
       throw new Error(`request timed out after ${timeoutMs}ms`);
@@ -198,14 +218,22 @@ function completionBody(
   config: AIConfig,
   stream: boolean,
 ) {
+  const responseFormat = options?.responseFormat === "json_object" ? "json_object" : undefined;
+  const messages: { role: "system" | "user"; content: string }[] = [{ role: "user", content: prompt }];
+  if (responseFormat) {
+    messages.unshift({
+      role: "system",
+      content: "You are a JSON-only API. Return exactly one valid JSON object. Do not include markdown fences, explanations, or any text outside the JSON.",
+    });
+  }
   return {
     model: config.model,
-    messages: [{ role: "user", content: prompt }],
-    temperature: compatibleTemperature(config.model, options?.temperature ?? config.temperature),
+    messages,
+    temperature: compatibleTemperature(config.model, options?.temperature ?? config.temperature, config.thinking),
     max_tokens: options?.maxTokens ?? config.maxTokens,
     stream,
-    ...(options?.responseFormat === "json_object" ? { response_format: { type: "json_object" } } : {}),
-    ...thinkingPayload(config.thinking),
+    ...(responseFormat ? { response_format: { type: responseFormat } } : {}),
+    ...thinkingPayload(config.model, config.thinking),
   };
 }
 
@@ -213,8 +241,13 @@ function isResponseFormatUnsupported(status: number, body: string) {
   return [400, 422].includes(status) && /response_format|json_object|json\s*mode|unsupported|unknown/i.test(body);
 }
 
-function compatibleTemperature(model: string, temperature: number) {
-  if (model.trim().toLowerCase() === "kimi-k2.6-full") return 1;
+function compatibleTemperature(
+  model: string,
+  temperature: number,
+  thinking: "disabled" | "enabled" | "auto",
+) {
+  if (isKimiK27CodeModel(model)) return 1;
+  if (isKimiThinkingModel(model) && thinking !== "auto") return 0.6;
   return temperature;
 }
 
@@ -233,18 +266,35 @@ function normalizeMaxAttempts(value: number | undefined) {
   return Math.max(1, Math.min(5, Math.floor(value)));
 }
 
-async function readStreamingCompletion(response: Response, signal: AbortSignal) {
-  let fullText = "";
+type CompletionExtraction = {
+  text: string;
+  reasoningLength: number;
+  finishReason?: string;
+};
+
+function emptyCompletionExtraction(): CompletionExtraction {
+  return { text: "", reasoningLength: 0 };
+}
+
+async function readStreamingCompletion(response: Response, signal: AbortSignal, onChunk?: (chunk: string) => void) {
+  const completion = emptyCompletionExtraction();
   const reader = response.body?.getReader();
   const decoder = new TextDecoder("utf-8");
   let buffer = "";
   const consumeLine = (line: string) => {
     const trimmed = line.trim();
-    if (!trimmed.startsWith("data: ") || trimmed === "data: [DONE]") return;
+    if (!trimmed.startsWith("data:")) return;
+    const data = trimmed.slice(5).trim();
+    if (data === "[DONE]") return;
     try {
-      const parsed = JSON.parse(trimmed.slice(6));
-      const content = extractCompletionText(parsed);
-      if (content) fullText += content;
+      const parsed = JSON.parse(data);
+      const extracted = extractCompletion(parsed);
+      if (extracted.text) {
+        completion.text += extracted.text;
+        onChunk?.(extracted.text);
+      }
+      completion.reasoningLength += extracted.reasoningLength;
+      if (extracted.finishReason) completion.finishReason = extracted.finishReason;
     } catch {
       // Ignore malformed provider keepalive chunks.
     }
@@ -273,7 +323,7 @@ async function readStreamingCompletion(response: Response, signal: AbortSignal) 
     if (buffer.trim()) consumeLine(buffer);
   }
 
-  return fullText;
+  return completion;
 }
 
 function throwIfAborted(signal: AbortSignal) {
@@ -297,37 +347,54 @@ function errorText(error: unknown): string {
   return `${error.name} ${error.message} ${cause instanceof Error ? `${cause.name} ${cause.message}` : String(cause ?? "")}`;
 }
 
-function extractCompletionText(data: unknown) {
+function extractCompletion(data: unknown): CompletionExtraction {
   const choice = (data as { choices?: Array<Record<string, unknown>> })?.choices?.[0];
-  if (!choice) return "";
-  const delta = choice.delta as { content?: unknown } | undefined;
-  const message = choice.message as { content?: unknown } | undefined;
+  if (!choice) return emptyCompletionExtraction();
+  const delta = choice.delta as { content?: unknown; reasoning_content?: unknown } | undefined;
+  const message = choice.message as { content?: unknown; reasoning_content?: unknown } | undefined;
   const text = choice.text;
-  if (typeof delta?.content === "string") return delta.content;
-  if (typeof message?.content === "string") return message.content;
-  if (typeof text === "string") return text;
-  return "";
+  const content = typeof delta?.content === "string"
+    ? delta.content
+    : typeof message?.content === "string"
+      ? message.content
+      : typeof text === "string"
+        ? text
+        : "";
+  const reasoning = typeof delta?.reasoning_content === "string"
+    ? delta.reasoning_content
+    : typeof message?.reasoning_content === "string"
+      ? message.reasoning_content
+      : "";
+  const finishReason = typeof choice.finish_reason === "string" ? choice.finish_reason : undefined;
+  return {
+    text: content,
+    reasoningLength: reasoning.length,
+    finishReason,
+  };
 }
 
-async function getRequestModelOverrides() {
-  try {
-    return parseModelOverridesFromHeaders(await headers());
-  } catch {
-    return undefined;
+function emptyCompletionError(model: string, kind: "stream" | "response" | "non-stream", completion: CompletionExtraction) {
+  let message = `${model} returned an empty ${kind} response`;
+  if (completion.reasoningLength > 0) {
+    message += "; provider returned reasoning_content but no content, so thinking mode likely consumed the output tokens. Set thinking to disabled for Kimi thinking models.";
   }
-}
-
-async function getEffectiveModelOverrides(explicitOverrides: ModelOverrides | undefined) {
-  const requestOverrides = explicitOverrides ?? await getRequestModelOverrides();
-  const settings = await getAdminAppSettings();
-  return mergeModelOverrides(requestOverrides, settings.modelOverrides);
-}
-
-function thinkingPayload(thinking: "disabled" | "enabled" | "auto") {
-  if (thinking === "enabled") {
-    return { thinking: { type: thinking } };
+  if (completion.finishReason) {
+    message += ` finish_reason=${completion.finishReason}.`;
   }
-  return {};
+  return message;
+}
+
+function thinkingPayload(model: string, thinking: "disabled" | "enabled" | "auto") {
+  if (thinking !== "enabled") return {};
+  return { thinking: { type: "enabled" } };
+}
+
+function isKimiK27CodeModel(model: string) {
+  return /^kimi-k2\.7-code$/i.test(model.trim().toLowerCase());
+}
+
+function isKimiThinkingModel(model: string) {
+  return /^kimi-k/i.test(model.trim().toLowerCase());
 }
 
 function logModelRequest(input: {
@@ -364,9 +431,49 @@ function publicEndpoint(endpoint: string) {
   }
 }
 
+
+function escapeControlCharsInJsonStrings(text: string): string {
+  let result = "";
+  let inString = false;
+  let escaped = false;
+  for (let i = 0; i < text.length; i += 1) {
+    const char = text[i] ?? "";
+    if (escaped) {
+      result += char;
+      escaped = false;
+      continue;
+    }
+    if (char === "\\") {
+      result += char;
+      escaped = true;
+      continue;
+    }
+    if (char === '"') {
+      inString = !inString;
+      result += char;
+      continue;
+    }
+    if (inString) {
+      if (char === "\n") {
+        result += "\\n";
+      } else if (char === "\r") {
+        result += "\\r";
+      } else if (char === "\t") {
+        result += "\\t";
+      } else {
+        result += char;
+      }
+    } else {
+      result += char;
+    }
+  }
+  return result;
+}
+
 export function parseJson<T>(text: string): T {
-  const fenced = text.match(/```json\s*([\s\S]*?)```/i);
-  const object = text.match(/\{[\s\S]*\}/);
-  const cleaned = fenced?.[1] ?? object?.[0] ?? text;
+  const extracted = extractJsonObjectText(text);
+  const repaired = repairInvalidJsonEscapes(extracted);
+  const cleaned = escapeControlCharsInJsonStrings(repaired)
+    .replace(/[\u200B-\u200D\uFEFF\u2060\u00AD]/gu, "");
   return JSON.parse(cleaned) as T;
 }

@@ -10,6 +10,8 @@ export type QualityStatus = "passed" | "warning" | "failed";
 
 export type ChapterLength = "short" | "medium" | "long";
 
+export type GenerationProfile = "fast" | "standard" | "deep";
+
 export type Chapter = {
   id: string;
   title: string;
@@ -86,6 +88,7 @@ export type Course = {
   preference: string;
   weeklyHours: number;
   chapterLength?: ChapterLength;
+  generationProfile?: GenerationProfile;
   profile: string;
   courseBible: CourseBible;
   chapters: Chapter[];

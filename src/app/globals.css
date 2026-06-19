@@ -113,6 +113,22 @@
   background: #0d1117 !important;
 }
 
+/* Code-block safety net: keep the dark <pre> the ONLY background.
+   Highlighted token spans and inline-looking descendants stay transparent. */
+.prose pre,
+.prose pre * {
+  background: transparent !important;
+}
+
+.prose pre {
+  background: #0d1117 !important;
+}
+
+.prose pre code {
+  color: #c9d1d9;
+  padding: 0 !important;
+}
+
 .prose code {
   /* Using Tailwind mono utility instead of hardcoded family */
 }

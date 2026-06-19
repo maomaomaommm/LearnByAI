@@ -1,14 +1,15 @@
 import "server-only";
 
-import { getGenerationJob, upsertGenerationJob } from "./jobs";
+import { appendJobEvent, getGenerationJob } from "./jobs";
 import { runChapterGenerationJob, runCourseGenerationJob } from "./generationRunner";
 import { MODEL_CONFIG_HEADER } from "./modelOverrides";
-import { claimServerGenerationJob, getServerGenerationJobForWorker, listRunnableGenerationJobs, recoverInterruptedGenerationJobs, releaseServerGenerationJob } from "./serverStore";
+import { claimServerGenerationJob, getServerGenerationJobForWorker, listRunnableGenerationJobs, recoverInterruptedGenerationJobs, refreshServerGenerationJobLease, releaseServerGenerationJob, saveServerGenerationJob } from "./serverStore";
 import { GenerationJob } from "./types";
 import { getAdminAppSettings } from "./adminSettings";
 
 const DEFAULT_LEASE_MS = readPositiveInteger(process.env.GENERATION_WORKER_LEASE_MS, 30 * 60 * 1000);
 const DEFAULT_COURSE_CHAPTER_CONCURRENCY = readPositiveInteger(process.env.GENERATION_COURSE_CHAPTER_CONCURRENCY, 2);
+const DEFAULT_USER_COURSE_CONCURRENCY = readPositiveInteger(process.env.GENERATION_USER_COURSE_CONCURRENCY, 3);
 
 export async function runGenerationWorker(input: {
   jobId?: string;
@@ -20,6 +21,7 @@ export async function runGenerationWorker(input: {
   const settings = await getAdminAppSettings();
   const workerLimit = input.limit ?? settings.worker?.globalLimit ?? 10;
   const courseChapterConcurrency = settings.worker?.courseChapterConcurrency ?? DEFAULT_COURSE_CHAPTER_CONCURRENCY;
+  const userCourseConcurrency = settings.worker?.userCourseConcurrency ?? DEFAULT_USER_COURSE_CONCURRENCY;
   const recovered = input.recover ? await recoverInterruptedGenerationJobs() : 0;
 
   if (input.recover && !input.jobId) {
@@ -32,7 +34,7 @@ export async function runGenerationWorker(input: {
   }
 
   if (input.jobId) {
-    const result = await runGenerationWorkerJob(input.jobId, input.request, undefined, workerId, courseChapterConcurrency);
+    const result = await runGenerationWorkerJob(input.jobId, input.request, undefined, workerId, courseChapterConcurrency, userCourseConcurrency);
     return {
       scanned: result.job ? 1 : 0,
       processed: result.processed ? 1 : 0,
@@ -45,7 +47,7 @@ export async function runGenerationWorker(input: {
   const results = [];
 
   for (const job of jobs) {
-    results.push(await runGenerationWorkerJob(job.id, input.request, job, workerId, courseChapterConcurrency));
+    results.push(await runGenerationWorkerJob(job.id, input.request, job, workerId, courseChapterConcurrency, userCourseConcurrency));
   }
 
   return {
@@ -62,18 +64,29 @@ async function runGenerationWorkerJob(
   knownJob?: GenerationJob,
   workerId = `worker-${crypto.randomUUID()}`,
   courseChapterConcurrency = DEFAULT_COURSE_CHAPTER_CONCURRENCY,
+  userCourseConcurrency = DEFAULT_USER_COURSE_CONCURRENCY,
 ) {
   const persistedJob = knownJob ?? await getServerGenerationJobForWorker(jobId);
-  const job = getGenerationJob(jobId) ?? (persistedJob ? upsertGenerationJob(persistedJob) : undefined);
+  const job = persistedJob ?? getGenerationJob(jobId);
   if (!job) return { job, processed: false } as const;
 
   const shouldRetry = job.status === "retrying";
-  const claimed = await claimServerGenerationJob(job.id, workerId, DEFAULT_LEASE_MS, courseChapterConcurrency);
+  const claimed = await claimServerGenerationJob(job.id, workerId, DEFAULT_LEASE_MS, courseChapterConcurrency, userCourseConcurrency);
   if (!claimed) {
     return { job, processed: false } as const;
   }
 
   const claimedRequest = requestForJob(request, claimed);
+  const claimedEventJob = appendJobEvent(claimed.id, {
+    agent: claimed.activeAgent ?? "ASSISTANT",
+    status: "running",
+    message: `${claimed.activeAgent ?? "ASSISTANT"} claimed by worker and started.`,
+  }, { preserveJobStatus: true });
+  if (claimedEventJob) {
+    await saveServerGenerationJob(claimedEventJob, claimedRequest);
+    await refreshServerGenerationJobLease(claimed.id, workerId, DEFAULT_LEASE_MS, claimedRequest);
+  }
+  const stopHeartbeat = startLeaseHeartbeat(claimed.id, workerId, claimedRequest, DEFAULT_LEASE_MS);
 
   try {
     if (claimed.type === "course") {
@@ -107,7 +120,20 @@ async function runGenerationWorkerJob(
   } catch (error) {
     await releaseServerGenerationJob(claimed.id, workerId, claimedRequest);
     throw error;
+  } finally {
+    stopHeartbeat();
   }
+}
+
+function startLeaseHeartbeat(jobId: string, workerId: string, request: Request, leaseMs: number) {
+  const intervalMs = Math.max(10_000, Math.min(60_000, Math.floor(leaseMs / 3)));
+  const timer = setInterval(() => {
+    void refreshServerGenerationJobLease(jobId, workerId, leaseMs, request).catch((error) => {
+      console.error("Generation worker heartbeat failed", error);
+    });
+  }, intervalMs);
+
+  return () => clearInterval(timer);
 }
 
 function requestForJob(request: Request | undefined, job: GenerationJob) {

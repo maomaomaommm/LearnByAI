@@ -109,7 +109,7 @@ function normalizeMathText(content: string) {
 
   if (inDisplayMath || inSingleDollarBlock) repaired.push("$$");
 
-  return repaired.join("\n").replace(/\n{3,}/g, "\n\n");
+  return escapeTextModeUnderscores(normalizeKatexTags(repaired.join("\n").replace(/\n{3,}/g, "\n\n")));
 }
 
 function splitMarkdownFences(content: string) {
@@ -208,7 +208,8 @@ function nextNonEmptyTrimmed(lines: string[], startIndex: number) {
 
 function shouldOpenExplicitDisplayMath(trimmed: string) {
   if (!trimmed || trimmed === "$" || trimmed === "$$") return false;
-  if (/^(```|~~~|#{1,6}\s|[-*+]\s|\d+\.\s|>\s|\|)/u.test(trimmed)) return false;
+  if (/^(```|~~~|#{1,6}\s|[-*+]\s|\d+\.\s|>)/u.test(trimmed)) return false;
+  if (isMarkdownTableLine(trimmed)) return false;
   if (/[\u4e00-\u9fff]/u.test(trimmed) && !/^\\(?:begin|text|mathrm|operatorname)\b/u.test(trimmed)) {
     return false;
   }
@@ -285,10 +286,10 @@ function hasClosingSingleDollar(trimmed: string) {
 function isLikelyMathContinuation(trimmed: string) {
   if (!trimmed || trimmed === "$" || trimmed === "$$") return false;
   if (/[\u4e00-\u9fff]/u.test(trimmed)) return false;
-  if (hasPlainTextWords(trimmed) && !/^\\/.test(trimmed)) return false;
+  if (hasPlainTextWords(trimmed) && !/^\\/.test(trimmed) && !hasStrongMathSyntax(trimmed)) return false;
   return (
     isLikelyMathLine(trimmed) ||
-    /^[&=+\-*/\\]/u.test(trimmed) ||
+    /^[&=+\-*/\\|]/u.test(trimmed) ||
     /(?:&?=|<=|>=|\\leq|\\geq|\\approx|\\sim|\\in)\s*/u.test(trimmed) ||
     /\\\\\s*$/u.test(trimmed)
   );
@@ -296,10 +297,11 @@ function isLikelyMathContinuation(trimmed: string) {
 
 function isLikelyMathLine(trimmed: string) {
   if (!trimmed || /[\u4e00-\u9fff]/u.test(trimmed)) return false;
-  if (/^(#{1,6}\s|[-*+]\s|\d+\.\s|>\s|\|)/u.test(trimmed)) return false;
+  if (/^(#{1,6}\s|[-*+]\s|\d+\.\s|>)/u.test(trimmed)) return false;
+  if (isMarkdownTableLine(trimmed)) return false;
   if (/^(import|from|def|class|return|const|let|var|if|for|while)\b/u.test(trimmed)) return false;
   if (trimmed.includes("$") && !trimmed.startsWith("$")) return false;
-  if (hasPlainTextWords(trimmed) && !/^\\/.test(trimmed)) return false;
+  if (hasPlainTextWords(trimmed) && !/^\\/.test(trimmed) && !hasStrongMathSyntax(trimmed)) return false;
 
   return (
     /\\(begin|end)\{(aligned|alignedat|cases|array|matrix|pmatrix|bmatrix|vmatrix|Vmatrix|split|gathered)\}/u.test(
@@ -311,6 +313,22 @@ function isLikelyMathLine(trimmed: string) {
     /[A-Za-z0-9)}\]]\s*[_^]\s*\{?[\w\\]/u.test(trimmed) ||
     /\\[()[\]{}]/u.test(trimmed)
   );
+}
+
+function hasStrongMathSyntax(trimmed: string) {
+  return (
+    /\\(operatorname|mathrm|mathbf|mathcal|mathbb|frac|dfrac|tfrac|sum|prod|int|lim|Pr|P|E|Var|Cov|hat|bar|tilde|sqrt|vec|sin|cos|tan|left|right|theta|lambda|alpha|beta|gamma|delta|epsilon|varepsilon|sigma|mu|tau|phi|psi|omega|ldots|cdots|mapsto|to|Rightarrow|Leftarrow|leftrightarrow|infty)\b/u.test(
+      trimmed,
+    ) ||
+    (/[=<>]/u.test(trimmed) && /[A-Za-z0-9)}\]]\s*[_^]\s*\{?[\w\\]/u.test(trimmed))
+  );
+}
+
+function isMarkdownTableLine(trimmed: string) {
+  if (!trimmed.startsWith("|")) return false;
+  if (/^\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?$/u.test(trimmed)) return true;
+  if (hasStrongMathSyntax(trimmed)) return false;
+  return (trimmed.match(/\|/gu) ?? []).length >= 2;
 }
 
 function hasPlainTextWords(trimmed: string) {
@@ -325,4 +343,23 @@ function findUnescapedDollar(value: string, startIndex: number) {
     if (value[index] === "$" && value[index - 1] !== "\\") return index;
   }
   return -1;
+}
+
+function normalizeKatexTags(content: string) {
+  return content.replace(/\$\$\n([\s\S]*?)\n\$\$/gu, (match: string, body: string) => {
+    const tags = body.match(/\\tag\{[^{}]+\}/gu) ?? [];
+    if (tags.length <= 1) return match;
+    return `$$\n${body.replace(/\\tag\{([^{}]+)\}/gu, "\\qquad \\text{($1)}")}\n$$`;
+  });
+}
+
+function escapeTextModeUnderscores(content: string) {
+  // KaTeX throws on literal "_" inside text-mode commands such as \text{__end__}.
+  return content.replace(
+    /(\\(?:text|textbf|textit|textrm|textsf|texttt|mathrm|mathbf|mathsf|mathtt|operatorname)\s*)\{([^{}]*)\}/gu,
+    (_match: string, command: string, inner: string) => {
+      const safe = inner.replace(/\\?_/g, "\\_");
+      return command + "{" + safe + "}";
+    },
+  );
 }
