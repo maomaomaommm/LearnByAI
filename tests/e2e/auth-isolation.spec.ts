@@ -79,7 +79,7 @@ test("course API isolates local beta users by header", async ({ request }) => {
       goal: "验证课程归属隔离",
       background: "本地 Beta 用户",
       preference: "简洁说明",
-      weeklyHours: 3,
+      chapterCount: 5, difficulty: "intermediate",
     },
   });
 
@@ -111,7 +111,7 @@ test("local beta quota blocks over-limit course creation", async ({ request }) =
     goal: "Verify quota rejection",
     background: "Local beta user",
     preference: "Concise",
-    weeklyHours: 3,
+    chapterCount: 5, difficulty: "intermediate",
   };
 
   expect((await request.post("/api/courses", { headers, data: body })).ok()).toBeTruthy();
@@ -129,7 +129,7 @@ test("concurrent course creation cannot bypass local beta quota", async ({ reque
     goal: "Verify serialized quota checks",
     background: "Local beta user",
     preference: "Concise",
-    weeklyHours: 3,
+    chapterCount: 5, difficulty: "intermediate",
   };
 
   const responses = await Promise.all(
@@ -158,7 +158,7 @@ test("export downloads are isolated by local beta user", async ({ request }) => 
       goal: "Verify export ownership",
       background: "Local beta user",
       preference: "Concise",
-      weeklyHours: 3,
+      chapterCount: 5, difficulty: "intermediate",
     },
   });
 
@@ -210,7 +210,7 @@ test("export quota records only valid owned export attempts", async ({ request }
       goal: "Verify export quota audit",
       background: "Local beta user",
       preference: "Concise",
-      weeklyHours: 3,
+      chapterCount: 5, difficulty: "intermediate",
     },
   });
 
@@ -262,7 +262,7 @@ test("course creation schedules first chapter in the background", async ({ reque
       goal: "Verify first chapter job starts without opening course page",
       background: "Local beta user",
       preference: "Concise",
-      weeklyHours: 3,
+      chapterCount: 5, difficulty: "intermediate", generationProfile: "deep",
     },
   });
 
@@ -302,7 +302,7 @@ test("internal generation worker resumes queued course and chapter jobs", async 
       goal: "Verify internal worker can resume queued jobs",
       background: "Local beta user",
       preference: "Concise",
-      weeklyHours: 3,
+      chapterCount: 5, difficulty: "intermediate", generationProfile: "deep",
     },
   });
 
@@ -351,7 +351,7 @@ test("trusted internal worker resumes an exact job without user headers", async 
       goal: "Verify internal worker can run by secret and job id",
       background: "Local beta user",
       preference: "Concise",
-      weeklyHours: 3,
+      chapterCount: 5, difficulty: "intermediate",
     },
   });
 
@@ -384,7 +384,7 @@ test("internal generation worker claims a queued job only once", async ({ reques
       goal: "Verify duplicate workers do not process the same job",
       background: "Local beta user",
       preference: "Concise",
-      weeklyHours: 3,
+      chapterCount: 5, difficulty: "intermediate",
     },
   });
 
@@ -413,7 +413,7 @@ test("chapter generation job respects generate_chapter quota", async ({ request 
       goal: "Verify chapter quota rejection",
       background: "Local beta user",
       preference: "Concise",
-      weeklyHours: 3,
+      chapterCount: 5, difficulty: "intermediate", generationProfile: "deep",
     },
   });
 
@@ -457,7 +457,7 @@ test("chapter generation job can be retried through the job API", async ({ reque
       goal: "Verify job retry",
       background: "Local beta user",
       preference: "Concise",
-      weeklyHours: 3,
+      chapterCount: 5, difficulty: "intermediate", generationProfile: "deep",
     },
   });
 
@@ -527,7 +527,7 @@ test("annotation history persists assistant messages server-side", async ({ requ
       goal: "Verify anchored annotation persistence",
       background: "Local beta user",
       preference: "Concise",
-      weeklyHours: 3,
+      chapterCount: 5, difficulty: "intermediate",
     },
   });
   expect(create.ok()).toBeTruthy();
@@ -584,7 +584,7 @@ test("annotation creation rejects anchors owned by another user before consuming
       goal: "Verify annotation anchor ownership",
       background: "Local beta user",
       preference: "Concise",
-      weeklyHours: 3,
+      chapterCount: 5, difficulty: "intermediate",
     },
   });
 
@@ -633,7 +633,7 @@ test("annotation creation rejects a section outside the target chapter", async (
       goal: "Verify section anchor validation",
       background: "Local beta user",
       preference: "Concise",
-      weeklyHours: 3,
+      chapterCount: 5, difficulty: "intermediate",
     },
   });
 

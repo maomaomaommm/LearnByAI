@@ -5,7 +5,8 @@ import { AdminAppSettings, getAdminAppSettings, saveAdminAppSettings } from "./a
 import { MODEL_AGENT_NAMES, ModelOverrides, normalizeModelOverrides } from "./modelOverrides";
 import { createSupabaseServiceClient } from "./supabase/server";
 import { deleteServerCourseByAdmin } from "./serverStore";
-import { Chapter, ChapterLength, Course, ExportJob, GenerationJob, QualityReport, UsageEvent } from "./types";
+import { normalizeCourse } from "./normalizeCourse";
+import { Chapter, Course, CourseDifficulty, ExportJob, GenerationJob, QualityReport, UsageEvent } from "./types";
 
 export const ACTIVE_ADMIN_JOB_STATUSES: GenerationJob["status"][] = ["pending", "queued", "running", "retrying"];
 export const INACTIVE_ADMIN_JOB_STATUSES: GenerationJob["status"][] = ["succeeded", "failed"];
@@ -32,8 +33,8 @@ export type AdminCourseRow = {
   goal: string;
   background?: string;
   preference?: string;
-  weeklyHours?: number;
-  chapterLength?: ChapterLength;
+  difficulty?: CourseDifficulty;
+  targetChapterCount?: number;
   createdAt: string;
   updatedAt?: string;
   chapterCount: number;
@@ -284,7 +285,7 @@ export async function listAdminCourses(options: ListOptions = {}): Promise<Admin
   return paginate(
     (courseRows ?? [])
       .map((row) => {
-        const course = row.payload as Course;
+        const course = normalizeCourse(row.payload as Course);
         const chapterStats = getChapterStats(course.chapters ?? []);
         return {
           id: row.id,
@@ -294,8 +295,8 @@ export async function listAdminCourses(options: ListOptions = {}): Promise<Admin
           goal: course.goal ?? row.goal,
           background: course.background,
           preference: course.preference,
-          weeklyHours: course.weeklyHours,
-          chapterLength: course.chapterLength,
+          difficulty: course.difficulty,
+          targetChapterCount: course.chapterCount,
           createdAt: course.createdAt ?? row.created_at,
           updatedAt: course.updatedAt ?? row.updated_at,
           chapterCount: chapterStats.total,
@@ -373,7 +374,7 @@ export async function listAdminJobs(options: ListOptions & { courseId?: string }
   assertAdminNoError("读取任务关联课程", coursesError);
 
   const usersById = new Map(users.map((user) => [user.id, user]));
-  const coursesById = new Map((courseRows ?? []).map((row) => [row.id, row.payload as Course]));
+  const coursesById = new Map((courseRows ?? []).map((row) => [row.id, normalizeCourse(row.payload as Course)]));
   const queryText = options.query?.trim().toLowerCase();
 
   return paginate(
@@ -564,8 +565,8 @@ export async function createAdminCourse(input: {
   goal: string;
   background: string;
   preference: string;
-  weeklyHours: number;
-  chapterLength: ChapterLength;
+  chapterCount: number;
+  difficulty: CourseDifficulty;
 }, context: AdminActionContext) {
   const now = new Date().toISOString();
   const course: Course = {
@@ -575,8 +576,8 @@ export async function createAdminCourse(input: {
     goal: input.goal.trim(),
     background: input.background.trim(),
     preference: input.preference.trim(),
-    weeklyHours: input.weeklyHours,
-    chapterLength: input.chapterLength,
+    chapterCount: input.chapterCount,
+    difficulty: input.difficulty,
     profile: "课程规划已进入队列。",
     courseBible: {
       targetLearner: input.background.trim(),
@@ -613,8 +614,8 @@ export async function updateAdminCourse(input: {
   goal: string;
   background: string;
   preference: string;
-  weeklyHours: number;
-  chapterLength: ChapterLength;
+  chapterCount: number;
+  difficulty: CourseDifficulty;
 }, context: AdminActionContext) {
   const course = await readAdminCoursePayload(input.courseId);
   const nextCourse: Course = {
@@ -623,8 +624,8 @@ export async function updateAdminCourse(input: {
     goal: input.goal.trim(),
     background: input.background.trim(),
     preference: input.preference.trim(),
-    weeklyHours: input.weeklyHours,
-    chapterLength: input.chapterLength,
+    chapterCount: input.chapterCount,
+    difficulty: input.difficulty,
     updatedAt: new Date().toISOString(),
   };
   await persistAdminCourse(nextCourse);
@@ -1029,7 +1030,7 @@ async function readAdminCoursePayload(courseId: string) {
   const { data, error } = await supabase.from("courses").select("payload").eq("id", courseId).maybeSingle();
   assertAdminNoError("读取课程", error);
   if (!data?.payload) throw new Error("课程不存在。");
-  return data.payload as Course;
+  return normalizeCourse(data.payload as Course);
 }
 
 async function listAdminUsersLight() {

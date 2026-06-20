@@ -28,12 +28,12 @@ export default async function AdminNewCoursePage() {
           <Field label="学习背景"><textarea name="background" rows={2} className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:border-foreground" /></Field>
           <Field label="学习偏好"><textarea name="preference" rows={2} className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:border-foreground" /></Field>
           <div className="grid gap-4 sm:grid-cols-2">
-            <Field label="每周学习小时"><input name="weeklyHours" type="number" min={1} max={80} defaultValue={5} className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:border-foreground" /></Field>
-            <Field label="章节篇幅">
-              <select name="chapterLength" defaultValue="medium" className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:border-foreground">
-                <option value="short">短</option>
-                <option value="medium">中</option>
-                <option value="long">长</option>
+            <Field label="章节数量"><input name="chapterCount" type="number" min={3} max={20} defaultValue={8} className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:border-foreground" /></Field>
+            <Field label="难度基调">
+              <select name="difficulty" defaultValue="intermediate" className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:border-foreground">
+                <option value="intro">入门科普</option>
+                <option value="intermediate">进阶系统</option>
+                <option value="research">研究前沿</option>
               </select>
             </Field>
           </div>

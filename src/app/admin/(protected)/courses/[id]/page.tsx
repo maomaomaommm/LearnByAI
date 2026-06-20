@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getAdminCourse } from "@/lib/adminData";
-import { AdminActionButton, AdminJsonForm, CHAPTER_STATUS_LABEL, JOB_STATUS_LABEL, LENGTH_LABEL, QUALITY_STATUS_LABEL, StatusPill } from "../../../parts";
+import { AdminActionButton, AdminJsonForm, CHAPTER_STATUS_LABEL, DEPTH_LABEL, JOB_STATUS_LABEL, QUALITY_STATUS_LABEL, StatusPill } from "../../../parts";
 import { formatDate } from "../../../format";
 
 export const dynamic = "force-dynamic";
@@ -35,16 +35,16 @@ export default async function AdminCourseDetailPage({ params }: { params: Promis
           <input type="hidden" name="courseId" value={course.id} />
           <div className="grid gap-4 lg:grid-cols-2">
             <Field label="课程主题"><input name="topic" defaultValue={course.topic} required className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:border-foreground" /></Field>
-            <Field label="每周学习小时"><input name="weeklyHours" type="number" min={1} max={80} defaultValue={course.weeklyHours ?? 5} className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:border-foreground" /></Field>
+            <Field label="章节数量"><input name="chapterCount" type="number" min={3} max={20} defaultValue={course.targetChapterCount ?? 8} className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:border-foreground" /></Field>
           </div>
           <Field label="学习目标"><textarea name="goal" defaultValue={course.goal} rows={2} required className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:border-foreground" /></Field>
           <Field label="学习背景"><textarea name="background" defaultValue={course.background ?? ""} rows={2} className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:border-foreground" /></Field>
           <Field label="学习偏好"><textarea name="preference" defaultValue={course.preference ?? ""} rows={2} className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:border-foreground" /></Field>
-          <Field label="章节篇幅">
-            <select name="chapterLength" defaultValue={course.chapterLength ?? "medium"} className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:border-foreground">
-              <option value="short">短</option>
-              <option value="medium">中</option>
-              <option value="long">长</option>
+          <Field label="难度基调">
+            <select name="difficulty" defaultValue={course.difficulty ?? "intermediate"} className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:border-foreground">
+              <option value="intro">入门科普</option>
+              <option value="intermediate">进阶系统</option>
+              <option value="research">研究前沿</option>
             </select>
           </Field>
         </AdminJsonForm>
@@ -76,7 +76,7 @@ export default async function AdminCourseDetailPage({ params }: { params: Promis
                         {QUALITY_STATUS_LABEL[qualityStatus] ?? qualityStatus} {chapter.qualityReport?.score ?? 0}/100
                       </StatusPill>
                     )}
-                    <StatusPill>{LENGTH_LABEL[course.chapterLength ?? "medium"]}</StatusPill>
+                    <StatusPill>{DEPTH_LABEL[chapter.depthWeight ?? "normal"]}</StatusPill>
                     {job && <StatusPill tone={job.status === "failed" ? "bad" : job.status === "succeeded" ? "good" : "info"}>任务：{JOB_STATUS_LABEL[job.status] ?? job.status}</StatusPill>}
                   </div>
                   <p className="mt-2 line-clamp-2 text-sm text-muted-foreground">{chapter.description}</p>

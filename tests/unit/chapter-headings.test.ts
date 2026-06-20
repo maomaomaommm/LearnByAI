@@ -28,7 +28,8 @@ function courseWithChapters(titles: string[]): Course {
     goal: "goal",
     background: "background",
     preference: "preference",
-    weeklyHours: 6,
+    chapterCount: 8,
+    difficulty: "intermediate",
     profile: "profile",
     courseBible: {
       targetLearner: "learner",

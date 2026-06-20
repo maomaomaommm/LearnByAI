@@ -56,14 +56,20 @@ export default function CreateCoursePage() {
     setProgressStage("分析你的目标与基础");
     
     const values = Object.fromEntries(new FormData(event.currentTarget));
+    const customCount = Number(values.chapterCountCustom);
+    const presetCount = Number(values.chapterCountPreset);
+    const chapterCount = Number.isFinite(customCount) && customCount > 0
+      ? customCount
+      : (Number.isFinite(presetCount) && presetCount > 0 ? presetCount : 8);
     const input = {
       topic: String(values.topic),
       goal: String(values.goal),
       background: String(values.background),
       preference: String(values.preference),
-      weeklyHours: Number(values.weeklyHours),
-      chapterLength: String(values.chapterLength || "medium"),
+      chapterCount,
+      difficulty: String(values.difficulty || "intermediate"),
       generationProfile: String(values.generationProfile || "fast"),
+      includeRecentResearch: values.includeRecentResearch === "on",
     };
 
     try {
@@ -159,32 +165,32 @@ export default function CreateCoursePage() {
                   </div>
                   <div className="rounded-lg border border-border bg-card p-5">
                     <div className="mb-3 flex items-center gap-2">
-                      <Clock size={16} className="text-foreground" />
-                      <h2 className="text-sm font-semibold text-foreground">每周学习时间</h2>
+                      <GraduationCap size={16} className="text-foreground" />
+                      <h2 className="text-sm font-semibold text-foreground">难度基调</h2>
                     </div>
-                    <select name="weeklyHours" defaultValue="6" className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:border-foreground">
-                      <option value="3">3 小时</option>
-                      <option value="6">6 小时</option>
-                      <option value="10">10 小时</option>
+                    <select name="difficulty" defaultValue="intermediate" className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:border-foreground">
+                      <option value="intro">入门科普 · 多铺垫、少推导</option>
+                      <option value="intermediate">进阶系统 · 均衡严谨</option>
+                      <option value="research">研究前沿 · 直击最新方法</option>
                     </select>
                   </div>
                   <div className="rounded-lg border border-border bg-card p-5 md:col-span-2">
                     <div className="mb-3 flex items-center gap-2">
                       <BookOpen size={16} className="text-foreground" />
-                      <h2 className="text-sm font-semibold text-foreground">章节篇幅</h2>
+                      <h2 className="text-sm font-semibold text-foreground">章节数量</h2>
                     </div>
                     <div className="grid gap-2 sm:grid-cols-3">
                       {[
-                        ["short", "短", "6k-9k 字，最快最稳"],
-                        ["medium", "中", "10k-14k 字，推荐"],
-                        ["long", "长", "16k-24k 字，更深入但更慢"],
+                        ["5", "精简", "约 5 章，快速建立框架"],
+                        ["8", "标准", "约 8 章，推荐"],
+                        ["14", "详尽", "约 14 章，系统深入"],
                       ].map(([value, label, description]) => (
                         <label key={value} className="rounded-md border border-border bg-background p-3 text-sm">
                           <input
                             type="radio"
-                            name="chapterLength"
+                            name="chapterCountPreset"
                             value={value}
-                            defaultChecked={value === "medium"}
+                            defaultChecked={value === "8"}
                             className="mr-2"
                           />
                           <span className="font-medium text-foreground">{label}</span>
@@ -192,17 +198,29 @@ export default function CreateCoursePage() {
                         </label>
                       ))}
                     </div>
+                    <div className="mt-3 flex items-center gap-2">
+                      <label htmlFor="chapterCountCustom" className="text-xs text-muted-foreground">自定义章节数（可选，3–20）：</label>
+                      <input
+                        id="chapterCountCustom"
+                        name="chapterCountCustom"
+                        type="number"
+                        min={3}
+                        max={20}
+                        placeholder="留空则用上方档位"
+                        className="w-40 rounded-md border border-border bg-background px-2 py-1 text-xs text-foreground outline-none focus:border-foreground"
+                      />
+                    </div>
+                    <p className="mt-1 text-xs text-muted-foreground">每章篇幅由系统按难度自适应分配：难点章更长、引入与过渡更精炼。</p>
                   </div>
                   <div className="rounded-lg border border-border bg-card p-5 md:col-span-2">
                     <div className="mb-3 flex items-center gap-2">
                       <Zap size={16} className="text-foreground" />
                       <h2 className="text-sm font-semibold text-foreground">生成模式</h2>
                     </div>
-                    <div className="grid gap-2 sm:grid-cols-3">
+                    <div className="grid gap-2 sm:grid-cols-2">
                       {[
-                        ["fast", "快速", "先出可读草稿，后台质检"],
-                        ["standard", "标准", "草稿优先，质检更积极"],
-                        ["deep", "深度", "完整质检后再完成"],
+                        ["fast", "快速", "草稿先出，质检在后台进行"],
+                        ["deep", "深度", "整章质检通过后再显示"],
                       ].map(([value, label, description]) => (
                         <label key={value} className="rounded-md border border-border bg-background p-3 text-sm">
                           <input
@@ -217,6 +235,21 @@ export default function CreateCoursePage() {
                         </label>
                       ))}
                     </div>
+                  </div>
+                  <div className="rounded-lg border border-border bg-card p-5 md:col-span-2">
+                    <label className="flex items-start gap-3 text-sm">
+                      <input
+                        type="checkbox"
+                        name="includeRecentResearch"
+                        className="mt-0.5"
+                      />
+                      <span>
+                        <span className="flex items-center gap-2 font-semibold text-foreground">
+                          <Clock size={16} /> 纳入最新进展
+                        </span>
+                        <span className="mt-1 block text-xs text-muted-foreground">开启后先联网检索近期论文与方法再规划（耗时略增）；关闭则直接规划。</span>
+                      </span>
+                    </label>
                   </div>
                 </div>
 

@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
-import { buildChapterWriterPrompt, getChapterLengthGuide, getEffectiveChapterLengthGuide } from "../../src/lib/prompts/chapterWriter";
+import { buildChapterWriterPrompt, getChapterDepthGuide } from "../../src/lib/prompts/chapterWriter";
 import {
   buildChapterContractPrompt,
   buildCourseBiblePrompt,
   buildCoursePlannerPrompt,
+  buildCourseSkeletonPrompt,
   buildCourseSkeletonCompactPrompt,
 } from "../../src/lib/prompts/coursePlanner";
 import type { CourseSkeleton } from "../../src/lib/prompts/coursePlanner";
@@ -18,8 +19,8 @@ test("course planner prompt asks for chapter contracts", () => {
     goal: "系统学习",
     background: "会基础数学",
     preference: "公式结合例题",
-    weeklyHours: 6,
-    chapterLength: "medium",
+    chapterCount: 8,
+    difficulty: "intermediate",
   });
 
   assert.match(prompt, /chapterContracts/u);
@@ -27,23 +28,46 @@ test("course planner prompt asks for chapter contracts", () => {
   assert.doesNotMatch(prompt, /[�]/u);
 });
 
-test("chapter writer prompt includes length guide and contract", () => {
-  const course = makeCourse("short");
-  const chapter = course.chapters[0];
-  const prompt = buildChapterWriterPrompt(course, chapter, { chapterIndex: 0, chapters: course.chapters });
+test("course skeleton prompt injects chapter count, difficulty and per-chapter depth", () => {
+  const prompt = buildCourseSkeletonPrompt({
+    topic: "深度学习",
+    goal: "系统学习",
+    background: "会 Python",
+    preference: "公式结合例题",
+    chapterCount: 14,
+    difficulty: "research",
+  });
 
-  assert.match(prompt, /6,000 到 9,000/u);
-  assert.match(prompt, /章节契约/u);
-  assert.match(prompt, /forbiddenEarlyTopics/u);
-  assert.equal(getChapterLengthGuide("long").maxTokens, 24576);
-  assert.equal(getEffectiveChapterLengthGuide({ chapterLength: "long", generationProfile: "fast" }).maxTokens, 12288);
-  assert.equal(getEffectiveChapterLengthGuide({ chapterLength: "long", generationProfile: "standard" }).maxTokens, 18432);
-  assert.equal(getEffectiveChapterLengthGuide({ chapterLength: "long", generationProfile: "deep" }).maxTokens, 24576);
-  assert.match(prompt, /生成模式：fast/u);
+  assert.match(prompt, /严格生成 14 章/u);
+  assert.match(prompt, /研究前沿/u);
+  assert.match(prompt, /"depth"/u);
+  assert.match(prompt, /core/u);
+  assert.doesNotMatch(prompt, /每周学习/u);
+  assert.doesNotMatch(prompt, /章节篇幅/u);
+});
+
+test("chapter writer prompt uses per-chapter depthWeight for adaptive length", () => {
+  const lightPrompt = buildChapterWriterPrompt(makeCourse("light"), makeCourse("light").chapters[0], { chapterIndex: 0 });
+  const corePrompt = buildChapterWriterPrompt(makeCourse("core"), makeCourse("core").chapters[0], { chapterIndex: 0 });
+
+  // light chapters target a smaller range than core chapters
+  assert.match(lightPrompt, /4,000 到 7,000/u);
+  assert.match(corePrompt, /13,000 到 18,000/u);
+  assert.match(corePrompt, /章节契约/u);
+  assert.match(corePrompt, /forbiddenEarlyTopics/u);
+
+  // depthWeight -> maxTokens ceiling
+  assert.equal(getChapterDepthGuide("light").maxTokens, 12288);
+  assert.equal(getChapterDepthGuide("normal").maxTokens, 18432);
+  assert.equal(getChapterDepthGuide("core").maxTokens, 24576);
+  assert.equal(getChapterDepthGuide(undefined).maxTokens, 18432);
+
+  // generation profile must no longer leak into the writing prompt
+  assert.doesNotMatch(corePrompt, /生成模式/u);
 });
 
 test("chapter prompts preserve frontier evidence and recency constraints", () => {
-  const course = makeCourse("medium");
+  const course = makeCourse("normal");
   course.chapters[0].contract!.requiredTopics = ["近期论文方法", "经典方法对比"];
   const prompt = buildChapterWriterPrompt(course, course.chapters[0], { chapterIndex: 0, chapters: course.chapters });
   const rubric = reviewerRubric();
@@ -65,16 +89,16 @@ test("course planning prompts split bible core from per-chapter contracts", () =
     goal: "系统学习控制方法",
     background: "具备电路基础",
     preference: "公式和案例结合",
-    weeklyHours: 6,
-    chapterLength: "medium",
+    chapterCount: 8,
+    difficulty: "intermediate",
   }, skeleton);
   const contractPrompt = buildChapterContractPrompt({
     topic: "电力电子控制",
     goal: "系统学习控制方法",
     background: "具备电路基础",
     preference: "公式和案例结合",
-    weeklyHours: 6,
-    chapterLength: "medium",
+    chapterCount: 8,
+    difficulty: "intermediate",
   }, skeleton, {
     targetLearner: "测试学习者",
     finalOutcomes: ["掌握闭环控制"],
@@ -94,7 +118,8 @@ test("course planning prompts split bible core from per-chapter contracts", () =
     goal: "系统学习",
     background: "会基础数学",
     preference: "公式结合例题",
-    weeklyHours: 6,
+    chapterCount: 8,
+    difficulty: "intermediate",
   }, "bad JSON"), /紧凑模式/u);
 });
 
@@ -113,7 +138,7 @@ test("course planning runtime keeps web research and JSON stages resilient", () 
   assert.match(clientSource, /buildChapterContractCompactPrompt/u);
 });
 
-function makeCourse(chapterLength: Course["chapterLength"]): Course {
+function makeCourse(depthWeight: Chapter["depthWeight"]): Course {
   const chapter: Chapter = {
     id: "chapter-1",
     title: "信号与系统基础",
@@ -121,6 +146,7 @@ function makeCourse(chapterLength: Course["chapterLength"]): Course {
     purpose: "理解信号、系统和卷积",
     connectionFromPrevious: "课程起点",
     setupForNext: "引出离散系统",
+    depthWeight,
     contract: {
       chapterTitle: "信号与系统基础",
       requiredTopics: ["信号", "系统"],
@@ -145,8 +171,8 @@ function makeCourse(chapterLength: Course["chapterLength"]): Course {
     goal: "系统学习",
     background: "会基础数学",
     preference: "公式结合例题",
-    weeklyHours: 6,
-    chapterLength,
+    chapterCount: 8,
+    difficulty: "intermediate",
     profile: "测试课程",
     courseBible: {
       targetLearner: "测试学习者",

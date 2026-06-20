@@ -1,53 +1,36 @@
 import { expectedChapterHeading } from "@/lib/chapterHeadings";
-import { Chapter, ChapterLength, Course, GenerationProfile } from "@/lib/types";
+import { Chapter, ChapterDepthWeight, Course } from "@/lib/types";
 import { textbookSkill } from "./textbookSkill";
 
-type ChapterLengthGuide = { label: string; chars: string; maxTokens: number; sections: string };
+type ChapterDepthGuide = { label: string; chars: string; maxTokens: number; sections: string };
 
-const LENGTH_GUIDE: Record<ChapterLength, ChapterLengthGuide> = {
-  short: {
-    label: "短讲义章",
-    chars: "6,000 到 9,000 个中文字符",
+/**
+ * 每章篇幅由架构师分配的 depthWeight 决定（自适应篇幅），不再由全局篇幅档位一刀切。
+ * `chars` 是写进 prompt 的软目标，`maxTokens` 是兜底硬上限，防止 core 章失控。
+ */
+const DEPTH_GUIDE: Record<ChapterDepthWeight, ChapterDepthGuide> = {
+  light: {
+    label: "轻量章（引入 / 过渡 / 收尾）",
+    chars: "4,000 到 7,000 个中文字符",
     maxTokens: 12288,
-    sections: "4 到 6 个主题小节",
+    sections: "3 到 5 个主题小节",
   },
-  medium: {
-    label: "中等教材章",
-    chars: "10,000 到 14,000 个中文字符",
+  normal: {
+    label: "常规章",
+    chars: "8,000 到 12,000 个中文字符",
     maxTokens: 18432,
     sections: "5 到 7 个主题小节",
   },
-  long: {
-    label: "长教材章",
-    chars: "16,000 到 24,000 个中文字符",
+  core: {
+    label: "核心 / 难点章",
+    chars: "13,000 到 18,000 个中文字符",
     maxTokens: 24576,
-    sections: "6 到 8 个主题小节",
+    sections: "6 到 9 个主题小节",
   },
 };
 
-const FAST_AUTHOR_MAX_TOKENS = 12288;
-const STANDARD_AUTHOR_MAX_TOKENS = 18432;
-
-export function getChapterLengthGuide(length: ChapterLength | undefined) {
-  return LENGTH_GUIDE[length ?? "medium"];
-}
-
-export function getCourseGenerationProfile(course: Pick<Course, "generationProfile">): GenerationProfile {
-  return course.generationProfile ?? "fast";
-}
-
-export function getEffectiveChapterLengthGuide(course: Pick<Course, "chapterLength" | "generationProfile">): ChapterLengthGuide {
-  const base = getChapterLengthGuide(course.chapterLength);
-  const profile = getCourseGenerationProfile(course);
-  if (profile === "fast") return { ...base, maxTokens: Math.min(base.maxTokens, FAST_AUTHOR_MAX_TOKENS) };
-  if (profile === "standard") return { ...base, maxTokens: Math.min(base.maxTokens, STANDARD_AUTHOR_MAX_TOKENS) };
-  return base;
-}
-
-function generationProfileGuide(profile: GenerationProfile) {
-  if (profile === "deep") return "深度模式：可以等待完整后处理，优先深度、严密和覆盖面。";
-  if (profile === "standard") return "标准模式：先写完整可读草稿，篇幅取档位中下限，后续会继续做格式修复和质量复检。";
-  return "快速模式：优先在一次 AUTHOR 输出内完成可读草稿，篇幅取档位下限，不要为了追求超长篇幅而展开重复材料；格式修复和质量复检会在后台继续。";
+export function getChapterDepthGuide(weight: ChapterDepthWeight | undefined): ChapterDepthGuide {
+  return DEPTH_GUIDE[weight ?? "normal"];
 }
 
 export function buildChapterWriterPrompt(
@@ -64,8 +47,7 @@ export function buildChapterWriterPrompt(
   const next = chapterIndex >= 0 ? chapters[chapterIndex + 1] : undefined;
   const chapterNumber = chapterIndex >= 0 ? chapterIndex + 1 : undefined;
   const requiredHeading = expectedChapterHeading(course, chapter);
-  const generationProfile = getCourseGenerationProfile(course);
-  const lengthGuide = getEffectiveChapterLengthGuide(course);
+  const depthGuide = getChapterDepthGuide(chapter.depthWeight);
   const contract = chapter.contract ?? course.courseBible.chapterContracts?.find((item) => item.chapterTitle === chapter.title);
 
   return `${textbookSkill()}
@@ -78,11 +60,10 @@ export function buildChapterWriterPrompt(
 第一行必须严格等于：
 # ${requiredHeading}
 
-篇幅档位：${lengthGuide.label}
-目标长度：${lengthGuide.chars}
-小节数量：${lengthGuide.sections}
-生成模式：${generationProfile}
-模式策略：${generationProfileGuide(generationProfile)}
+篇幅定位：${depthGuide.label}
+目标长度（软目标，可按内容难度上下浮动）：${depthGuide.chars}
+小节数量：${depthGuide.sections}
+篇幅原则：根据本章实际难度与重要性自适应取舍——难点和核心内容充分展开，引入与过渡内容保持精炼；不要为凑字数注水，也不要牺牲讲清楚所需的篇幅。
 
 硬性要求：
 - 不得发明、改写或错置章节编号；正文中不要出现与当前章节冲突的“第 N 章”标题。

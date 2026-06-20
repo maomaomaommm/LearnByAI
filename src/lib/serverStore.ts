@@ -5,6 +5,7 @@ import { dirname, join } from "node:path";
 import { claimGenerationJob, deleteGenerationJobsForCourse, patchGenerationJob, releaseGenerationJob, upsertGenerationJob } from "./jobs";
 import { publishCourseChanged, publishGenerationJobChanged } from "./courseEvents";
 import { Annotation, Course, ExportJob, GenerationJob, QualityReport, UsageEvent } from "./types";
+import { normalizeCourse } from "./normalizeCourse";
 import { createSupabaseServiceClient, resolveUserId } from "./supabase/server";
 
 const localCourses = new Map<string, Course>();
@@ -153,14 +154,15 @@ export async function getServerCourse(id: string, request?: Request) {
       .maybeSingle();
 
     assertSupabaseNoError("Read course", error);
-    if (data?.payload) return data.payload as Course;
+    if (data?.payload) return normalizeCourse(data.payload as Course);
     return undefined;
   }
 
   await hydrateLocalStore();
   const hydratedCourse = localCourses.get(id);
   if (!hydratedCourse) return undefined;
-  return hydratedCourse.userId === userId || userId === "local-beta-user" ? hydratedCourse : undefined;
+  const visible = hydratedCourse.userId === userId || userId === "local-beta-user";
+  return visible ? normalizeCourse(hydratedCourse) : undefined;
 }
 
 export async function listServerCourses(request?: Request) {
@@ -175,13 +177,14 @@ export async function listServerCourses(request?: Request) {
       .order("created_at", { ascending: false });
 
     assertSupabaseNoError("List courses", error);
-    return (data ?? []).map((row) => row.payload as Course);
+    return (data ?? []).map((row) => normalizeCourse(row.payload as Course));
   }
 
   await hydrateLocalStore();
   return [...localCourses.values()]
     .filter((course) => course.userId === userId || userId === "local-beta-user")
-    .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
+    .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))
+    .map(normalizeCourse);
 }
 
 export async function deleteServerCourse(id: string, request?: Request) {
@@ -236,7 +239,7 @@ export async function deleteServerCourseByAdmin(id: string) {
     .maybeSingle();
 
   if (readError) throw new Error(`读取课程失败：${readError.message}`);
-  const course = data?.payload as Course | undefined;
+  const course = data?.payload ? normalizeCourse(data.payload as Course) : undefined;
 
   // Deleting the course row cascades to chapters, sections, annotations,
   // exports and generation_jobs. Quality reports are deleted explicitly.

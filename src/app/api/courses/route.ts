@@ -8,16 +8,17 @@ import { publicGenerationJob } from "@/lib/publicGenerationJob";
 import { withQuotaConsumption } from "@/lib/quota";
 import { listServerCourses, saveServerCourse, saveServerGenerationJob } from "@/lib/serverStore";
 import { resolveModelOverrides } from "@/lib/userModelConfig";
-import { ChapterLength, Course, GenerationProfile } from "@/lib/types";
+import { Course, CourseDifficulty, GenerationProfile } from "@/lib/types";
 
 type CourseInput = {
   topic: string;
   goal: string;
   background: string;
   preference: string;
-  weeklyHours: number;
-  chapterLength?: ChapterLength;
+  chapterCount?: number;
+  difficulty?: CourseDifficulty;
   generationProfile?: GenerationProfile;
+  includeRecentResearch?: boolean;
 };
 
 export async function GET(request: Request) {
@@ -79,9 +80,14 @@ function createPendingCourse(input: CourseInput, userId: string): Course {
   return {
     id: crypto.randomUUID(),
     userId,
-    ...input,
-    chapterLength: normalizeChapterLength(input.chapterLength),
+    topic: input.topic,
+    goal: input.goal,
+    background: input.background,
+    preference: input.preference,
+    chapterCount: normalizeChapterCount(input.chapterCount),
+    difficulty: normalizeDifficulty(input.difficulty),
     generationProfile: normalizeGenerationProfile(input.generationProfile),
+    includeRecentResearch: input.includeRecentResearch === true,
     profile: "课程规划队列中。",
     courseBible: {
       targetLearner: input.background,
@@ -98,10 +104,16 @@ function createPendingCourse(input: CourseInput, userId: string): Course {
   };
 }
 
-function normalizeChapterLength(value: unknown): ChapterLength {
-  return value === "short" || value === "long" ? value : "medium";
+function normalizeChapterCount(value: unknown): number {
+  const parsed = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(parsed)) return 8;
+  return Math.min(20, Math.max(3, Math.round(parsed)));
+}
+
+function normalizeDifficulty(value: unknown): CourseDifficulty {
+  return value === "intro" || value === "research" ? value : "intermediate";
 }
 
 function normalizeGenerationProfile(value: unknown): GenerationProfile {
-  return value === "standard" || value === "deep" ? value : "fast";
+  return value === "deep" ? "deep" : "fast";
 }

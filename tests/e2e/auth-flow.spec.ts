@@ -24,7 +24,7 @@ test("login does not create a browser-local API identity", async ({ page }) => {
       goal: "Verify identity header",
       background: "Local beta user",
       preference: "Concise",
-      weeklyHours: 3,
+      chapterCount: 5, difficulty: "intermediate",
     },
   });
   expect(create.ok()).toBeTruthy();

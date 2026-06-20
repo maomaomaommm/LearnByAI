@@ -53,7 +53,7 @@ test("real provider smoke test covers course, chapter, tutor, and export", async
       goal: "Understand least squares and basic diagnostics",
       background: "Basic Python",
       preference: "Intuitive explanations with formulas",
-      weeklyHours: 3,
+      chapterCount: 5, difficulty: "intermediate", generationProfile: "deep",
     },
   });
 

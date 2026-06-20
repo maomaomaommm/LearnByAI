@@ -8,9 +8,11 @@ export type AgentName = "ASSISTANT" | "ARCHITECT" | "AUTHOR" | "POLISHER" | "REV
 
 export type QualityStatus = "passed" | "warning" | "failed";
 
-export type ChapterLength = "short" | "medium" | "long";
+export type CourseDifficulty = "intro" | "intermediate" | "research";
 
-export type GenerationProfile = "fast" | "standard" | "deep";
+export type ChapterDepthWeight = "core" | "normal" | "light";
+
+export type GenerationProfile = "fast" | "deep";
 
 export type Chapter = {
   id: string;
@@ -22,6 +24,7 @@ export type Chapter = {
   setupForNext?: string;
   contract?: ChapterContract;
   time: StudyTime;
+  depthWeight?: ChapterDepthWeight;
   status?: EntityStatus;
   content?: string;
   review?: string;
@@ -86,9 +89,10 @@ export type Course = {
   goal: string;
   background: string;
   preference: string;
-  weeklyHours: number;
-  chapterLength?: ChapterLength;
+  chapterCount: number;
+  difficulty: CourseDifficulty;
   generationProfile?: GenerationProfile;
+  includeRecentResearch?: boolean;
   profile: string;
   courseBible: CourseBible;
   chapters: Chapter[];

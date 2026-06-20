@@ -1,12 +1,14 @@
-import { Course } from "./types";
+import { Course, CourseDifficulty, GenerationProfile } from "./types";
 
 export function createMockCourse(input: {
   topic: string;
   goal: string;
   background: string;
   preference: string;
-  weeklyHours: number;
-  chapterLength?: "short" | "medium" | "long";
+  chapterCount: number;
+  difficulty: CourseDifficulty;
+  generationProfile?: GenerationProfile;
+  includeRecentResearch?: boolean;
 }): Course {
   const firstChapterId = crypto.randomUUID();
   return {
@@ -44,6 +46,7 @@ export function createMockCourse(input: {
         purpose: "建立全局方向，避免后续学习变成术语堆砌。",
         connectionFromPrevious: "这是课程起点。",
         setupForNext: "下一章会补齐理解核心方法所需的前置知识。",
+        depthWeight: "core",
         time: {
           readingMinutes: 50,
           exerciseMinutes: 30,
@@ -61,6 +64,7 @@ export function createMockCourse(input: {
         purpose: "让学习者具备阅读后续章节的最低共同语言。",
         connectionFromPrevious: "承接第一章的问题地图，解释哪些工具是必要的。",
         setupForNext: "为核心原理章节准备符号、定义和基本直觉。",
+        depthWeight: "light",
         time: {
           readingMinutes: 60,
           exerciseMinutes: 40,

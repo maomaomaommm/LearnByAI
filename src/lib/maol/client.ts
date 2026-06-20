@@ -7,7 +7,7 @@ import { createMockAnswer, createMockChapter, createMockCourse } from "../mock";
 import { buildAnnotationTutorPrompt } from "../prompts/annotationTutor";
 import { buildChapterRepairByAuthorPrompt, buildChapterChunkRepairByAuthorPrompt } from "../prompts/chapterRepairer";
 import { buildChapterReviewPrompt, buildChapterReviewJsonRepairPrompt } from "../prompts/chapterReviewer";
-import { buildChapterWriterPrompt, getEffectiveChapterLengthGuide } from "../prompts/chapterWriter";
+import { buildChapterWriterPrompt, getChapterDepthGuide } from "../prompts/chapterWriter";
 import { buildContentRepairPrompt } from "../prompts/contentRepair";
 import {
   buildChapterContractCompactPrompt,
@@ -21,7 +21,7 @@ import type { CourseBibleCore, CourseSkeleton } from "../prompts/coursePlanner";
 import { buildFormatGuardPrompt, postRepairMarkdown, preRepairMarkdown } from "../prompts/formatGuard";
 import { runChapterQualityPipelineWithRepair } from "../quality/pipeline";
 import { safeErrorMessage } from "../safeError";
-import { Chapter, ChapterContract, ChapterGenerateResponse, Course, CourseBible, CourseCreateResponse, GenerationJob, GenerationProfile, QualityIssue, QualityReport, Section } from "../types";
+import { Chapter, ChapterContract, ChapterGenerateResponse, Course, CourseBible, CourseCreateResponse, CourseDifficulty, GenerationJob, GenerationProfile, QualityIssue, QualityReport, Section } from "../types";
 import { researchLatestCourseKnowledge } from "../webResearch";
 import { dispatchAgentText } from "./dispatcher";
 import { assertMockFallbackAllowed } from "./fallback";
@@ -32,9 +32,10 @@ export type CourseInput = {
   goal: string;
   background: string;
   preference: string;
-  weeklyHours: number;
-  chapterLength?: "short" | "medium" | "long";
+  chapterCount: number;
+  difficulty: CourseDifficulty;
   generationProfile?: GenerationProfile;
+  includeRecentResearch?: boolean;
 };
 
 export type CourseGeneration = {
@@ -197,7 +198,7 @@ export async function generateChapter(
   }
 
   try {
-    const lengthGuide = getEffectiveChapterLengthGuide(course);
+    const lengthGuide = getChapterDepthGuide(chapter.depthWeight);
     const draft = preRepairMarkdown(
       await dispatchAgentText({
         agent: "AUTHOR",
@@ -318,7 +319,7 @@ export async function generateChapterDraft(
   }
 
   try {
-    const lengthGuide = getEffectiveChapterLengthGuide(course);
+    const lengthGuide = getChapterDepthGuide(chapter.depthWeight);
     const draft = normalizeChapterMarkdownHeading(
       course,
       chapter,
@@ -409,7 +410,7 @@ export async function reviewExistingChapterDraft(
     message: "Existing draft review resumed.",
   });
 
-  const lengthGuide = getEffectiveChapterLengthGuide(course);
+  const lengthGuide = getChapterDepthGuide(chapter.depthWeight);
   const draft = preRepairMarkdown(content);
   let formatted = draft;
   let review = "正文已生成；格式修复暂时不可用，已保留本地格式预修复版本。";
@@ -1262,25 +1263,36 @@ export async function planCourseOutline(
         await new Promise(resolve => setTimeout(resolve, 2000 * attempt));
       }
 
-      const researchStartedJob = appendJobEvent(jobId, {
-        agent: "ARCHITECT",
-        status: "running",
-        message: "正在联网检索最新论文与领域进展。",
-      }, { preserveJobStatus: true });
-      if (researchStartedJob) await options.onJobUpdate?.(researchStartedJob);
-
       const researchDate = new Date().toISOString().slice(0, 10);
-      const researchBrief = await researchLatestCourseKnowledge(input, options.overrides).catch((error) => {
-        console.warn("[coursePlanner] research failed; continuing without web research:", safeErrorMessage(error, "research failed"));
-        return undefined;
-      });
+      let researchBrief: string | undefined;
 
-      const researchCompletedJob = appendJobEvent(jobId, {
-        agent: "ARCHITECT",
-        status: "running",
-        message: `${researchBrief ? "检索完成，开始整合检索资料规划课程。" : "联网检索暂时不可用，已跳过，直接规划课程。"}`,
-      }, { preserveJobStatus: true });
-      if (researchCompletedJob) await options.onJobUpdate?.(researchCompletedJob);
+      if (input.includeRecentResearch) {
+        const researchStartedJob = appendJobEvent(jobId, {
+          agent: "ARCHITECT",
+          status: "running",
+          message: "正在联网检索最新论文与领域进展。",
+        }, { preserveJobStatus: true });
+        if (researchStartedJob) await options.onJobUpdate?.(researchStartedJob);
+
+        researchBrief = await researchLatestCourseKnowledge(input, options.overrides).catch((error) => {
+          console.warn("[coursePlanner] research failed; continuing without web research:", safeErrorMessage(error, "research failed"));
+          return undefined;
+        });
+
+        const researchCompletedJob = appendJobEvent(jobId, {
+          agent: "ARCHITECT",
+          status: "running",
+          message: `${researchBrief ? "检索完成，开始整合检索资料规划课程。" : "联网检索暂时不可用，已跳过，直接规划课程。"}`,
+        }, { preserveJobStatus: true });
+        if (researchCompletedJob) await options.onJobUpdate?.(researchCompletedJob);
+      } else {
+        const researchSkippedJob = appendJobEvent(jobId, {
+          agent: "ARCHITECT",
+          status: "running",
+          message: "未开启联网检索，直接规划课程。",
+        }, { preserveJobStatus: true });
+        if (researchSkippedJob) await options.onJobUpdate?.(researchSkippedJob);
+      }
 
       const plannerInput = {
         ...input,
@@ -1448,8 +1460,8 @@ async function dispatchParsedCoursePlannerStage<T>(
 
 function assertCourseSkeleton(skeleton: CourseSkeleton) {
   if (!skeleton.profile?.trim()) throw new Error("课程章节路线缺少 profile。");
-  if (!Array.isArray(skeleton.chapters) || skeleton.chapters.length < 6 || skeleton.chapters.length > 8) {
-    throw new Error("课程章节路线必须包含 6 到 8 章。");
+  if (!Array.isArray(skeleton.chapters) || skeleton.chapters.length < 3 || skeleton.chapters.length > 20) {
+    throw new Error("课程章节路线必须包含 3 到 20 章。");
   }
   const titles = skeleton.chapters.map((chapter) => chapter.title?.trim());
   if (titles.some((title) => !title) || new Set(titles).size !== titles.length) {
@@ -1504,8 +1516,10 @@ function mergeCoursePlanningStages(skeleton: CourseSkeleton, courseBible: Course
   const chapters = skeleton.chapters.map((chapter) => {
     const contract = contracts.get(chapter.title);
     if (!contract) throw new Error(`章节契约缺失：${chapter.title}`);
+    const { depth, ...rest } = chapter;
     return {
-      ...chapter,
+      ...rest,
+      depthWeight: depth ?? "normal",
       contract,
     };
   });
@@ -1529,6 +1543,7 @@ function stripGeneratedChapterFields(chapter: Chapter): Omit<Chapter, "id" | "co
     connectionFromPrevious: chapter.connectionFromPrevious,
     setupForNext: chapter.setupForNext,
     time: chapter.time,
+    depthWeight: chapter.depthWeight,
     sections: chapter.sections,
     qualityReport: chapter.qualityReport,
     generationJobId: chapter.generationJobId,

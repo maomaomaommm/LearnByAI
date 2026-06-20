@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { FormEvent, useState } from "react";
-import { ChapterLength } from "@/lib/types";
+import { ChapterDepthWeight, CourseDifficulty } from "@/lib/types";
 
 export const JOB_STATUS_LABEL: Record<string, string> = {
   pending: "待处理",
@@ -36,10 +36,16 @@ export const USAGE_ACTION_LABEL: Record<string, string> = {
   export: "导出",
 };
 
-export const LENGTH_LABEL: Record<ChapterLength, string> = {
-  short: "短",
-  medium: "中",
-  long: "长",
+export const DIFFICULTY_LABEL: Record<CourseDifficulty, string> = {
+  intro: "入门科普",
+  intermediate: "进阶系统",
+  research: "研究前沿",
+};
+
+export const DEPTH_LABEL: Record<ChapterDepthWeight, string> = {
+  core: "核心章",
+  normal: "常规章",
+  light: "轻量章",
 };
 
 export function AdminLogoutButton() {
