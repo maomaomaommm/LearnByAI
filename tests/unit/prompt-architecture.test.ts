@@ -50,16 +50,23 @@ test("chapter writer prompt uses per-chapter depthWeight for adaptive length", (
   const lightPrompt = buildChapterWriterPrompt(makeCourse("light"), makeCourse("light").chapters[0], { chapterIndex: 0 });
   const corePrompt = buildChapterWriterPrompt(makeCourse("core"), makeCourse("core").chapters[0], { chapterIndex: 0 });
 
-  // light chapters target a smaller range than core chapters
-  assert.match(lightPrompt, /4,000 到 7,000/u);
-  assert.match(corePrompt, /13,000 到 18,000/u);
+  // depth standard (qualitative) + a soft prose-only band (excludes code/exercises)
+  assert.match(corePrompt, /把难点彻底讲透/u);
+  assert.match(lightPrompt, /点到为止/u);
+  assert.match(corePrompt, /正文讲解文字大致 12,000 到 16,000 字/u);
+  assert.match(corePrompt, /仅指正文讲解文字，不含代码、块公式、练习、拓展/u);
   assert.match(corePrompt, /章节契约/u);
   assert.match(corePrompt, /forbiddenEarlyTopics/u);
+  // content scope is the primary lever; core requires more than light
+  assert.match(corePrompt, /至少 3 个完整的 worked example/u);
+  assert.match(lightPrompt, /留到后续核心章/u);
+  // code/formulas must be explained, not used to pad length
+  assert.match(corePrompt, /不得用代码或公式堆砌/u);
 
-  // depthWeight -> maxTokens ceiling
+  // depthWeight -> maxTokens safety net (generous; never used to cap normal length)
   assert.equal(getChapterDepthGuide("light").maxTokens, 12288);
   assert.equal(getChapterDepthGuide("normal").maxTokens, 18432);
-  assert.equal(getChapterDepthGuide("core").maxTokens, 24576);
+  assert.equal(getChapterDepthGuide("core").maxTokens, 32000);
   assert.equal(getChapterDepthGuide(undefined).maxTokens, 18432);
 
   // generation profile must no longer leak into the writing prompt
