@@ -19,7 +19,7 @@ import {
   unbanAdminUser,
   updateAdminCourse,
 } from "@/lib/adminData";
-import { Chapter, CourseDifficulty } from "@/lib/types";
+import { Chapter, CourseDifficulty, ExplanationStyle, LearningMode } from "@/lib/types";
 
 type AdminActionInput =
   | { action: "cancel_job"; jobId?: string }
@@ -31,8 +31,8 @@ type AdminActionInput =
   | { action: "repair_chapter_status"; courseId?: string; chapterId?: string; status?: Chapter["status"] }
   | { action: "delete_chapter"; courseId?: string; chapterId?: string }
   | { action: "delete_course"; courseId?: string }
-  | { action: "create_course"; userId?: string; topic?: string; goal?: string; background?: string; preference?: string; chapterCount?: number; difficulty?: CourseDifficulty }
-  | { action: "update_course"; courseId?: string; topic?: string; goal?: string; background?: string; preference?: string; chapterCount?: number; difficulty?: CourseDifficulty }
+  | { action: "create_course"; userId?: string; topic?: string; goal?: string; background?: string; preference?: string; styles?: ExplanationStyle[]; learningMode?: LearningMode; chapterCount?: number; difficulty?: CourseDifficulty }
+  | { action: "update_course"; courseId?: string; topic?: string; goal?: string; background?: string; preference?: string; styles?: ExplanationStyle[]; learningMode?: LearningMode; chapterCount?: number; difficulty?: CourseDifficulty }
   | { action: "delete_user"; userId?: string }
   | { action: "ban_user"; userId?: string }
   | { action: "unban_user"; userId?: string }
@@ -119,6 +119,8 @@ function readCourseInput(input: {
   goal?: string;
   background?: string;
   preference?: string;
+  styles?: ExplanationStyle[];
+  learningMode?: LearningMode;
   chapterCount?: number;
   difficulty?: CourseDifficulty;
 }) {
@@ -132,6 +134,8 @@ function readCourseInput(input: {
     goal: input.goal,
     background: input.background ?? "",
     preference: input.preference ?? "",
+    styles: input.styles,
+    learningMode: input.learningMode,
     chapterCount: Number.isFinite(parsedCount) ? Math.min(20, Math.max(3, Math.round(parsedCount))) : 8,
     difficulty: (input.difficulty === "intro" || input.difficulty === "research" ? input.difficulty : "intermediate") as CourseDifficulty,
   };

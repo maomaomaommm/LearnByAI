@@ -55,17 +55,20 @@ export default function CreateCoursePage() {
     setProgress(3);
     setProgressStage("分析你的目标与基础");
     
-    const values = Object.fromEntries(new FormData(event.currentTarget));
+    const formData = new FormData(event.currentTarget);
+    const values = Object.fromEntries(formData);
     const customCount = Number(values.chapterCountCustom);
     const presetCount = Number(values.chapterCountPreset);
     const chapterCount = Number.isFinite(customCount) && customCount > 0
       ? customCount
       : (Number.isFinite(presetCount) && presetCount > 0 ? presetCount : 8);
+    const styles = formData.getAll("styles").map(String);
     const input = {
       topic: String(values.topic),
       goal: String(values.goal),
       background: String(values.background),
-      preference: String(values.preference),
+      styles,
+      learningMode: String(values.learningMode || "standard"),
       chapterCount,
       difficulty: String(values.difficulty || "intermediate"),
       generationProfile: String(values.generationProfile || "fast"),
@@ -151,16 +154,45 @@ export default function CreateCoursePage() {
                 </div>
 
                 <div className="grid gap-5 md:grid-cols-2">
+                  <div className="rounded-lg border border-border bg-card p-5 md:col-span-2">
+                    <div className="mb-3 flex items-center gap-2">
+                      <GraduationCap size={16} className="text-foreground" />
+                      <h2 className="text-sm font-semibold text-foreground">
+                        讲解风格 <span className="text-xs font-normal text-muted-foreground">（可多选）</span>
+                      </h2>
+                    </div>
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      {[
+                        ["intuition", "直觉优先", "先讲清“为什么”，建立直觉再形式化"],
+                        ["example", "例子说明", "例子先行，以例带理"],
+                        ["rigor", "严谨推导", "完整推导，讲究严谨"],
+                        ["analogy", "类比通俗", "用熟悉事物打比方，降低门槛"],
+                        ["code", "公式代码", "公式配可运行代码，理论与实现并行"],
+                      ].map(([value, label, description]) => (
+                        <label
+                          key={value}
+                          className="flex cursor-pointer items-start gap-2 rounded-md border border-border bg-background p-3 text-sm has-[:checked]:border-foreground"
+                        >
+                          <input type="checkbox" name="styles" value={value} className="mt-0.5" />
+                          <span>
+                            <span className="font-medium text-foreground">{label}</span>
+                            <span className="mt-1 block text-xs text-muted-foreground">{description}</span>
+                          </span>
+                        </label>
+                      ))}
+                    </div>
+                    <p className="mt-2 text-xs text-muted-foreground">不选或全选 = 均衡讲解；多选时系统会侧重并自然融合，不会让对立风格互相打架。</p>
+                  </div>
                   <div className="rounded-lg border border-border bg-card p-5">
                     <div className="mb-3 flex items-center gap-2">
                       <GraduationCap size={16} className="text-foreground" />
-                      <h2 className="text-sm font-semibold text-foreground">偏好的讲解方式</h2>
+                      <h2 className="text-sm font-semibold text-foreground">学习方式</h2>
                     </div>
-                    <select name="preference" defaultValue="直觉结合公式、代码和论文案例" className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:border-foreground">
-                      <option>直觉结合公式、代码和论文案例</option>
-                      <option>大量具体例子</option>
-                      <option>严谨数学推导</option>
-                      <option>项目驱动学习</option>
+                    <select name="learningMode" defaultValue="standard" className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:border-foreground">
+                      <option value="standard">标准教材 · 系统讲授（默认）</option>
+                      <option value="project">项目驱动 · 围绕贯穿项目</option>
+                      <option value="exercise">习题驱动 · 问题与练习推进</option>
+                      <option value="case">案例驱动 · 真实案例带原理</option>
                     </select>
                   </div>
                   <div className="rounded-lg border border-border bg-card p-5">

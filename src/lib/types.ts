@@ -14,6 +14,10 @@ export type ChapterDepthWeight = "core" | "normal" | "light";
 
 export type GenerationProfile = "fast" | "deep";
 
+export type ExplanationStyle = "intuition" | "example" | "rigor" | "analogy" | "code";
+
+export type LearningMode = "standard" | "project" | "exercise" | "case";
+
 export type Chapter = {
   id: string;
   title: string;
@@ -88,7 +92,9 @@ export type Course = {
   topic: string;
   goal: string;
   background: string;
-  preference: string;
+  preference?: string;
+  styles: ExplanationStyle[];
+  learningMode: LearningMode;
   chapterCount: number;
   difficulty: CourseDifficulty;
   generationProfile?: GenerationProfile;

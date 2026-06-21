@@ -23,7 +23,7 @@ test("login does not create a browser-local API identity", async ({ page }) => {
       topic: "Local Identity",
       goal: "Verify identity header",
       background: "Local beta user",
-      preference: "Concise",
+      styles: ["intuition"], learningMode: "standard",
       chapterCount: 5, difficulty: "intermediate",
     },
   });

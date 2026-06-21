@@ -1,25 +1,31 @@
-import { Course, CourseDifficulty, GenerationProfile } from "./types";
+import { buildStyleGuidance, STYLE_LABEL } from "./prompts/styleGuidance";
+import { Course, CourseDifficulty, ExplanationStyle, GenerationProfile, LearningMode } from "./types";
 
 export function createMockCourse(input: {
   topic: string;
   goal: string;
   background: string;
-  preference: string;
+  preference?: string;
+  styles: ExplanationStyle[];
+  learningMode: LearningMode;
   chapterCount: number;
   difficulty: CourseDifficulty;
   generationProfile?: GenerationProfile;
   includeRecentResearch?: boolean;
 }): Course {
   const firstChapterId = crypto.randomUUID();
+  const styleSummary = input.styles.length
+    ? input.styles.map((style) => STYLE_LABEL[style]).join("、")
+    : input.preference?.trim() || "均衡讲解";
   return {
     id: crypto.randomUUID(),
     ...input,
-    profile: `课程将面向具备「${input.background}」基础的学习者，采用「${input.preference}」的方式推进，目标是：${input.goal}。`,
+    profile: `课程将面向具备「${input.background}」基础的学习者，采用「${styleSummary}」的方式推进，目标是：${input.goal}。`,
     createdAt: new Date().toISOString(),
     courseBible: {
       targetLearner: input.background,
       finalOutcomes: [input.goal, "能够解释核心概念并完成一个小型实践项目"],
-      teachingStyle: input.preference,
+      teachingStyle: buildStyleGuidance(input.styles, input.preference),
       prerequisites: ["基础数学", "基本编程能力", "阅读技术文档的能力"],
       globalNarrative: `从问题意识出发，逐步建立 ${input.topic} 的概念、方法、实践与论文阅读能力。`,
       terminology: [

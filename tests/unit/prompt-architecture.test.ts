@@ -18,7 +18,8 @@ test("course planner prompt asks for chapter contracts", () => {
     topic: "信号处理",
     goal: "系统学习",
     background: "会基础数学",
-    preference: "公式结合例题",
+    styles: ["intuition", "rigor"],
+    learningMode: "project",
     chapterCount: 8,
     difficulty: "intermediate",
   });
@@ -26,14 +27,21 @@ test("course planner prompt asks for chapter contracts", () => {
   assert.match(prompt, /chapterContracts/u);
   assert.match(prompt, /章节契约/u);
   assert.doesNotMatch(prompt, /[�]/u);
+  // style + learning-mode injection (no bare preference field)
+  assert.match(prompt, /讲解风格/u);
+  assert.match(prompt, /直觉优先/u);
+  assert.match(prompt, /学习方式约束/u);
+  assert.match(prompt, /贯穿全程的项目/u);
+  assert.doesNotMatch(prompt, /讲解偏好：/u);
 });
 
-test("course skeleton prompt injects chapter count, difficulty and per-chapter depth", () => {
+test("course skeleton prompt injects chapter count, difficulty, per-chapter depth and style/mode", () => {
   const prompt = buildCourseSkeletonPrompt({
     topic: "深度学习",
     goal: "系统学习",
     background: "会 Python",
-    preference: "公式结合例题",
+    styles: ["example"],
+    learningMode: "exercise",
     chapterCount: 14,
     difficulty: "research",
   });
@@ -44,6 +52,23 @@ test("course skeleton prompt injects chapter count, difficulty and per-chapter d
   assert.match(prompt, /core/u);
   assert.doesNotMatch(prompt, /每周学习/u);
   assert.doesNotMatch(prompt, /章节篇幅/u);
+  // style emphasis + learning-mode structure constraint
+  assert.match(prompt, /侧重 例子说明/u);
+  assert.match(prompt, /学习方式约束/u);
+  assert.match(prompt, /问题主线/u);
+});
+
+test("course skeleton prompt with no styles falls back to balanced", () => {
+  const prompt = buildCourseSkeletonPrompt({
+    topic: "深度学习",
+    goal: "系统学习",
+    background: "会 Python",
+    styles: [],
+    learningMode: "standard",
+    chapterCount: 8,
+    difficulty: "intermediate",
+  });
+  assert.match(prompt, /讲解风格：均衡/u);
 });
 
 test("chapter writer prompt uses per-chapter depthWeight for adaptive length", () => {
@@ -71,6 +96,18 @@ test("chapter writer prompt uses per-chapter depthWeight for adaptive length", (
 
   // generation profile must no longer leak into the writing prompt
   assert.doesNotMatch(corePrompt, /生成模式/u);
+
+  // style guidance + learning mode injected, no bare preference label
+  assert.match(corePrompt, /讲解风格/u);
+  assert.doesNotMatch(corePrompt, /讲解偏好：/u);
+
+  // diagram policy: scene->type mapping + necessity gate, NO per-chapter count numbers
+  assert.match(corePrompt, /场景→类型/u);
+  assert.match(corePrompt, /必要性闸门/u);
+  assert.match(corePrompt, /stateDiagram-v2/u);
+  assert.match(corePrompt, /sequenceDiagram/u);
+  assert.match(corePrompt, /不设每章张数与上限/u);
+  assert.doesNotMatch(corePrompt, /1 到 3 张/u);
 });
 
 test("chapter prompts preserve frontier evidence and recency constraints", () => {
@@ -95,7 +132,8 @@ test("course planning prompts split bible core from per-chapter contracts", () =
     topic: "电力电子控制",
     goal: "系统学习控制方法",
     background: "具备电路基础",
-    preference: "公式和案例结合",
+    styles: ["code"],
+    learningMode: "case",
     chapterCount: 8,
     difficulty: "intermediate",
   }, skeleton);
@@ -103,7 +141,8 @@ test("course planning prompts split bible core from per-chapter contracts", () =
     topic: "电力电子控制",
     goal: "系统学习控制方法",
     background: "具备电路基础",
-    preference: "公式和案例结合",
+    styles: ["code"],
+    learningMode: "case",
     chapterCount: 8,
     difficulty: "intermediate",
   }, skeleton, {
@@ -124,7 +163,8 @@ test("course planning prompts split bible core from per-chapter contracts", () =
     topic: "信号处理",
     goal: "系统学习",
     background: "会基础数学",
-    preference: "公式结合例题",
+    styles: [],
+    learningMode: "standard",
     chapterCount: 8,
     difficulty: "intermediate",
   }, "bad JSON"), /紧凑模式/u);
@@ -177,7 +217,8 @@ function makeCourse(depthWeight: Chapter["depthWeight"]): Course {
     topic: "信号处理",
     goal: "系统学习",
     background: "会基础数学",
-    preference: "公式结合例题",
+    styles: ["analogy"],
+    learningMode: "case",
     chapterCount: 8,
     difficulty: "intermediate",
     profile: "测试课程",

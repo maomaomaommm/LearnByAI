@@ -52,7 +52,7 @@ test("real provider smoke test covers course, chapter, tutor, and export", async
       topic: "Linear Regression",
       goal: "Understand least squares and basic diagnostics",
       background: "Basic Python",
-      preference: "Intuitive explanations with formulas",
+      styles: ["intuition", "code"], learningMode: "standard",
       chapterCount: 5, difficulty: "intermediate", generationProfile: "deep",
     },
   });

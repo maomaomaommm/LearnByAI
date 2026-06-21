@@ -37,6 +37,39 @@ test("normalizeCourse fills defaults for legacy course payloads", () => {
   assert.equal(n.generationProfile, "fast", "legacy 'standard' collapses to 'fast'");
   assert.equal(n.includeRecentResearch, false);
   assert.equal(n.chapters[0].depthWeight, "normal", "missing depthWeight defaults to normal");
+  assert.deepEqual(n.styles, [], "missing styles defaults to empty array");
+  assert.equal(n.learningMode, "standard", "missing learningMode defaults to standard");
+  assert.equal(n.preference, "p", "legacy preference text is preserved");
+});
+
+test("normalizeCourse sanitizes styles/learningMode and keeps canonical order", () => {
+  const raw = {
+    id: "c3",
+    topic: "t",
+    goal: "g",
+    background: "b",
+    styles: ["code", "bogus", "intuition", "intuition"],
+    learningMode: "not-a-mode",
+    chapterCount: 5,
+    difficulty: "intro",
+    profile: "x",
+    courseBible: {
+      targetLearner: "",
+      finalOutcomes: [],
+      teachingStyle: "",
+      prerequisites: [],
+      globalNarrative: "",
+      terminology: [],
+      chapterDependencies: [],
+    },
+    createdAt: "now",
+    chapters: [],
+  } as unknown as Course;
+
+  const n = normalizeCourse(raw);
+
+  assert.deepEqual(n.styles, ["intuition", "code"], "invalid styles dropped, deduped, canonical order");
+  assert.equal(n.learningMode, "standard", "invalid learningMode falls back to standard");
 });
 
 test("normalizeCourse preserves valid new-shape values", () => {
@@ -46,6 +79,8 @@ test("normalizeCourse preserves valid new-shape values", () => {
     goal: "g",
     background: "b",
     preference: "p",
+    styles: ["rigor", "example"],
+    learningMode: "project",
     chapterCount: 12,
     difficulty: "research",
     generationProfile: "deep",
@@ -73,4 +108,6 @@ test("normalizeCourse preserves valid new-shape values", () => {
   assert.equal(n.generationProfile, "deep");
   assert.equal(n.includeRecentResearch, true);
   assert.equal(n.chapters[0].depthWeight, "core");
+  assert.deepEqual(n.styles, ["example", "rigor"], "valid styles preserved in canonical order");
+  assert.equal(n.learningMode, "project");
 });

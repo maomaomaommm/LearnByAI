@@ -1,6 +1,7 @@
 import { expectedChapterHeading } from "@/lib/chapterHeadings";
 import { Chapter, ChapterDepthWeight, Course } from "@/lib/types";
 import { textbookSkill } from "./textbookSkill";
+import { buildTeachingGuidance } from "./styleGuidance";
 
 type ChapterDepthGuide = {
   label: string;
@@ -117,6 +118,12 @@ ${depthGuide.scope.map((item) => `- ${item}`).join("\n")}
 - 公式必须规范：行内公式用 $...$；独立公式、推导、cases、aligned、矩阵必须用 $$...$$ 块公式。
 - 如果确实写代码，必须放在 fenced code block 中，并保留语言名；禁止写不确定注释、伪造变量名或“可能/需检查惯例”这类未清理草稿痕迹。
 - 代码块务必标注语言（如 python、bash）；纯文本示意图也要用 text 作为语言名的围栏代码块包裹。
+- 图示是默认能力（Mermaid，按需自动配图，平台会把 \`\`\`mermaid 围栏渲染成图）。判定与画法：
+  - 触发（何时考虑画）：当正文出现流程、状态/生命周期、交互时序、数据结构/类、数据模型/实体关系、概念关系或时间演进时，考虑配一张图。
+  - 场景→类型：流程→flowchart TD；交互/协议/调用时序→sequenceDiagram；状态/生命周期→stateDiagram-v2；数据结构/类关系→classDiagram；数据模型/实体关系→erDiagram；概念总览→mindmap；时间演进→timeline。
+  - 必要性闸门（每张图落笔前都要过）：这张图是否比纯文字或表格更能说清这段关系、是否承载了文字没完全表达的信息？只起装饰、复述文字、或可有可无的图一律不画——图必须为读者省下理解成本才配留下。
+  - 不设每章张数与上限：画几张由通过闸门的场景数自然决定；该画则画，没有合适场景就一张都不画，绝不为凑图而画。
+  - 每张图前后都必须有文字讲解，图只是佐证不是主体；节点文字保持简短，避免中文括号、引号、分号等特殊字符（必要时用英文别名加中文标签 A["标签"]），确保能被 Mermaid 正确解析。
 - LaTeX 文本命令内若含下划线（如节点名 __end__、变量名 node_name），必须转义为 \\_，例如写成 \\text{\\_\\_end\\_\\_}，否则公式会渲染失败。
 - 严禁把中文正文、习题标题、说明文字包进 $$...$$；$$ 只能包裹纯数学表达式。
 - 如果本章 requiredTopics 包含联网检索发现的近期论文或方法，必须用完整小节展开其动机、原理、证据状态及与经典方法的对比，不能只在一句话里点名带过。
@@ -129,7 +136,7 @@ ${depthGuide.scope.map((item) => `- ${item}`).join("\n")}
 主题：${course.topic}
 学习目标：${course.goal}
 学习者基础：${course.background}
-讲解偏好：${course.preference}
+${buildTeachingGuidance(course.styles, course.learningMode, course.preference)}
 
 Course Bible:
 ${JSON.stringify(course.courseBible, null, 2)}

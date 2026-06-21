@@ -5,8 +5,9 @@ import { AdminAppSettings, getAdminAppSettings, saveAdminAppSettings } from "./a
 import { MODEL_AGENT_NAMES, ModelOverrides, normalizeModelOverrides } from "./modelOverrides";
 import { createSupabaseServiceClient } from "./supabase/server";
 import { deleteServerCourseByAdmin } from "./serverStore";
-import { normalizeCourse } from "./normalizeCourse";
-import { Chapter, Course, CourseDifficulty, ExportJob, GenerationJob, QualityReport, UsageEvent } from "./types";
+import { normalizeCourse, normalizeLearningMode, normalizeStyles } from "./normalizeCourse";
+import { buildStyleGuidance } from "./prompts/styleGuidance";
+import { Chapter, Course, CourseDifficulty, ExplanationStyle, ExportJob, GenerationJob, LearningMode, QualityReport, UsageEvent } from "./types";
 
 export const ACTIVE_ADMIN_JOB_STATUSES: GenerationJob["status"][] = ["pending", "queued", "running", "retrying"];
 export const INACTIVE_ADMIN_JOB_STATUSES: GenerationJob["status"][] = ["succeeded", "failed"];
@@ -565,24 +566,31 @@ export async function createAdminCourse(input: {
   goal: string;
   background: string;
   preference: string;
+  styles?: ExplanationStyle[];
+  learningMode?: LearningMode;
   chapterCount: number;
   difficulty: CourseDifficulty;
 }, context: AdminActionContext) {
   const now = new Date().toISOString();
+  const preference = input.preference.trim();
+  const styles = normalizeStyles(input.styles);
+  const learningMode = normalizeLearningMode(input.learningMode);
   const course: Course = {
     id: crypto.randomUUID(),
     userId: input.userId,
     topic: input.topic.trim(),
     goal: input.goal.trim(),
     background: input.background.trim(),
-    preference: input.preference.trim(),
+    preference,
+    styles,
+    learningMode,
     chapterCount: input.chapterCount,
     difficulty: input.difficulty,
     profile: "课程规划已进入队列。",
     courseBible: {
       targetLearner: input.background.trim(),
       finalOutcomes: [input.goal.trim()],
-      teachingStyle: input.preference.trim(),
+      teachingStyle: buildStyleGuidance(styles, preference),
       prerequisites: [],
       globalNarrative: "等待 ARCHITECT 生成课程全局设定。",
       terminology: [],
@@ -614,6 +622,8 @@ export async function updateAdminCourse(input: {
   goal: string;
   background: string;
   preference: string;
+  styles?: ExplanationStyle[];
+  learningMode?: LearningMode;
   chapterCount: number;
   difficulty: CourseDifficulty;
 }, context: AdminActionContext) {
@@ -624,6 +634,8 @@ export async function updateAdminCourse(input: {
     goal: input.goal.trim(),
     background: input.background.trim(),
     preference: input.preference.trim(),
+    styles: input.styles ? normalizeStyles(input.styles) : course.styles,
+    learningMode: input.learningMode ? normalizeLearningMode(input.learningMode) : course.learningMode,
     chapterCount: input.chapterCount,
     difficulty: input.difficulty,
     updatedAt: new Date().toISOString(),

@@ -8,13 +8,17 @@ import { publicGenerationJob } from "@/lib/publicGenerationJob";
 import { withQuotaConsumption } from "@/lib/quota";
 import { listServerCourses, saveServerCourse, saveServerGenerationJob } from "@/lib/serverStore";
 import { resolveModelOverrides } from "@/lib/userModelConfig";
-import { Course, CourseDifficulty, GenerationProfile } from "@/lib/types";
+import { normalizeLearningMode, normalizeStyles } from "@/lib/normalizeCourse";
+import { buildStyleGuidance } from "@/lib/prompts/styleGuidance";
+import { Course, CourseDifficulty, ExplanationStyle, GenerationProfile, LearningMode } from "@/lib/types";
 
 type CourseInput = {
   topic: string;
   goal: string;
   background: string;
-  preference: string;
+  preference?: string;
+  styles?: ExplanationStyle[];
+  learningMode?: LearningMode;
   chapterCount?: number;
   difficulty?: CourseDifficulty;
   generationProfile?: GenerationProfile;
@@ -77,13 +81,18 @@ function scheduleCoursePlanning(request: Request, jobId: string) {
 }
 
 function createPendingCourse(input: CourseInput, userId: string): Course {
+  const styles = normalizeStyles(input.styles);
+  const learningMode = normalizeLearningMode(input.learningMode);
+  const preference = typeof input.preference === "string" ? input.preference : undefined;
   return {
     id: crypto.randomUUID(),
     userId,
     topic: input.topic,
     goal: input.goal,
     background: input.background,
-    preference: input.preference,
+    preference,
+    styles,
+    learningMode,
     chapterCount: normalizeChapterCount(input.chapterCount),
     difficulty: normalizeDifficulty(input.difficulty),
     generationProfile: normalizeGenerationProfile(input.generationProfile),
@@ -92,7 +101,7 @@ function createPendingCourse(input: CourseInput, userId: string): Course {
     courseBible: {
       targetLearner: input.background,
       finalOutcomes: [input.goal],
-      teachingStyle: input.preference,
+      teachingStyle: buildStyleGuidance(styles, preference),
       prerequisites: [],
       globalNarrative: "课程规划队列中。",
       terminology: [],

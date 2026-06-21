@@ -1,15 +1,23 @@
-import type { ChapterDepthWeight, CourseBible, CourseDifficulty } from "@/lib/types";
+import type { ChapterDepthWeight, CourseBible, CourseDifficulty, ExplanationStyle, LearningMode } from "@/lib/types";
+import { buildTeachingGuidance, LEARNING_MODE_STRUCTURE_RULE } from "./styleGuidance";
 
 export type CoursePlannerInput = {
   topic: string;
   goal: string;
   background: string;
-  preference: string;
+  preference?: string;
+  styles: ExplanationStyle[];
+  learningMode: LearningMode;
   chapterCount: number;
   difficulty: CourseDifficulty;
   researchBrief?: string;
   researchDate?: string;
 };
+
+/** 讲解风格 + 学习方式 的组合引导（替换原先裸 preference 文本）。 */
+function teachingGuidance(input: CoursePlannerInput) {
+  return buildTeachingGuidance(input.styles, input.learningMode, input.preference);
+}
 
 export type CourseSkeleton = {
   profile: string;
@@ -60,7 +68,7 @@ export function buildCourseSkeletonPrompt(input: CoursePlannerInput) {
 学习主题：${input.topic}
 具体目标：${input.goal}
 当前基础：${input.background}
-讲解偏好：${input.preference}
+${teachingGuidance(input)}
 难度基调：${difficultyLabel(input.difficulty)}
 难度说明：${difficultyGuide(input.difficulty)}
 
@@ -92,6 +100,7 @@ ${input.researchBrief ?? "未提供"}
 硬性要求：
 - ${chapterCountRule(input.chapterCount)}
 - ${DEPTH_RULE}
+- 学习方式约束：${LEARNING_MODE_STRUCTURE_RULE[input.learningMode]}
 - 规划深浅与口吻须符合上述难度基调。
 - 每个字符串不超过 80 个中文字符。
 - 章节必须前后递进，不能只是主题清单。
@@ -109,8 +118,9 @@ export function buildCourseSkeletonCompactPrompt(input: CoursePlannerInput, reas
 课程主题：${input.topic}
 目标：${input.goal}
 基础：${input.background}
-偏好：${input.preference}
+${teachingGuidance(input)}
 难度基调：${difficultyLabel(input.difficulty)}
+学习方式约束：${LEARNING_MODE_STRUCTURE_RULE[input.learningMode]}
 
 只输出合法 JSON，结构为：
 {"profile":"学习路线说明","chapters":[{"title":"章节标题","description":"内容概述","purpose":"教学任务","connectionFromPrevious":"与上一章关系","setupForNext":"为下一章铺垫","depth":"normal","time":{"readingMinutes":150,"exerciseMinutes":90,"practiceMinutes":120,"extensionMinutes":60}}]}
@@ -130,7 +140,7 @@ export function buildCourseBiblePrompt(input: CoursePlannerInput, skeleton: Cour
 - 主题：${input.topic}
 - 目标：${input.goal}
 - 基础：${input.background}
-- 偏好：${input.preference}
+${teachingGuidance(input)}
 
 联网检索日期：${input.researchDate ?? "未提供"}
 联网检索到的近期论文摘要：
@@ -198,7 +208,7 @@ export function buildChapterContractPrompt(
 
 课程主题：${input.topic}
 目标：${input.goal}
-讲解偏好：${input.preference}
+${teachingGuidance(input)}
 联网检索日期：${input.researchDate ?? "未提供"}
 联网检索到的近期论文摘要：
 ${input.researchBrief ?? "未提供"}
@@ -268,7 +278,7 @@ export function buildCoursePlannerPrompt(input: CoursePlannerInput) {
 学习主题：${input.topic}
 具体目标：${input.goal}
 当前基础：${input.background}
-讲解偏好：${input.preference}
+${teachingGuidance(input)}
 难度基调：${difficultyLabel(input.difficulty)}
 目标章节数：${input.chapterCount} 章
 
@@ -345,6 +355,7 @@ JSON 必须符合下面结构：
 
 要求：
 - ${chapterCountRule(input.chapterCount)}
+- 学习方式约束：${LEARNING_MODE_STRUCTURE_RULE[input.learningMode]}
 - 每章必须有明确依赖、承接关系和向后铺垫，避免互不相关的主题列表。
 - chapterContracts 必须与 chapters 一一对应；chapters[i].contract.chapterTitle 必须等于 chapters[i].title。
 - terminology 的 introducedIn 必须指向实际章节标题。
@@ -371,7 +382,7 @@ export function buildCoursePlannerJsonRepairPrompt(input: CoursePlannerInput, in
 - 学习主题：${input.topic}
 - 具体目标：${input.goal}
 - 当前基础：${input.background}
-- 讲解偏好：${input.preference}
+${teachingGuidance(input)}
 - 难度基调：${difficultyLabel(input.difficulty)}
 - 目标章节数：${input.chapterCount} 章
 
@@ -407,7 +418,7 @@ ${reason}
 - 学习主题：${input.topic}
 - 具体目标：${input.goal}
 - 当前基础：${input.background}
-- 讲解偏好：${input.preference}
+${teachingGuidance(input)}
 - 难度基调：${difficultyLabel(input.difficulty)}
 - 目标章节数：${input.chapterCount} 章
 

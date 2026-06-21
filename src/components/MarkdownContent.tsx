@@ -103,6 +103,67 @@ function CodeCopyButton({ code }: { code: string }) {
   );
 }
 
+let mermaidLoader: Promise<typeof import("mermaid").default> | null = null;
+function loadMermaid() {
+  if (!mermaidLoader) {
+    mermaidLoader = import("mermaid").then((mod) => {
+      mod.default.initialize({
+        startOnLoad: false,
+        theme: "dark",
+        securityLevel: "loose",
+        fontFamily: "inherit",
+        flowchart: { htmlLabels: true },
+      });
+      return mod.default;
+    });
+  }
+  return mermaidLoader;
+}
+
+function MermaidDiagram({ code }: { code: string }) {
+  const [svg, setSvg] = useState("");
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    setSvg("");
+    setFailed(false);
+    loadMermaid()
+      .then((mermaid) => mermaid.render(`mmd-${Math.random().toString(36).slice(2)}`, code.trim()))
+      .then(({ svg }) => {
+        if (!cancelled) setSvg(svg);
+      })
+      .catch(() => {
+        if (!cancelled) setFailed(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [code]);
+
+  // Render failure (invalid diagram syntax) falls back to showing the source.
+  if (failed) {
+    return (
+      <pre className="my-4 overflow-x-auto rounded-lg bg-[#0d1117] p-4 text-xs text-[#c9d1d9]">
+        {code}
+      </pre>
+    );
+  }
+  if (!svg) {
+    return (
+      <div className="my-4 rounded-lg border border-border bg-muted/30 p-4 text-xs text-muted-foreground">
+        正在渲染图示…
+      </div>
+    );
+  }
+  return (
+    <div
+      className="my-4 flex justify-center overflow-x-auto rounded-lg border border-border bg-muted/20 p-4 [&_svg]:h-auto [&_svg]:max-w-full"
+      dangerouslySetInnerHTML={{ __html: svg }}
+    />
+  );
+}
+
 export function MarkdownContent({
   content,
   onTextSelect,
@@ -168,6 +229,13 @@ export function MarkdownContent({
           ),
           pre: ({ children }) => {
             const code = getCodeText(children);
+            const child = Array.isArray(children) ? children[0] : children;
+            const childClass = isValidElement<{ className?: string }>(child)
+              ? child.props.className ?? ""
+              : "";
+            if (/\blanguage-mermaid\b/.test(childClass)) {
+              return <MermaidDiagram code={code} />;
+            }
             return (
               <div className="group relative my-4">
                 <pre className="my-0 overflow-x-auto rounded-lg bg-[#0d1117] p-4 pr-14 [&_*]:!bg-transparent [&_code]:!p-0 [&_code]:text-xs [&_code]:text-[#c9d1d9]">

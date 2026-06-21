@@ -1,4 +1,26 @@
-import { Chapter, Course } from "./types";
+import { Chapter, Course, ExplanationStyle, LearningMode } from "./types";
+
+const EXPLANATION_STYLES: readonly ExplanationStyle[] = ["intuition", "example", "rigor", "analogy", "code"];
+const LEARNING_MODES: readonly LearningMode[] = ["standard", "project", "exercise", "case"];
+
+/** 过滤为合法 ExplanationStyle 数组（去重 + 规范顺序），非数组/非法值丢弃。 */
+export function normalizeStyles(raw: unknown): ExplanationStyle[] {
+  if (!Array.isArray(raw)) return [];
+  const seen = new Set<ExplanationStyle>();
+  for (const value of raw) {
+    if (typeof value === "string" && (EXPLANATION_STYLES as readonly string[]).includes(value)) {
+      seen.add(value as ExplanationStyle);
+    }
+  }
+  return EXPLANATION_STYLES.filter((style) => seen.has(style));
+}
+
+/** 白名单校验 LearningMode，非法/缺失回退 standard。 */
+export function normalizeLearningMode(raw: unknown): LearningMode {
+  return typeof raw === "string" && (LEARNING_MODES as readonly string[]).includes(raw)
+    ? (raw as LearningMode)
+    : "standard";
+}
 
 /**
  * Backward-compatible normalization for courses read from persistence.
@@ -19,6 +41,8 @@ export function normalizeCourse(raw: Course): Course {
 
   return {
     ...raw,
+    styles: normalizeStyles(raw.styles),
+    learningMode: normalizeLearningMode(raw.learningMode),
     chapterCount: rawCount ?? (chapters.length || 8),
     difficulty: raw.difficulty ?? "intermediate",
     // Anything that is not the new "deep" profile (incl. legacy "standard" and

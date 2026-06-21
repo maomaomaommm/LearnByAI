@@ -78,7 +78,7 @@ test("course API isolates local beta users by header", async ({ request }) => {
       topic: "用户隔离测试",
       goal: "验证课程归属隔离",
       background: "本地 Beta 用户",
-      preference: "简洁说明",
+      styles: ["intuition"], learningMode: "standard",
       chapterCount: 5, difficulty: "intermediate",
     },
   });
@@ -110,7 +110,7 @@ test("local beta quota blocks over-limit course creation", async ({ request }) =
     topic: "Quota Test",
     goal: "Verify quota rejection",
     background: "Local beta user",
-    preference: "Concise",
+    styles: ["intuition"], learningMode: "standard",
     chapterCount: 5, difficulty: "intermediate",
   };
 
@@ -128,7 +128,7 @@ test("concurrent course creation cannot bypass local beta quota", async ({ reque
     topic: "Quota Race",
     goal: "Verify serialized quota checks",
     background: "Local beta user",
-    preference: "Concise",
+    styles: ["intuition"], learningMode: "standard",
     chapterCount: 5, difficulty: "intermediate",
   };
 
@@ -157,7 +157,7 @@ test("export downloads are isolated by local beta user", async ({ request }) => 
       topic: "Export Isolation",
       goal: "Verify export ownership",
       background: "Local beta user",
-      preference: "Concise",
+      styles: ["intuition"], learningMode: "standard",
       chapterCount: 5, difficulty: "intermediate",
     },
   });
@@ -209,7 +209,7 @@ test("export quota records only valid owned export attempts", async ({ request }
       topic: "Export Quota",
       goal: "Verify export quota audit",
       background: "Local beta user",
-      preference: "Concise",
+      styles: ["intuition"], learningMode: "standard",
       chapterCount: 5, difficulty: "intermediate",
     },
   });
@@ -261,7 +261,7 @@ test("course creation schedules first chapter in the background", async ({ reque
       topic: "Background Generation",
       goal: "Verify first chapter job starts without opening course page",
       background: "Local beta user",
-      preference: "Concise",
+      styles: ["intuition"], learningMode: "standard",
       chapterCount: 5, difficulty: "intermediate", generationProfile: "deep",
     },
   });
@@ -301,7 +301,7 @@ test("internal generation worker resumes queued course and chapter jobs", async 
       topic: "Worker Recovery",
       goal: "Verify internal worker can resume queued jobs",
       background: "Local beta user",
-      preference: "Concise",
+      styles: ["intuition"], learningMode: "standard",
       chapterCount: 5, difficulty: "intermediate", generationProfile: "deep",
     },
   });
@@ -350,7 +350,7 @@ test("trusted internal worker resumes an exact job without user headers", async 
       topic: "Secret Worker Recovery",
       goal: "Verify internal worker can run by secret and job id",
       background: "Local beta user",
-      preference: "Concise",
+      styles: ["intuition"], learningMode: "standard",
       chapterCount: 5, difficulty: "intermediate",
     },
   });
@@ -383,7 +383,7 @@ test("internal generation worker claims a queued job only once", async ({ reques
       topic: "Worker Claim",
       goal: "Verify duplicate workers do not process the same job",
       background: "Local beta user",
-      preference: "Concise",
+      styles: ["intuition"], learningMode: "standard",
       chapterCount: 5, difficulty: "intermediate",
     },
   });
@@ -412,7 +412,7 @@ test("chapter generation job respects generate_chapter quota", async ({ request 
       topic: "Chapter Quota",
       goal: "Verify chapter quota rejection",
       background: "Local beta user",
-      preference: "Concise",
+      styles: ["intuition"], learningMode: "standard",
       chapterCount: 5, difficulty: "intermediate", generationProfile: "deep",
     },
   });
@@ -456,7 +456,7 @@ test("chapter generation job can be retried through the job API", async ({ reque
       topic: "Retry Flow",
       goal: "Verify job retry",
       background: "Local beta user",
-      preference: "Concise",
+      styles: ["intuition"], learningMode: "standard",
       chapterCount: 5, difficulty: "intermediate", generationProfile: "deep",
     },
   });
@@ -499,7 +499,7 @@ test("legacy chapter generation endpoint is disabled without consuming quota", a
       topic: "Legacy Chapter",
       goal: "Verify old endpoint is disabled",
       background: "Local beta user",
-      preference: "Concise",
+      styles: ["intuition"], learningMode: "standard",
       title: "Legacy endpoint chapter",
       time: {
         readingMinutes: 10,
@@ -526,7 +526,7 @@ test("annotation history persists assistant messages server-side", async ({ requ
       topic: "Annotation Persistence",
       goal: "Verify anchored annotation persistence",
       background: "Local beta user",
-      preference: "Concise",
+      styles: ["intuition"], learningMode: "standard",
       chapterCount: 5, difficulty: "intermediate",
     },
   });
@@ -583,7 +583,7 @@ test("annotation creation rejects anchors owned by another user before consuming
       topic: "Annotation Isolation",
       goal: "Verify annotation anchor ownership",
       background: "Local beta user",
-      preference: "Concise",
+      styles: ["intuition"], learningMode: "standard",
       chapterCount: 5, difficulty: "intermediate",
     },
   });
@@ -632,7 +632,7 @@ test("annotation creation rejects a section outside the target chapter", async (
       topic: "Annotation Section Isolation",
       goal: "Verify section anchor validation",
       background: "Local beta user",
-      preference: "Concise",
+      styles: ["intuition"], learningMode: "standard",
       chapterCount: 5, difficulty: "intermediate",
     },
   });
