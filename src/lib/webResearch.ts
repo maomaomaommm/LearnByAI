@@ -1,7 +1,6 @@
 import "server-only";
 
 import { generateText, parseJson } from "./ai";
-import { getBaseAIConfig } from "./config";
 import { ModelOverrides } from "./modelOverrides";
 import { buildCourseResearchPrompt, CourseResearchInput } from "./prompts/courseResearch";
 import { safeErrorMessage } from "./safeError";
@@ -12,6 +11,22 @@ const STEP_TIMEOUT_MS = 15_000;
 const KIMI_SEARCH_TIMEOUT_MS = 60_000;
 
 const BROWSER_UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36";
+
+/**
+ * 联网检索第三层（Kimi $web_search）专用配置——独立于主 agent 的 LLM 配置。
+ * 它和 EXA / STEP 一样属于"服务器搜索基础设施"，用一个专用的 Moonshot/Kimi key，
+ * 不复用、也不污染那 7 个内容 agent 的模型（作者/助手/润色/审稿/tutor 等只走用户自配模型）。
+ * 未配置 KIMI_SEARCH_API_KEY 时本层直接跳过。
+ */
+type KimiSearchConfig = { apiKey: string; baseUrl: string; model: string };
+
+function getKimiSearchConfig(): KimiSearchConfig | undefined {
+  const apiKey = process.env.KIMI_SEARCH_API_KEY;
+  if (!apiKey) return undefined;
+  const baseUrl = (process.env.KIMI_SEARCH_BASE_URL || "https://api.moonshot.cn/v1").replace(/\/+$/, "");
+  const model = process.env.KIMI_SEARCH_MODEL || "kimi-k2.6";
+  return { apiKey, baseUrl, model };
+}
 
 type ExaResult = {
   url: string;
@@ -60,11 +75,16 @@ export async function researchLatestCourseKnowledge(
     console.warn("[webResearch] STEP_SEARCH_API_KEY 未配置，跳过 StepFun");
   }
 
-  // 第三层：Kimi $web_search（使用已配置的 AI 代理）
-  try {
-    return await searchKimi(query, overrides);
-  } catch (error) {
-    console.warn("[webResearch] Kimi 搜索失败，跳过联网检索:", safeErrorMessage(error, "Kimi search error"));
+  // 第三层：Kimi $web_search（专用 search key，独立于主 agent 模型）
+  const kimiConfig = getKimiSearchConfig();
+  if (kimiConfig) {
+    try {
+      return await searchKimi(query, kimiConfig);
+    } catch (error) {
+      console.warn("[webResearch] Kimi 搜索失败，跳过联网检索:", safeErrorMessage(error, "Kimi search error"));
+    }
+  } else {
+    console.warn("[webResearch] KIMI_SEARCH_API_KEY 未配置，跳过 Kimi");
   }
 
   // 最终兜底：静默跳过
@@ -205,10 +225,7 @@ async function searchStep(query: string): Promise<string> {
   }
 }
 
-async function searchKimi(query: string, overrides?: ModelOverrides): Promise<string> {
-  const config = getBaseAIConfig(overrides);
-  if (!config.apiKey) throw new Error("AI_API_KEY 未配置");
-
+async function searchKimi(query: string, config: KimiSearchConfig): Promise<string> {
   const headers = {
     Authorization: `Bearer ${config.apiKey}`,
     "Content-Type": "application/json",
@@ -266,6 +283,9 @@ async function searchKimi(query: string, overrides?: ModelOverrides): Promise<st
         {
           role: "tool",
           tool_call_id: toolCall.id,
+          // Moonshot's official $web_search requires the tool name on the result
+          // message; without it the builtin search round can be rejected.
+          name: "$web_search",
           content: toolCall.function.arguments,
         },
       ],

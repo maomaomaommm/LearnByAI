@@ -9,8 +9,10 @@
 
 - **阶段 1–11 全部实现完成**：类型 / normalizeCourse / styleGuidance（新建）/ 架构师+作者提示词 / Mermaid 渲染器 / API 校验 / 前端表单+排版 / Admin 透传 / mock+客户端 / 单测+E2E 全部就绪。
 - **阶段 12 本地门禁通过**：`test:phase-gate` 全绿（lint + 183 单测 + schema + build + 18 E2E）；MiMo 实跑验证：多选风格（analogy+code）与 project 学习方式已落库并注入提示词，core 章生成正常（~11.9k 正文）且**自动产出 2 张 mermaid 流程图**（图默认化生效）。
-- **阶段 13.1 完成**：`deploy_remote.py` 已在 build 前加 `npm install`（增量），解决 mermaid 新依赖在复用 node_modules 时缺失会导致线上构建失败的问题（R1）。
-- **待办（需用户确认后执行）**：13.2 提交+推送+部署、13.3 线上验证、13.4 联网功能线上验证（本地无 EXA/STEP key）。另：生产环境当前未配 AI key（`aiProviderConfigured:false`），上线后新课程会走 mock，直到补 key。
+- **阶段 13.1–13.3 完成**：`deploy_remote.py` 已在 build 前加增量 `npm install`（解决 mermaid 新依赖在复用 node_modules 时缺失会导致线上构建失败，R1）；已提交 `bdc0f6b` → 推送 main → 部署成功（build 含 mermaid、health 200、原子切换）。线上 `/create` 新表单（讲解风格可多选 + 学习方式）已生效、旧「偏好的讲解方式」已移除、schema 版本一致、旧课程兼容。
+- **阶段 13.4 联网检索已验证**：生产 Exa（主）+ StepFun（备）实测 HTTP 200、返回真实近期论文——联网检索主路径**可用**，且不依赖任何 LLM key（关键词提取失败有本地兜底词）。
+- **联网检索第三层（Kimi）解耦 + 配置**：把 `searchKimi` 从主 agent 的 `getBaseAIConfig`/用户 overrides 改为独立的 `KIMI_SEARCH_*` 专用配置（与 EXA/STEP 同级的服务器搜索基础设施），并补上 Moonshot 官方 `$web_search` 要求的 `name` 字段；服务器已配 `KIMI_SEARCH_API_KEY/BASE_URL/MODEL`（Moonshot `kimi-k2.6`，已实测两轮 `$web_search` 可用）。7 个内容 agent 仍只走用户在 web 端自配的模型，不受此影响。
+- 说明：生产仍是 per-user AI 配置（`aiProviderConfigured:false` 属设计），主 agent 模型由用户在「模型设置」里自填并存到 `profiles.model_config`。
 
 ---
 
