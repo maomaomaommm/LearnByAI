@@ -525,13 +525,16 @@ POST /api/chapters/[id]/generate
 GET  /api/courses/[id]/events
 ```
 
-Tutor 与修复：
+Tutor 与局部改写：
 
 ```text
-GET  /api/annotations?chapterId=...
-POST /api/annotations
-POST /api/repairs
-POST /api/repairs/apply
+GET    /api/annotations?chapterId=...
+POST   /api/annotations
+DELETE /api/annotations?id=...
+GET    /api/revisions?chapterId=...
+POST   /api/revisions
+POST   /api/revisions/apply
+POST   /api/revisions/[id]/revert
 ```
 
 任务、导出和用量：

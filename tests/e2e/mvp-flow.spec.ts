@@ -44,7 +44,7 @@ test("mock beta flow: create course, generate chapter, ask tutor, export", async
   const jobJson = await jobResponse.json();
   expect(jobJson.job.id).toBe(queuedJobId);
 
-  await expect(page.getByText("Course Bible")).toBeVisible();
+  await expect(page.getByText("Course Bible").first()).toBeVisible();
   const chapterHref = `/courses/${initialCourse.id}/chapters/${initialCourse.chapters[0].id}`;
   const chapterLink = page.locator(`a[href="${chapterHref}"]`);
   await expect(chapterLink).toBeVisible({
@@ -60,8 +60,9 @@ test("mock beta flow: create course, generate chapter, ask tutor, export", async
 
   const paragraph = page.locator("article p").first();
   await paragraph.dblclick();
+  await page.getByRole("button", { name: /问导师/ }).click();
   await expect(page.getByText("TARGET_TEXT")).toBeVisible();
-  await page.locator("aside button").filter({ hasText: /解释|瑙ｉ噴|example|例/ }).first().click();
+  await page.locator("aside button").filter({ hasText: /例/ }).first().click();
   await expect(page.getByText("> TUTOR_AI")).toBeVisible({ timeout: 15_000 });
 
   await page.goto(courseUrl);

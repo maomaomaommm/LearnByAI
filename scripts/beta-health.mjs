@@ -1,7 +1,7 @@
 import "./load-env.mjs";
 import { pathToFileURL } from "node:url";
 
-export const expectedSchemaVersion = "learnbyai-beta-2026-06-07-03";
+export const expectedSchemaVersion = "learnbyai-beta-2026-06-21-01";
 const isDirectRun = import.meta.url === pathToFileURL(process.argv[1] ?? "").href;
 
 export async function checkBetaHealth({

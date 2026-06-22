@@ -73,7 +73,7 @@ export default function AboutPage() {
               {
                 title: "MAOL 多 Agent 编排",
                 items: [
-                  "7 个专业 AI Agent",
+                  "8 个专业 AI Agent",
                   "串行/并行/条件执行",
                   "自动回退机制",
                   "完整审计日志",
@@ -142,6 +142,10 @@ export default function AboutPage() {
               {
                 name: "TUTOR",
                 desc: "阅读器右侧问答、引导式教学、解释和学习诊断",
+              },
+              {
+                name: "REVISER",
+                desc: "阅读时按用户要求对选定正文做局部改写与修复，支持历史与撤销",
               },
               {
                 name: "ASSISTANT",

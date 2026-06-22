@@ -4,7 +4,7 @@ import { askTutor } from "@/lib/maol/client";
 import { parseModelOverridesFromHeaders } from "@/lib/modelOverrides";
 import { withQuotaConsumption } from "@/lib/quota";
 import { safeErrorMessage } from "@/lib/safeError";
-import { getServerCourse, listServerAnnotations, saveServerAnnotation, saveServerGenerationJob } from "@/lib/serverStore";
+import { deleteServerAnnotation, getServerCourse, listServerAnnotations, saveServerAnnotation, saveServerGenerationJob } from "@/lib/serverStore";
 import { resolveModelOverrides } from "@/lib/userModelConfig";
 import { Annotation, Chapter, Course } from "@/lib/types";
 
@@ -21,6 +21,20 @@ export async function GET(request: Request) {
   }
 
   return NextResponse.json({ annotations: await listServerAnnotations(chapterId, request) });
+}
+
+export async function DELETE(request: Request) {
+  const auth = await requireApiUser(request);
+  if ("response" in auth) return auth.response;
+
+  const { searchParams } = new URL(request.url);
+  const id = searchParams.get("id");
+  if (!id) {
+    return NextResponse.json({ error: "id is required" }, { status: 400 });
+  }
+
+  await deleteServerAnnotation(id, request);
+  return NextResponse.json({ deleted: true });
 }
 
 export async function POST(request: Request) {
@@ -54,6 +68,8 @@ export async function POST(request: Request) {
               goal: course.goal,
               learnerProfile: course.profile,
               teachingStyle: course.courseBible?.teachingStyle,
+              styles: course.styles,
+              learningMode: course.learningMode,
               chapterTitle: chapter?.title,
               chapterDescription: chapter?.description,
               chapterPurpose: chapter?.purpose,
@@ -135,6 +151,8 @@ async function handleStreamingPost(params: {
                   goal: course.goal,
                   learnerProfile: course.profile,
                   teachingStyle: course.courseBible?.teachingStyle,
+              styles: course.styles,
+              learningMode: course.learningMode,
                   chapterTitle: chapter?.title,
                   chapterDescription: chapter?.description,
                   chapterPurpose: chapter?.purpose,

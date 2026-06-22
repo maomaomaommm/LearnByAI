@@ -4,17 +4,18 @@ import { mkdir, readFile, rename, rm, stat, unlink, writeFile } from "node:fs/pr
 import { dirname, join } from "node:path";
 import { claimGenerationJob, deleteGenerationJobsForCourse, patchGenerationJob, releaseGenerationJob, upsertGenerationJob } from "./jobs";
 import { publishCourseChanged, publishGenerationJobChanged } from "./courseEvents";
-import { Annotation, Course, ExportJob, GenerationJob, QualityReport, UsageEvent } from "./types";
+import { Annotation, Course, ExportJob, GenerationJob, QualityReport, Revision, UsageEvent } from "./types";
 import { normalizeCourse } from "./normalizeCourse";
 import { createSupabaseServiceClient, resolveUserId } from "./supabase/server";
 
 const localCourses = new Map<string, Course>();
 const localAnnotations = new Map<string, Annotation>();
+const localRevisions = new Map<string, Revision>();
 const localExports = new Map<string, ExportJob>();
 const localGenerationJobs = new Map<string, GenerationJob>();
 const localQualityReports = new Map<string, QualityReport>();
 const localUsageEvents: UsageEvent[] = [];
-const localStorePath = join(process.cwd(), ".learnbyai", "local-beta-store.json");
+const localStorePath = process.env.LEARNBYAI_LOCAL_STORE_PATH || join(process.cwd(), ".learnbyai", "local-beta-store.json");
 const localStoreLockPath = `${localStorePath}.lock`;
 const LOCAL_STORE_LOCK_TIMEOUT_MS = 10_000;
 const LOCAL_STORE_STALE_LOCK_MS = 30_000;
@@ -25,6 +26,7 @@ let localStoreWriteQueue = Promise.resolve();
 type LocalStore = {
   courses: Course[];
   annotations: Annotation[];
+  revisions: Revision[];
   exports: ExportJob[];
   generationJobs: GenerationJob[];
   qualityReports: QualityReport[];
@@ -289,6 +291,11 @@ async function clearLocalCourseData(course: Course) {
       localAnnotations.delete(annotationId);
     }
   }
+  for (const [revisionId, revision] of localRevisions) {
+    if (revision.courseId === id || chapterIds.has(revision.chapterId)) {
+      localRevisions.delete(revisionId);
+    }
+  }
   for (const [exportId, exportJob] of localExports) {
     if (exportJob.courseId === id) {
       localExports.delete(exportId);
@@ -340,7 +347,7 @@ export async function saveServerAnnotation(annotation: Annotation, request?: Req
       course_id: isUuid(nextAnnotation.courseId) ? nextAnnotation.courseId : null,
       chapter_id: nextAnnotation.chapterId,
       section_id: nextAnnotation.sectionId ?? null,
-      selected_text: nextAnnotation.selectedText,
+      selected_text: nextAnnotation.selectedText ?? null,
       question: nextAnnotation.question,
       payload: nextAnnotation,
       created_at: nextAnnotation.createdAt,
@@ -385,6 +392,142 @@ export async function listServerAnnotations(chapterId: string, request?: Request
   return [...localAnnotations.values()]
     .filter((annotation) => annotation.chapterId === chapterId && (!annotation.userId || annotation.userId === userId))
     .sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
+}
+
+export async function deleteServerAnnotation(id: string, request?: Request) {
+  const userId = await resolveUserId(request);
+
+  const supabase = createSupabaseServiceClient();
+  if (supabase && isUuid(userId) && isUuid(id)) {
+    // annotation_messages is FK'd to annotations with on delete cascade.
+    await requireSupabaseWrite(
+      "Delete annotation",
+      supabase.from("annotations").delete().eq("id", id).eq("user_id", userId),
+    );
+  }
+
+  await hydrateLocalStore();
+  const existing = localAnnotations.get(id);
+  if (existing && (!existing.userId || existing.userId === userId || userId === "local-beta-user")) {
+    localAnnotations.delete(id);
+    // mergeDisk:false so the just-deleted row is not re-hydrated from disk before write.
+    await persistLocalStore({ mergeDisk: false });
+  }
+
+  return true;
+}
+
+export async function snapshotChapterBeforeRegen(course: Course, chapterId: string, request?: Request) {
+  const chapter = course.chapters.find((item) => item.id === chapterId);
+  if (!chapter || !(chapter.content || chapter.sections?.length)) return undefined;
+  const now = new Date().toISOString();
+  const revision: Revision = {
+    id: crypto.randomUUID(),
+    userId: course.userId,
+    courseId: course.id,
+    chapterId,
+    mode: "rewrite",
+    scope: "chapter",
+    intent: "整章重新生成前的自动快照",
+    status: "applied",
+    beforeChapter: chapter,
+    createdAt: now,
+    appliedAt: now,
+  };
+  return saveServerRevision(revision, request);
+}
+
+export async function saveServerRevision(revision: Revision, request?: Request) {
+  let userId: string | undefined;
+  try {
+    userId = await resolveUserId(request);
+  } catch (error) {
+    // Server-side paths without a bearer token (admin/internal) trust the caller-set userId.
+    if (revision.userId) userId = revision.userId;
+    else throw error;
+  }
+  const nextRevision: Revision = {
+    ...revision,
+    userId,
+  };
+  localRevisions.set(nextRevision.id, nextRevision);
+  await persistLocalStore();
+
+  const supabase = createSupabaseServiceClient();
+  if (!supabase || !isUuid(userId) || !isUuid(nextRevision.id) || !isUuid(nextRevision.chapterId)) return nextRevision;
+
+  await requireSupabaseWrite(
+    "Persist revision",
+    supabase.from("revisions").upsert({
+      id: nextRevision.id,
+      user_id: userId,
+      course_id: isUuid(nextRevision.courseId) ? nextRevision.courseId : null,
+      chapter_id: nextRevision.chapterId,
+      section_id: nextRevision.sectionId ?? null,
+      mode: nextRevision.mode,
+      scope: nextRevision.scope,
+      status: nextRevision.status,
+      payload: nextRevision,
+      created_at: nextRevision.createdAt,
+    }),
+  );
+
+  return nextRevision;
+}
+
+export async function getServerRevision(id: string, request?: Request) {
+  const userId = await resolveUserId(request);
+  const supabase = createSupabaseServiceClient();
+
+  if (supabase && isUuid(userId)) {
+    const { data, error } = await supabase
+      .from("revisions")
+      .select("payload")
+      .eq("id", id)
+      .eq("user_id", userId)
+      .maybeSingle();
+
+    assertSupabaseNoError("Read revision", error);
+    if (data?.payload) return data.payload as Revision;
+    return undefined;
+  }
+
+  await hydrateLocalStore();
+  const hydrated = localRevisions.get(id);
+  if (!hydrated) return undefined;
+  return !hydrated.userId || hydrated.userId === userId || userId === "local-beta-user" ? hydrated : undefined;
+}
+
+export async function listServerRevisions(chapterId: string, request?: Request) {
+  const userId = await resolveUserId(request);
+  const supabase = createSupabaseServiceClient();
+
+  if (supabase && isUuid(userId)) {
+    const { data, error } = await supabase
+      .from("revisions")
+      .select("payload, created_at")
+      .eq("chapter_id", chapterId)
+      .eq("user_id", userId)
+      .order("created_at", { ascending: false });
+
+    assertSupabaseNoError("List revisions", error);
+    return (data ?? []).map((row) => row.payload as Revision);
+  }
+
+  await hydrateLocalStore();
+  return [...localRevisions.values()]
+    .filter((revision) => revision.chapterId === chapterId && (!revision.userId || revision.userId === userId))
+    .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
+}
+
+export async function updateServerRevision(
+  id: string,
+  patch: Partial<Revision>,
+  request?: Request,
+) {
+  const existing = await getServerRevision(id, request);
+  if (!existing) return undefined;
+  return saveServerRevision({ ...existing, ...patch, id: existing.id }, request);
 }
 
 export async function saveServerExport(exportJob: ExportJob) {
@@ -1029,6 +1172,7 @@ function snapshotLocalStore(): LocalStore {
   return {
     courses: [...localCourses.values()],
     annotations: [...localAnnotations.values()],
+    revisions: [...localRevisions.values()],
     exports: [...localExports.values()],
     generationJobs: [...localGenerationJobs.values()],
     qualityReports: [...localQualityReports.values()],
@@ -1054,6 +1198,10 @@ function mergeLocalStoreIntoMemory(store: LocalStore) {
   store.annotations?.forEach((annotation) => {
     const existing = localAnnotations.get(annotation.id);
     localAnnotations.set(annotation.id, chooseByCreatedMessageCount(existing, annotation));
+  });
+  store.revisions?.forEach((revision) => {
+    const existing = localRevisions.get(revision.id);
+    localRevisions.set(revision.id, chooseRevision(existing, revision));
   });
   store.exports?.forEach((exportJob) => {
     const existing = localExports.get(exportJob.id);
@@ -1199,6 +1347,15 @@ function chooseByCreatedMessageCount<T extends { createdAt?: string; messages?: 
   if ((incoming.messages?.length ?? 0) > (existing.messages?.length ?? 0)) return incoming;
   if ((existing.messages?.length ?? 0) > (incoming.messages?.length ?? 0)) return existing;
   return Date.parse(incoming.createdAt ?? "") >= Date.parse(existing.createdAt ?? "") ? incoming : existing;
+}
+
+function chooseRevision(existing: Revision | undefined, incoming: Revision) {
+  if (!existing) return incoming;
+  return revisionLifecycleTime(incoming) >= revisionLifecycleTime(existing) ? incoming : existing;
+}
+
+function revisionLifecycleTime(revision: Revision) {
+  return Date.parse(revision.revertedAt ?? revision.appliedAt ?? revision.createdAt);
 }
 
 async function withLocalStoreLock<T>(operation: () => Promise<T>) {

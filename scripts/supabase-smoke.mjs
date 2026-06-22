@@ -8,7 +8,7 @@ const bucket = process.env.SUPABASE_EXPORTS_BUCKET || "learnbyai-exports";
 const testUserId = process.env.SUPABASE_SMOKE_USER_ID;
 const runRlsSmoke = process.env.SUPABASE_SMOKE_RLS === "true";
 const requireSmoke = process.env.SUPABASE_SMOKE_REQUIRED === "true";
-const expectedSchemaVersion = "learnbyai-beta-2026-06-07-03";
+const expectedSchemaVersion = "learnbyai-beta-2026-06-21-01";
 const expectedExportMimes = [
   "application/pdf",
   "application/x-tex",
@@ -22,6 +22,7 @@ const applicationTables = [
   "sections",
   "annotations",
   "annotation_messages",
+  "revisions",
   "generation_jobs",
   "quality_reports",
   "exports",

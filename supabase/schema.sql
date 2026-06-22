@@ -44,7 +44,10 @@ create table if not exists annotations (
   course_id uuid references courses(id) on delete cascade,
   chapter_id uuid not null references chapters(id) on delete cascade,
   section_id uuid,
-  selected_text text not null,
+  selected_text text,
+  scope text,
+  title text,
+  summary text,
   question text not null,
   payload jsonb not null,
   created_at timestamptz not null default now()
@@ -58,6 +61,25 @@ create table if not exists annotation_messages (
   content text not null,
   created_at timestamptz not null default now()
 );
+
+create table if not exists revisions (
+  id uuid primary key,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  course_id uuid references courses(id) on delete cascade,
+  chapter_id uuid not null references chapters(id) on delete cascade,
+  section_id uuid,
+  mode text not null,
+  scope text not null,
+  status text not null,
+  payload jsonb not null,
+  created_at timestamptz not null default now()
+);
+
+-- Idempotent migrations for databases created before these columns existed.
+alter table annotations alter column selected_text drop not null;
+alter table annotations add column if not exists scope text;
+alter table annotations add column if not exists title text;
+alter table annotations add column if not exists summary text;
 
 create table if not exists generation_jobs (
   id uuid primary key,
@@ -137,6 +159,7 @@ alter table chapters enable row level security;
 alter table sections enable row level security;
 alter table annotations enable row level security;
 alter table annotation_messages enable row level security;
+alter table revisions enable row level security;
 alter table generation_jobs enable row level security;
 alter table quality_reports enable row level security;
 alter table exports enable row level security;
@@ -161,6 +184,8 @@ drop policy if exists "Users can read own annotations" on annotations;
 create policy "Users can read own annotations" on annotations for select using (auth.uid() = user_id);
 drop policy if exists "Users can read own annotation messages" on annotation_messages;
 create policy "Users can read own annotation messages" on annotation_messages for select using (auth.uid() = user_id);
+drop policy if exists "Users can read own revisions" on revisions;
+create policy "Users can read own revisions" on revisions for select using (auth.uid() = user_id);
 drop policy if exists "Users can read own jobs" on generation_jobs;
 create policy "Users can read own jobs" on generation_jobs for select using (auth.uid() = user_id);
 drop policy if exists "Users can read own quality reports" on quality_reports;
@@ -384,7 +409,7 @@ returns text
 language sql
 stable
 as $$
-  select 'learnbyai-beta-2026-06-07-03'::text;
+  select 'learnbyai-beta-2026-06-21-01'::text;
 $$;
 
 revoke execute on function public.claim_generation_job(uuid, text, integer, integer, integer) from public, anon, authenticated;
@@ -422,6 +447,9 @@ create index if not exists annotations_user_chapter_created_idx
 
 create index if not exists annotation_messages_annotation_created_idx
   on annotation_messages (annotation_id, created_at);
+
+create index if not exists revisions_user_chapter_created_idx
+  on revisions (user_id, chapter_id, created_at desc);
 
 create index if not exists exports_user_course_created_idx
   on exports (user_id, course_id, created_at desc);

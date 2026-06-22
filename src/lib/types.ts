@@ -4,7 +4,7 @@ export type EntityStatus = "pending" | "queued" | "generating" | "draft_ready" |
 
 export type JobStatus = "pending" | "queued" | "running" | "retrying" | "succeeded" | "failed";
 
-export type AgentName = "ASSISTANT" | "ARCHITECT" | "AUTHOR" | "POLISHER" | "REVIEWER" | "TUTOR";
+export type AgentName = "ASSISTANT" | "ARCHITECT" | "AUTHOR" | "POLISHER" | "REVIEWER" | "TUTOR" | "REVISER";
 
 export type QualityStatus = "passed" | "warning" | "failed";
 
@@ -173,7 +173,7 @@ export type ExportJob = {
 export type UsageEvent = {
   id: string;
   userId?: string;
-  action: "create_course" | "generate_chapter" | "ask_tutor" | "export";
+  action: "create_course" | "generate_chapter" | "ask_tutor" | "export" | "revise";
   createdAt: string;
 };
 
@@ -183,16 +183,64 @@ export type Message = {
   content: string;
 };
 
+export type AnnotationScope = "anchored" | "chapter";
+
 export type Annotation = {
   id: string;
   userId?: string;
   courseId?: string;
   chapterId: string;
   sectionId?: string;
-  selectedText: string;
+  /** Absent is treated as "anchored" for backward compatibility. */
+  scope?: AnnotationScope;
+  /** Optional for chapter-level (泛问) threads that are not anchored to a span. */
+  selectedText?: string;
+  /** Short label for the history list when there is no anchored selectedText. */
+  title?: string;
+  /** Optional one-line summary for the history list. */
+  summary?: string;
   question: string;
   messages: Message[];
   createdAt: string;
+};
+
+export type RevisionMode = "fix" | "rewrite";
+
+export type RevisionScope = "selection" | "paragraph" | "section" | "chapter";
+
+export type RevisionStatus = "proposed" | "applied" | "reverted" | "failed";
+
+/**
+ * A single local-revision or whole-chapter-regen record, used to power the
+ * Revise panel's history + undo. Two recovery semantics live here, keyed by
+ * `scope` (see docs/tutor-revise-decoupling-plan.md §4 C1):
+ *  - local scopes (selection/paragraph/section): `beforeText`/`afterText`,
+ *    reverted by a targeted exact-once text swap that touches only that span.
+ *  - chapter scope (regen rollback): `beforeChapter` snapshot, reverted by
+ *    restoring the whole chapter verbatim.
+ */
+export type Revision = {
+  id: string;
+  userId?: string;
+  courseId: string;
+  chapterId: string;
+  sectionId?: string;
+  mode: RevisionMode;
+  scope: RevisionScope;
+  intent: string;
+  status: RevisionStatus;
+  // local scopes
+  beforeText?: string;
+  afterText?: string;
+  // whole-chapter scope (regen rollback)
+  beforeChapter?: Chapter;
+  afterChapter?: Chapter;
+  // optional diagnostics carried from the proposal for the UI
+  diagnosis?: string;
+  confidence?: "low" | "medium" | "high";
+  createdAt: string;
+  appliedAt?: string;
+  revertedAt?: string;
 };
 
 export type CourseCreateResponse = {

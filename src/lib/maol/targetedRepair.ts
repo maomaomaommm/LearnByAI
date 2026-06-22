@@ -1,3 +1,4 @@
+import { MarkdownSection, parseMarkdownSections } from "../markdownSections";
 import { Chapter, Course, QualityIssue } from "../types";
 
 export type RepairIssue = QualityIssue & {
@@ -50,15 +51,6 @@ export type PatchApplyResult = {
 export type DeterministicRepairResult = {
   content: string;
   changes: string[];
-};
-
-type MarkdownSection = {
-  heading: string;
-  headingLine: string;
-  level: number;
-  startLine: number;
-  endLine: number;
-  text: string;
 };
 
 const MAX_TARGETS = 6;
@@ -499,32 +491,6 @@ function mergeRepairTargets(targets: RepairTarget[]) {
     existing.issues.push(...target.issues);
   }
   return [...merged.values()];
-}
-
-function parseMarkdownSections(content: string): MarkdownSection[] {
-  const lines = content.replace(/\r\n/g, "\n").split("\n");
-  const headings = lines
-    .map((line, index) => {
-      const match = /^(#{1,6})\s+(.+?)\s*$/u.exec(line);
-      if (!match) return undefined;
-      return {
-        heading: match[2],
-        headingLine: line.trim(),
-        level: match[1].length,
-        startLine: index,
-      };
-    })
-    .filter((item): item is Omit<MarkdownSection, "endLine" | "text"> => Boolean(item));
-
-  return headings.map((heading, index) => {
-    const next = headings.find((candidate, candidateIndex) => candidateIndex > index && candidate.level <= heading.level);
-    const endLine = next?.startLine ?? lines.length;
-    return {
-      ...heading,
-      endLine,
-      text: lines.slice(heading.startLine, endLine).join("\n").trim(),
-    };
-  });
 }
 
 function findIssueSections(sections: MarkdownSection[], text: string, kind: RepairTargetKind) {

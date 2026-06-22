@@ -8,7 +8,7 @@ import { buildAnnotationTutorPrompt } from "../prompts/annotationTutor";
 import { buildChapterRepairByAuthorPrompt, buildChapterChunkRepairByAuthorPrompt } from "../prompts/chapterRepairer";
 import { buildChapterReviewPrompt, buildChapterReviewJsonRepairPrompt } from "../prompts/chapterReviewer";
 import { buildChapterWriterPrompt, getChapterDepthGuide } from "../prompts/chapterWriter";
-import { buildContentRepairPrompt } from "../prompts/contentRepair";
+import { buildRevisePrompt } from "../prompts/revise";
 import {
   buildChapterContractCompactPrompt,
   buildChapterContractPrompt,
@@ -21,7 +21,7 @@ import type { CourseBibleCore, CourseSkeleton } from "../prompts/coursePlanner";
 import { buildFormatGuardPrompt, postRepairMarkdown, preRepairMarkdown } from "../prompts/formatGuard";
 import { runChapterQualityPipelineWithRepair } from "../quality/pipeline";
 import { safeErrorMessage } from "../safeError";
-import { Chapter, ChapterContract, ChapterGenerateResponse, Course, CourseBible, CourseCreateResponse, CourseDifficulty, ExplanationStyle, GenerationJob, GenerationProfile, LearningMode, QualityIssue, QualityReport, Section } from "../types";
+import { Chapter, ChapterContract, ChapterGenerateResponse, Course, CourseBible, CourseCreateResponse, CourseDifficulty, ExplanationStyle, GenerationJob, GenerationProfile, LearningMode, QualityIssue, QualityReport, RevisionMode, RevisionScope, Section } from "../types";
 import { researchLatestCourseKnowledge } from "../webResearch";
 import { dispatchAgentText } from "./dispatcher";
 import { assertMockFallbackAllowed } from "./fallback";
@@ -1170,42 +1170,55 @@ export async function askTutor(input: {
 }
 
 export type ContentRepairSuggestion = {
-  issueType: "formula_rendering" | "markdown_format" | "conceptual_error" | "wording" | "other";
+  issueType: "formula_rendering" | "markdown_format" | "conceptual_error" | "wording" | "rewrite" | "other";
   diagnosis: string;
   beforeText: string;
   afterText: string;
   confidence: "low" | "medium" | "high";
 };
 
-export async function proposeContentRepair(input: {
+export async function proposeRevision(input: {
   course: Course;
   chapterId: string;
   sectionId?: string;
+  mode: RevisionMode;
+  scope: RevisionScope;
   selectedText: string;
   userMessage: string;
   overrides?: ModelOverrides;
 }) {
+  const isRewrite = input.mode === "rewrite";
   const raw = await dispatchAgentText({
-    agent: "TUTOR",
-    prompt: buildContentRepairPrompt(input),
-    temperature: 0.1,
-    maxTokens: 2048,
+    agent: "REVISER",
+    prompt: buildRevisePrompt(input),
+    // rewrite → AUTHOR-like budget (room to expand); fix → POLISHER-like (conservative).
+    temperature: isRewrite ? 0.4 : 0.1,
+    maxTokens: isRewrite ? 4096 : 2048,
     timeoutMs: TUTOR_REPAIR_TIMEOUT_MS,
     stream: false,
     responseFormat: "json_object",
     overrides: input.overrides,
-    mock: () => JSON.stringify(createMockRepairSuggestion(input.selectedText)),
+    mock: () => JSON.stringify(createMockRevisionSuggestion(input)),
   });
   const parsed = parseJson<ContentRepairSuggestion>(raw);
   return normalizeRepairSuggestion(parsed, input.selectedText);
 }
 
-function createMockRepairSuggestion(selectedText: string): ContentRepairSuggestion {
+function createMockRevisionSuggestion(input: { mode: RevisionMode; selectedText: string }): ContentRepairSuggestion {
+  if (input.mode === "rewrite") {
+    return {
+      issueType: "rewrite",
+      diagnosis: "这是一个模拟改写建议。真实模型可用时会按诉求改写本段。",
+      beforeText: input.selectedText,
+      afterText: `${input.selectedText}\n\n（模拟改写：已按要求补充说明。）`,
+      confidence: "low",
+    };
+  }
   return {
     issueType: "markdown_format",
     diagnosis: "这是一个模拟修复建议。真实模型可用时会给出具体诊断。",
-    beforeText: selectedText,
-    afterText: selectedText,
+    beforeText: input.selectedText,
+    afterText: input.selectedText,
     confidence: "low",
   };
 }
@@ -1222,6 +1235,7 @@ function normalizeRepairSuggestion(
     "markdown_format",
     "conceptual_error",
     "wording",
+    "rewrite",
     "other",
   ].includes(suggestion.issueType)
     ? suggestion.issueType

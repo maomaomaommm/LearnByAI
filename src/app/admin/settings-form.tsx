@@ -13,6 +13,7 @@ const AGENT_LABEL: Record<string, string> = {
   POLISHER: "格式修复",
   REVIEWER: "质量评审",
   TUTOR: "导师问答",
+  REVISER: "局部改写",
 };
 
 export function AdminSettingsForm({ settings }: { settings: AdminAppSettings }) {
@@ -52,6 +53,7 @@ export function AdminSettingsForm({ settings }: { settings: AdminAppSettings }) 
         generate_chapter: readNumber(formData, "quota.generate_chapter"),
         ask_tutor: readNumber(formData, "quota.ask_tutor"),
         export: readNumber(formData, "quota.export"),
+        revise: readNumber(formData, "quota.revise"),
       },
       worker: {
         globalLimit: readNumber(formData, "worker.globalLimit"),
@@ -111,7 +113,7 @@ export function AdminSettingsForm({ settings }: { settings: AdminAppSettings }) 
         <div className="rounded-lg border border-border bg-card p-5">
           <h2 className="font-medium">每日配额</h2>
           <div className="mt-4 grid gap-4 sm:grid-cols-2">
-            {(["create_course", "generate_chapter", "ask_tutor", "export"] as const).map((action) => (
+            {(["create_course", "generate_chapter", "ask_tutor", "export", "revise"] as const).map((action) => (
               <Field key={action} label={USAGE_ACTION_LABEL[action]}>
                 <input name={`quota.${action}`} type="number" min={0} defaultValue={settings.quotas?.[action] ?? ""} placeholder="使用代码/环境默认值" className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm" />
               </Field>

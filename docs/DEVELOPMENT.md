@@ -140,7 +140,7 @@ npm run test:supabase-smoke
 ```
 
 The live project must expose `public.learnbyai_schema_version()` returning
-`learnbyai-beta-2026-06-07-03`; this function is created by `supabase/schema.sql`. The smoke test
+`learnbyai-beta-2026-06-21-01`; this function is created by `supabase/schema.sql`. The smoke test
 calls it before deeper checks, so an older or partially applied migration fails fast.
 
 Set `SUPABASE_SMOKE_USER_ID` to an existing auth user id when you want the script to verify Storage upload/download round trips. Set `SUPABASE_SMOKE_RLS=true` when you want it to create two temporary confirmed auth users and verify the auth profile trigger, profile RLS, course RLS, and Storage export-object RLS. The RLS smoke also attempts direct authenticated insert, update, and delete operations against every API-owned application table and fails if any table allows client-side mutations that could bypass ownership, quota, or audit checks. It also inserts a pending generation job and verifies the `claim_generation_job` RPC blocks duplicate worker claims until the lease expires. Internal worker/quota RPCs are granted only to `service_role`; the smoke fails if an authenticated user can call them directly. The smoke checks every application table declared in `supabase/schema.sql`, not only the tables touched by the happy path. It also verifies the export Storage bucket is private, keeps the expected 10 MiB limit, and allows the PDF/TeX/plain export MIME types.

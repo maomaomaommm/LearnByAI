@@ -5,7 +5,7 @@ import { runChapterGenerationJob } from "@/lib/generationRunner";
 import { createGenerationJob } from "@/lib/jobs";
 import { parseModelOverridesFromHeaders } from "@/lib/modelOverrides";
 import { publicGenerationJob } from "@/lib/publicGenerationJob";
-import { getActiveServerGenerationJobForChapter, getServerCourse, getServerGenerationJob, saveServerGenerationJob, updateServerChapter } from "@/lib/serverStore";
+import { getActiveServerGenerationJobForChapter, getServerCourse, getServerGenerationJob, saveServerGenerationJob, snapshotChapterBeforeRegen, updateServerChapter } from "@/lib/serverStore";
 import { resolveModelOverrides } from "@/lib/userModelConfig";
 import { Chapter } from "@/lib/types";
 
@@ -79,6 +79,12 @@ export async function POST(
       review: chapter.review ?? "",
       qualityReport: chapter.qualityReport,
     });
+  }
+
+  // Reaching here with an existing body means this is a retry/regeneration; snapshot
+  // the current chapter so it can be reverted if the new generation is worse.
+  if (hasChapterBody(chapter)) {
+    await snapshotChapterBeforeRegen(course, id, request);
   }
 
   const job = createGenerationJob({

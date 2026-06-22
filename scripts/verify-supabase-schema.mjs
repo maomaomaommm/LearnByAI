@@ -4,7 +4,7 @@ import { join } from "node:path";
 const schemaPath = join(process.cwd(), "supabase", "schema.sql");
 const rawSql = readFileSync(schemaPath, "utf8");
 const compactSql = rawSql.toLowerCase().replace(/\s+/gu, " ");
-const expectedSchemaVersion = "learnbyai-beta-2026-06-07-03";
+const expectedSchemaVersion = "learnbyai-beta-2026-06-21-01";
 
 const tables = [
   "profiles",
@@ -13,6 +13,7 @@ const tables = [
   "sections",
   "annotations",
   "annotation_messages",
+  "revisions",
   "generation_jobs",
   "quality_reports",
   "exports",
@@ -34,6 +35,11 @@ const requiredSnippets = [
   'create policy "users can read own sections"',
   'create policy "users can read own annotations"',
   'create policy "users can read own annotation messages"',
+  'create policy "users can read own revisions"',
+  "alter table annotations add column if not exists scope text",
+  "alter table annotations add column if not exists title text",
+  "alter table annotations add column if not exists summary text",
+  "alter table annotations alter column selected_text drop not null",
   'create policy "users can read own jobs"',
   'create policy "users can read own quality reports"',
   'create policy "users can read own exports"',
@@ -67,6 +73,7 @@ const requiredSnippets = [
   "sections_chapter_order_idx",
   "annotations_user_chapter_created_idx",
   "annotation_messages_annotation_created_idx",
+  "revisions_user_chapter_created_idx",
   "exports_user_course_created_idx",
   "usage_events_user_action_created_idx",
   "quota_reservations_user_action_expires_idx",
@@ -106,6 +113,9 @@ const forbiddenSnippets = [
   'create policy "users can insert own annotation messages"',
   'create policy "users can update own annotation messages"',
   'create policy "users can delete own annotation messages"',
+  'create policy "users can insert own revisions"',
+  'create policy "users can update own revisions"',
+  'create policy "users can delete own revisions"',
   'create policy "users can insert own jobs"',
   'create policy "users can update own jobs"',
   'create policy "users can delete own jobs"',

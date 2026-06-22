@@ -55,20 +55,42 @@ test("reader page subscribes to course SSE snapshots", () => {
   assert.doesNotMatch(pageSource, /setInterval\(\(\) => void poll/u);
 });
 
-test("reader page uses authenticated abortable tutor and repair requests", () => {
+test("tutor hook uses authenticated abortable streaming requests", () => {
+  const src = readFileSync("src/lib/hooks/useTutor.ts", "utf8");
+
+  assert.match(src, /TUTOR_REQUEST_TIMEOUT_MS = 70_000/u);
+  assert.match(src, /new AbortController\(\)/u);
+  assert.match(src, /apiFetch\("\/api\/annotations"/u);
+  assert.doesNotMatch(src, /fetch\("\/api\/annotations"/u);
+  assert.match(src, /signal: input\.signal/u);
+  assert.match(src, /stream: true/u);
+});
+
+test("revise hook calls the authenticated revisions endpoints (not repairs)", () => {
+  const src = readFileSync("src/lib/hooks/useRevise.ts", "utf8");
+
+  assert.match(src, /REVISE_REQUEST_TIMEOUT_MS = 70_000/u);
+  assert.match(src, /new AbortController\(\)/u);
+  assert.match(src, /apiFetch\("\/api\/revisions"/u);
+  assert.match(src, /apiFetch\("\/api\/revisions\/apply"/u);
+  assert.match(src, /\/api\/revisions\/\$\{revisionId\}\/revert/u);
+  assert.doesNotMatch(src, /\/api\/repairs/u);
+});
+
+test("revise panel keeps fix and rewrite preset intents", () => {
+  const src = readFileSync("src/components/reader/RevisePanel.tsx", "utf8");
+
+  assert.match(src, /请检查这段内容是否有公式、Markdown 或概念错误/u);
+  assert.match(src, /请修复这段内容中的格式、公式或明显表述问题/u);
+});
+
+test("reader page keeps section anchoring and the selection chooser", () => {
   const pageSource = readFileSync("src/app/courses/[id]/chapters/[chapterId]/page.tsx", "utf8");
 
-  assert.match(pageSource, /TUTOR_REQUEST_TIMEOUT_MS = 70_000/u);
-  assert.match(pageSource, /REPAIR_REQUEST_TIMEOUT_MS = 70_000/u);
-  assert.match(pageSource, /new AbortController\(\)/u);
-  assert.match(pageSource, /apiFetch\("\/api\/annotations"/u);
-  assert.doesNotMatch(pageSource, /fetch\("\/api\/annotations"/u);
-  assert.match(pageSource, /signal: input\.signal/u);
   assert.match(pageSource, /function closestSectionId/u);
-  assert.match(pageSource, /requestRepair\("请检查这段内容是否有公式、Markdown 或概念错误/u);
-  assert.match(pageSource, /requestRepair\("请修复这段内容中的格式、公式或明显表述问题/u);
-  assert.match(pageSource, /apiFetch\("\/api\/repairs"/u);
-  assert.match(pageSource, /apiFetch\("\/api\/repairs\/apply"/u);
+  assert.match(pageSource, /openReviseFromChooser/u);
+  assert.match(pageSource, /openTutorFromChooser/u);
+  assert.doesNotMatch(pageSource, /setInterval\(\(\) => void poll/u);
 });
 
 test("annotations route bounds tutor streaming requests with friendly SSE errors", () => {

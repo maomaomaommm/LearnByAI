@@ -10,6 +10,7 @@ export const MODEL_AGENT_NAMES = [
   "POLISHER",
   "REVIEWER",
   "TUTOR",
+  "REVISER",
 ] as const satisfies readonly AgentName[];
 
 export type ModelOverrideFields = {

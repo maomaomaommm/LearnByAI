@@ -8,6 +8,7 @@ const usageActions = new Set<UsageEvent["action"]>([
   "generate_chapter",
   "ask_tutor",
   "export",
+  "revise",
 ]);
 
 export async function GET(request: Request) {

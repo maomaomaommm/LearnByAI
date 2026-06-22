@@ -34,6 +34,7 @@ export const USAGE_ACTION_LABEL: Record<string, string> = {
   generate_chapter: "生成章节",
   ask_tutor: "导师问答",
   export: "导出",
+  revise: "局部改写",
 };
 
 export const DIFFICULTY_LABEL: Record<CourseDifficulty, string> = {

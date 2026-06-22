@@ -4,14 +4,14 @@ import { createGenerationJob, upsertGenerationJob } from "./jobs";
 import { AdminAppSettings, getAdminAppSettings, saveAdminAppSettings } from "./adminSettings";
 import { MODEL_AGENT_NAMES, ModelOverrides, normalizeModelOverrides } from "./modelOverrides";
 import { createSupabaseServiceClient } from "./supabase/server";
-import { deleteServerCourseByAdmin } from "./serverStore";
+import { deleteServerCourseByAdmin, snapshotChapterBeforeRegen } from "./serverStore";
 import { normalizeCourse, normalizeLearningMode, normalizeStyles } from "./normalizeCourse";
 import { buildStyleGuidance } from "./prompts/styleGuidance";
 import { Chapter, Course, CourseDifficulty, ExplanationStyle, ExportJob, GenerationJob, LearningMode, QualityReport, UsageEvent } from "./types";
 
 export const ACTIVE_ADMIN_JOB_STATUSES: GenerationJob["status"][] = ["pending", "queued", "running", "retrying"];
 export const INACTIVE_ADMIN_JOB_STATUSES: GenerationJob["status"][] = ["succeeded", "failed"];
-export const USAGE_ACTIONS: UsageEvent["action"][] = ["create_course", "generate_chapter", "ask_tutor", "export"];
+export const USAGE_ACTIONS: UsageEvent["action"][] = ["create_course", "generate_chapter", "ask_tutor", "export", "revise"];
 
 export type AdminUserRow = {
   id: string;
@@ -842,6 +842,8 @@ export async function enqueueAdminChapterGeneration(courseId: string, chapterId:
     message: "管理员已重新排队章节生成。",
   });
   await updateGenerationJobRow(job);
+  // Best-effort snapshot so an admin regeneration can be reverted to the prior version.
+  await snapshotChapterBeforeRegen(course, chapterId).catch(() => undefined);
   await patchAdminChapter(courseId, chapterId, {
     content: undefined,
     sections: undefined,

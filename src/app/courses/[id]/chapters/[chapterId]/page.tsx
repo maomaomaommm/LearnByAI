@@ -2,61 +2,43 @@
 
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { FormEvent, MouseEvent, useCallback, useEffect, useState } from "react";
+import { MouseEvent, useCallback, useEffect, useState } from "react";
 import { MarkdownContent } from "@/components/MarkdownContent";
+import { TutorPanel } from "@/components/reader/TutorPanel";
+import { RevisePanel } from "@/components/reader/RevisePanel";
+import { useTutor } from "@/lib/hooks/useTutor";
+import { useRevise } from "@/lib/hooks/useRevise";
 import { apiFetch, subscribeToSse } from "@/lib/clientApi";
 import { publicSafeErrorMessage } from "@/lib/publicSafeError";
 import { formatMinutes, totalMinutes } from "@/lib/time";
-import { Annotation, AgentEvent, Chapter, ChapterGenerateResponse, Course, EntityStatus, GenerationJob, Section } from "@/lib/types";
+import { AgentEvent, Chapter, ChapterGenerateResponse, Course, EntityStatus, GenerationJob, Section } from "@/lib/types";
 import { effectiveChapterStatus, hasChapterBody, isChapterAwaitingQuality, isChapterReadable } from "@/lib/chapterReadiness";
 import { stageForEvent } from "@/components/generation-studio/helpers";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { ModelSettings } from "@/components/ModelSettings";
-import { ArrowLeft, ChevronLeft, ChevronRight, Menu, X, Clock, MessageSquareQuote, Bot, Download } from "lucide-react";
+import { ArrowLeft, Bot, ChevronLeft, ChevronRight, Clock, Download, Menu, PencilLine, X } from "lucide-react";
 
-const quickQuestions = [
-  "\u89e3\u91ca\u5f97\u66f4\u7b80\u5355",
-  "\u7ed9\u6211\u4e00\u4e2a\u5177\u4f53\u4f8b\u5b50",
-  "\u5c55\u793a\u63a8\u5bfc\u8fc7\u7a0b",
-  "\u8d28\u7591\u8fd9\u6bb5\u5185\u5bb9",
-];
-const DEFAULT_REVIEW = "\u5df2\u5b8c\u6210\u7ed3\u6784\u3001\u672f\u8bed\u4e0e\u516c\u5f0f\u4e00\u81f4\u6027\u68c0\u67e5\u3002";
-const DRAFT_REVIEW = "\u8349\u7a3f\u5df2\u4fdd\u5b58\uff0c\u683c\u5f0f\u4fee\u590d\u548c\u8d28\u91cf\u68c0\u67e5\u4ecd\u5728\u7ee7\u7eed\u3002";
-const FORMAT_GUARD_REVIEW = "\u5df2\u901a\u8fc7\u683c\u5f0f\u4fee\u590d\uff0c\u5b8c\u6210 Markdown\u3001\u516c\u5f0f\u3001\u4ee3\u7801\u5757\u4e0e\u6807\u9898\u683c\u5f0f\u68c0\u67e5\u3002";
-const QUALITY_FAILED_REVIEW = "\u5df2\u751f\u6210\u8349\u7a3f\uff0c\u4f46\u8d28\u91cf\u68c0\u67e5\u672a\u901a\u8fc7\uff0c\u4e0b\u9762\u4ecd\u5c55\u793a\u5df2\u751f\u6210\u5185\u5bb9\u3002";
-const TUTOR_REQUEST_TIMEOUT_MS = 70_000;
-const REPAIR_REQUEST_TIMEOUT_MS = 70_000;
+const DEFAULT_REVIEW = "已完成结构、术语与公式一致性检查。";
+const DRAFT_REVIEW = "草稿已保存，格式修复和质量检查仍在继续。";
+const FORMAT_GUARD_REVIEW = "已通过格式修复，完成 Markdown、公式、代码块与标题格式检查。";
+const QUALITY_FAILED_REVIEW = "已生成草稿，但质量检查未通过，下面仍展示已生成内容。";
 
-type RepairSuggestion = {
-  id: string;
-  courseId: string;
-  chapterId: string;
-  sectionId?: string;
-  selectedText: string;
-  userMessage: string;
-  issueType: string;
-  diagnosis: string;
-  beforeText: string;
-  afterText: string;
-  confidence: "low" | "medium" | "high";
-  status: "proposed" | "applied";
-  createdAt: string;
-};
+type Panel = "tutor" | "revise" | null;
 
 const CHAPTER_STATUS_LABEL: Record<EntityStatus, string> = {
-  pending: "\u5f85\u751f\u6210",
-  queued: "\u961f\u5217\u4e2d",
-  generating: "\u751f\u6210\u4e2d",
-  draft_ready: "\u5f85\u8d28\u68c0\u8349\u7a3f",
-  quality_failed: "\u8d28\u68c0\u672a\u901a\u8fc7",
-  ready: "\u8d28\u68c0\u901a\u8fc7",
-  failed: "\u751f\u6210\u5931\u8d25",
+  pending: "待生成",
+  queued: "队列中",
+  generating: "生成中",
+  draft_ready: "待质检草稿",
+  quality_failed: "质检未通过",
+  ready: "质检通过",
+  failed: "生成失败",
 };
 
 const QUALITY_STATUS_LABEL: Record<string, string> = {
-  passed: "\u8d28\u68c0\u901a\u8fc7",
-  warning: "\u8d28\u68c0\u901a\u8fc7",
-  failed: "\u8d28\u68c0\u672a\u901a\u8fc7",
+  passed: "质检通过",
+  warning: "质检通过",
+  failed: "质检未通过",
 };
 
 function getChapterBody(chapter: Chapter) {
@@ -86,22 +68,10 @@ function localizeReviewText(value?: string, chapter?: Chapter) {
   const fallback = reviewFallbackForChapter(chapter);
   if (!value || isQuestionMarkReview(value)) return fallback;
   return value
-    .replace(
-      "AUTHOR draft saved. Format Guard and quality review are still running.",
-      DRAFT_REVIEW,
-    )
-    .replace(
-      "Format Guard completed Markdown, formula, code block, and heading repairs.",
-      FORMAT_GUARD_REVIEW,
-    )
-    .replace(
-      "\u5df2\u901a\u8fc7 Format Guard \u5b8c\u6210 Markdown\u3001\u516c\u5f0f\u3001\u4ee3\u7801\u5757\u4e0e\u6807\u9898\u683c\u5f0f\u4fee\u590d\u3002",
-      FORMAT_GUARD_REVIEW,
-    )
-    .replace(
-      "Chapter generation failed.",
-      "\u672c\u7ae0\u751f\u6210\u5931\u8d25\u3002",
-    );
+    .replace("AUTHOR draft saved. Format Guard and quality review are still running.", DRAFT_REVIEW)
+    .replace("Format Guard completed Markdown, formula, code block, and heading repairs.", FORMAT_GUARD_REVIEW)
+    .replace("已通过 Format Guard 完成 Markdown、公式、代码块与标题格式修复。", FORMAT_GUARD_REVIEW)
+    .replace("Chapter generation failed.", "本章生成失败。");
 }
 
 function closestSectionId(node: Node | null) {
@@ -131,20 +101,13 @@ export default function ReaderPage() {
   const [content, setContent] = useState("");
   const [sections, setSections] = useState<Section[]>([]);
   const [review, setReview] = useState("");
-  const [selectedText, setSelectedText] = useState("");
-  const [selectedSectionId, setSelectedSectionId] = useState<string>();
-  const [annotations, setAnnotations] = useState<Annotation[]>([]);
-  const [active, setActive] = useState<Annotation>();
-  const [repair, setRepair] = useState<RepairSuggestion>();
-  const [repairing, setRepairing] = useState(false);
-  const [repairError, setRepairError] = useState("");
   const [jobEvents, setJobEvents] = useState<Record<string, AgentEvent[]>>({});
   const [loading, setLoading] = useState(true);
-  const [answering, setAnswering] = useState(false);
   const [generationError, setGenerationError] = useState("");
 
   const [tocOpen, setTocOpen] = useState(true);
-  const [tutorOpen, setTutorOpen] = useState(true);
+  const [panel, setPanel] = useState<Panel>(null);
+  const [chooser, setChooser] = useState<{ text: string; sectionId?: string } | null>(null);
 
   const chapter = course?.chapters.find((item) => item.id === chapterId);
   const currentIndex = course?.chapters.findIndex((c) => c.id === chapterId) ?? -1;
@@ -169,7 +132,7 @@ export default function ReaderPage() {
     }
 
     if (isChapterReadable(current)) {
-      setGenerationError(effectiveChapterStatus(current) === "quality_failed" ? "\u672c\u7ae0\u8d28\u91cf\u68c0\u67e5\u672a\u901a\u8fc7\uff0c\u4e0b\u9762\u4ecd\u5c55\u793a\u5df2\u751f\u6210\u8349\u7a3f\u3002" : "");
+      setGenerationError(effectiveChapterStatus(current) === "quality_failed" ? "本章质量检查未通过，下面仍展示已生成草稿。" : "");
       setContent(getChapterBody(current));
       setSections(current.sections ?? []);
       setReview(localizeReviewText(current.review, current));
@@ -199,6 +162,9 @@ export default function ReaderPage() {
 
     setLoading(true);
   }, [chapterId]);
+
+  const tutor = useTutor(course, chapterId);
+  const revise = useRevise(course, chapterId, applyCourseUpdate);
 
   const ensureChapterContent = useCallback(async (stored: Course) => {
     const current = stored.chapters.find((item) => item.id === chapterId);
@@ -265,15 +231,7 @@ export default function ReaderPage() {
       ...course,
       chapters: course.chapters.map((item) =>
         item.id === chapter.id
-          ? {
-              ...item,
-              status: undefined,
-              generationJobId: undefined,
-              content: undefined,
-              sections: undefined,
-              review: undefined,
-              qualityReport: undefined,
-            }
+          ? { ...item, status: undefined, generationJobId: undefined, content: undefined, sections: undefined, review: undefined, qualityReport: undefined }
           : item,
       ),
     });
@@ -283,14 +241,9 @@ export default function ReaderPage() {
     let cancelled = false;
     setLoading(true);
     setGenerationError("");
-    setAnnotations([]);
 
-    apiFetch(`/api/annotations?chapterId=${chapterId}`)
-      .then((response) => (response.ok ? response.json() : undefined))
-      .then((data) => {
-        if (!cancelled && data?.annotations) setAnnotations(data.annotations);
-      })
-      .catch(() => undefined);
+    tutor.reloadAnnotations();
+    revise.reloadRevisions();
 
     apiFetch(`/api/courses/${id}`)
       .then((response) => (response.ok ? response.json() : undefined))
@@ -310,7 +263,8 @@ export default function ReaderPage() {
     return () => {
       cancelled = true;
     };
-  }, [applyCourseUpdate, chapterId, ensureChapterContent, id]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chapterId, id]);
 
   useEffect(() => {
     let cancelled = false;
@@ -375,33 +329,27 @@ export default function ReaderPage() {
     };
   }, [applyCourseUpdate, chapter, chapterGenerationJobId, chapterReadable, chapterStatus, id]);
 
-  const handleTextSelect = useCallback((text: string, sectionId?: string) => {
-    if (text.length > 2) {
-      setSelectedText(text);
-      setSelectedSectionId(sectionId);
-      setActive(undefined);
-      setRepair(undefined);
-      setRepairError("");
-      setTutorOpen(true);
-    }
-  }, []);
+  const openTutorFromChooser = useCallback(() => {
+    if (!chooser) return;
+    tutor.startAnchored(chooser.text, chooser.sectionId);
+    revise.clear();
+    setPanel("tutor");
+    setChooser(null);
+  }, [chooser, tutor, revise]);
 
-  const handleParagraphDoubleClick = useCallback((text: string, sectionId?: string) => {
-    if (text.length > 2) {
-      setSelectedText(text);
-      setSelectedSectionId(sectionId);
-      setActive(undefined);
-      setRepair(undefined);
-      setRepairError("");
-      setTutorOpen(true);
-    }
-  }, []);
+  const openReviseFromChooser = useCallback(() => {
+    if (!chooser) return;
+    revise.start(chooser.text, chooser.sectionId);
+    tutor.clear();
+    setPanel("revise");
+    setChooser(null);
+  }, [chooser, tutor, revise]);
 
   function captureSelection(event: MouseEvent<HTMLElement>) {
     const selection = window.getSelection();
     const text = selection?.toString().trim() ?? "";
     if (text.length > 2 && event.currentTarget.contains(selection?.anchorNode ?? null)) {
-      handleTextSelect(text, closestSectionId(selection?.anchorNode ?? null));
+      setChooser({ text, sectionId: closestSectionId(selection?.anchorNode ?? null) });
     }
   }
 
@@ -410,148 +358,7 @@ export default function ReaderPage() {
     const block = target.closest("p, li, blockquote, h2, h3");
     const text = block?.textContent?.trim() ?? "";
     if (text.length > 2) {
-      handleParagraphDoubleClick(text, closestSectionId(block));
-    }
-  }
-
-  async function ask(question: string) {
-    if (!course || (!selectedText && !active) || !question.trim()) return;
-    setAnswering(true);
-    const annotation: Annotation =
-      active ??
-      ({
-        id: crypto.randomUUID(),
-        courseId: course.id,
-        chapterId,
-        sectionId: selectedSectionId,
-        selectedText,
-        question,
-        messages: [],
-        createdAt: new Date().toISOString(),
-      } satisfies Annotation);
-
-    annotation.messages.push({ id: crypto.randomUUID(), role: "user", content: question });
-    setActive({ ...annotation });
-
-    // Show a pending assistant message immediately for streaming
-    const pendingMessageId = crypto.randomUUID();
-    const pendingMessage = { id: pendingMessageId, role: "assistant" as const, content: "" };
-    annotation.messages.push(pendingMessage);
-    setActive({ ...annotation });
-
-    let savedAnnotation: Annotation | undefined;
-    const controller = new AbortController();
-    const timeout = window.setTimeout(() => controller.abort(), TUTOR_REQUEST_TIMEOUT_MS);
-    try {
-      savedAnnotation = await askTutorStreaming({
-        topic: course.topic,
-        selectedText: annotation.selectedText,
-        question,
-        history: annotation.messages.filter((m) => m.id !== pendingMessageId),
-        sectionId: annotation.sectionId,
-        annotation,
-        signal: controller.signal,
-        onToken: (chunk) => {
-          annotation.messages = annotation.messages.map((m) =>
-            m.id === pendingMessageId ? { ...m, content: m.content + chunk } : m,
-          );
-          setActive({ ...annotation });
-        },
-      });
-    } catch (error) {
-      const message = controller.signal.aborted
-        ? "导师回答超时，请稍后重试。"
-        : publicSafeErrorMessage(error, "导师暂时无法回答，请稍后重试。");
-      annotation.messages = annotation.messages.map((m) =>
-        m.id === pendingMessageId
-          ? { ...m, content: message }
-          : m,
-      );
-      setActive({ ...annotation });
-    } finally {
-      window.clearTimeout(timeout);
-      setAnswering(false);
-    }
-
-    if (savedAnnotation) {
-      setAnnotations((current) => upsertAnnotation(current, savedAnnotation));
-    }
-    setActive({ ...(savedAnnotation ?? annotation) });
-  }
-
-  function submitQuestion(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const form = event.currentTarget;
-    const input = form.elements.namedItem("question") as HTMLInputElement;
-    void ask(input.value);
-    input.value = "";
-  }
-
-  async function requestRepair(userMessage: string) {
-    const targetText = (active?.selectedText ?? selectedText).trim();
-    if (!course || !chapter || !targetText || !userMessage.trim()) return;
-
-    const controller = new AbortController();
-    const timeout = window.setTimeout(() => controller.abort(), REPAIR_REQUEST_TIMEOUT_MS);
-    setRepairing(true);
-    setRepairError("");
-    setRepair(undefined);
-
-    try {
-      const response = await apiFetch("/api/repairs", {
-        method: "POST",
-        signal: controller.signal,
-        body: JSON.stringify({
-          courseId: course.id,
-          chapterId: chapter.id,
-          sectionId: active?.sectionId ?? selectedSectionId,
-          selectedText: targetText,
-          userMessage,
-        }),
-      });
-      const data = await response.json().catch(() => null) as { repair?: RepairSuggestion; error?: string } | null;
-      if (!response.ok) throw new Error(data?.error ?? `Repair request failed (${response.status}).`);
-      if (!data?.repair) throw new Error("Repair suggestion is empty.");
-      setRepair(data.repair);
-    } catch (error) {
-      setRepairError(
-        controller.signal.aborted
-          ? "修复建议生成超时，请稍后重试。"
-          : publicSafeErrorMessage(error, "暂时无法生成修复建议，请稍后重试。"),
-      );
-    } finally {
-      window.clearTimeout(timeout);
-      setRepairing(false);
-    }
-  }
-
-  async function applyRepair() {
-    if (!repair || repair.status === "applied") return;
-
-    setRepairing(true);
-    setRepairError("");
-    try {
-      const response = await apiFetch("/api/repairs/apply", {
-        method: "POST",
-        body: JSON.stringify({
-          courseId: repair.courseId,
-          chapterId: repair.chapterId,
-          sectionId: repair.sectionId,
-          beforeText: repair.beforeText,
-          afterText: repair.afterText,
-        }),
-      });
-      const data = await response.json().catch(() => null) as { course?: Course; error?: string } | null;
-      if (!response.ok) throw new Error(data?.error ?? `Apply repair failed (${response.status}).`);
-      if (data?.course) applyCourseUpdate(data.course);
-      setRepair({ ...repair, status: "applied" });
-      setSelectedText(repair.afterText);
-      setSelectedSectionId(repair.sectionId);
-      setActive(undefined);
-    } catch (error) {
-      setRepairError(publicSafeErrorMessage(error, "应用修复失败，请稍后重试。"));
-    } finally {
-      setRepairing(false);
+      setChooser({ text, sectionId: closestSectionId(block) });
     }
   }
 
@@ -577,9 +384,7 @@ export default function ReaderPage() {
             </button>
           </div>
           <div className="flex-1 overflow-y-auto py-2">
-            <div className="px-4 py-2 text-[10px] font-mono font-bold text-muted-foreground uppercase tracking-widest">
-              课程目录
-            </div>
+            <div className="px-4 py-2 text-[10px] font-mono font-bold text-muted-foreground uppercase tracking-widest">课程目录</div>
             {course.chapters.map((ch, idx) => {
               const isActive = ch.id === chapterId;
               const readable = isChapterReadable(ch);
@@ -595,46 +400,19 @@ export default function ReaderPage() {
                   }`}
                 >
                   <div className="flex items-start gap-2">
-                    <span className={`font-mono text-xs ${isActive ? "text-foreground" : "text-muted-foreground"}`}>{String(idx + 1).padStart(2, '0')}.</span>
+                    <span className={`font-mono text-xs ${isActive ? "text-foreground" : "text-muted-foreground"}`}>{String(idx + 1).padStart(2, "0")}.</span>
                     <span className={`text-xs ${isActive ? "font-medium text-foreground" : "text-muted-foreground"}`}>{ch.title}</span>
                   </div>
-                  <div className="mt-1 pl-6 text-[10px] font-mono text-muted-foreground uppercase">
-                    {chapterStatusLabel(ch)}
-                  </div>
+                  <div className="mt-1 pl-6 text-[10px] font-mono text-muted-foreground uppercase">{chapterStatusLabel(ch)}</div>
                 </button>
               );
             })}
-
-            <div className="mt-6 px-4 py-2 text-[10px] font-mono font-bold text-muted-foreground uppercase tracking-widest">
-              本章讨论档案 · {annotations.length}
-            </div>
-            {annotations.map((annotation) => (
-              <button
-                key={annotation.id}
-                onClick={() => {
-                  setActive(annotation);
-                  setSelectedText("");
-                  setSelectedSectionId(annotation.sectionId);
-                  setRepair(undefined);
-                  setRepairError("");
-                  setTutorOpen(true);
-                }}
-                className={`w-full px-4 py-2 text-left transition-colors ${
-                  active?.id === annotation.id ? "bg-muted/50 text-foreground" : "text-muted-foreground hover:bg-muted/30 hover:text-foreground"
-                }`}
-              >
-                <div className="text-xs line-clamp-2 leading-relaxed">
-                  &quot;{annotation.selectedText}&quot;
-                </div>
-              </button>
-            ))}
           </div>
         </div>
       </aside>
 
       {/* Main Content */}
       <main className="flex-1 overflow-y-auto bg-background print:overflow-visible print:bg-white print:text-black">
-        {/* Toolbar */}
         <div className="sticky top-0 z-30 flex items-center justify-between border-b border-border bg-background/95 px-6 py-3 backdrop-blur print:hidden">
           <div className="flex items-center gap-3">
             {!tocOpen && (
@@ -678,12 +456,11 @@ export default function ReaderPage() {
           </div>
         </div>
 
-        {/* Content */}
         <div className="mx-auto max-w-3xl px-6 py-12 lg:px-8">
           <div className="mb-12 border-l-2 border-foreground bg-muted/20 p-6">
             <h1 className="mb-4 text-3xl font-bold tracking-tight text-foreground md:text-4xl">{chapter.title}</h1>
             <div className="flex flex-wrap items-center gap-4 font-mono text-xs text-muted-foreground">
-              <span>{loading ? (waitMessage || "生成中...") : `\u2713 ${review}`}</span>
+              <span>{loading ? (waitMessage || "生成中...") : `✓ ${review}`}</span>
             </div>
             <div className="mt-4 text-sm text-muted-foreground leading-relaxed border-t border-border/50 pt-4">
               <p>承接：{chapter.connectionFromPrevious ?? "这是课程起点。"}</p>
@@ -692,24 +469,18 @@ export default function ReaderPage() {
           </div>
 
           {generationError && hasChapterBody(chapter) && (
-            <div className="mb-8 rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">
-              {generationError}
-            </div>
+            <div className="mb-8 rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">{generationError}</div>
           )}
 
           {loading ? (
             <div className="rounded-lg border border-dashed border-border py-24 text-center">
               <Clock size={32} className="mx-auto mb-4 animate-pulse text-muted-foreground/50" />
-              <p className="font-mono text-sm text-muted-foreground">
-                {waitMessage || "AI 正在编写本章..."}
-              </p>
+              <p className="font-mono text-sm text-muted-foreground">{waitMessage || "AI 正在编写本章..."}</p>
               <p className="mt-2 text-xs text-muted-foreground/60">
                 {chapterAwaitingQuality ? "质检结束后，本章会自动开放阅读。" : "AI 正在根据课程全局设定编写本章。"}
               </p>
               {latestChapterEvent?.message && (
-                <p className="mx-auto mt-4 max-w-lg text-xs leading-relaxed text-muted-foreground">
-                  最近事件：{latestChapterEvent.message}
-                </p>
+                <p className="mx-auto mt-4 max-w-lg text-xs leading-relaxed text-muted-foreground">最近事件：{latestChapterEvent.message}</p>
               )}
             </div>
           ) : generationError && !hasChapterBody(chapter) ? (
@@ -724,11 +495,11 @@ export default function ReaderPage() {
               </button>
             </div>
           ) : (
-            <article 
+            <article
               className="prose prose-invert max-w-none text-foreground prose-headings:font-bold prose-headings:tracking-tight prose-a:text-primary prose-code:font-mono prose-code:text-sm prose-pre:border prose-pre:border-border"
               onDoubleClick={captureParagraph}
               onMouseUp={captureSelection}
-              title="选中文字或双击段落，在右侧展开讨论"
+              title="选中文字或双击段落，选择问导师或改写此处"
             >
               {sections.length > 0 ? (
                 <div className="space-y-8">
@@ -744,7 +515,6 @@ export default function ReaderPage() {
             </article>
           )}
 
-          {/* Chapter Nav */}
           <div className="mt-16 flex flex-col gap-4 border-t border-border pt-8 sm:flex-row sm:items-center sm:justify-between print:hidden">
             {prevChapter ? (
               <button
@@ -761,7 +531,7 @@ export default function ReaderPage() {
                 </div>
               </button>
             ) : <div className="flex-1" />}
-            
+
             {nextChapter ? (
               <button
                 onClick={() => {
@@ -781,225 +551,47 @@ export default function ReaderPage() {
         </div>
       </main>
 
-      {/* Tutor Sidebar (Terminal Style) */}
-      <aside className={`shrink-0 border-l border-border bg-muted/30 flex flex-col transition-all duration-300 print:hidden ${tutorOpen ? "w-80 lg:w-[400px]" : "w-0 overflow-hidden"}`}>
-        <div className="flex items-center justify-between border-b border-border bg-card px-4 py-3">
-          <div className="flex items-center gap-2">
-            <Bot size={14} className="text-primary" />
-            <span className="font-mono text-[11px] font-medium text-primary uppercase tracking-wider">{"\u5bfc\u5e08\u7ec8\u7aef"}</span>
-          </div>
-          <button onClick={() => setTutorOpen(false)} className="rounded p-1 text-muted-foreground hover:text-foreground">
-            <X size={14} />
-          </button>
-        </div>
-
-        <div className="flex-1 overflow-y-auto p-4 scrollbar-thin scrollbar-thumb-border scrollbar-track-transparent">
-          {selectedText || active ? (
-            <div className="space-y-6">
-              <div className="border-l-2 border-primary pl-3">
-                <p className="font-mono text-[10px] text-muted-foreground mb-1">TARGET_TEXT</p>
-                <div className="text-sm leading-relaxed text-foreground italic">
-                  &quot;{active?.selectedText ?? selectedText}&quot;
-                </div>
-              </div>
-
-              <div className="space-y-4">
-                {active?.messages.map((message) => (
-                  <div key={message.id} className="flex flex-col gap-1">
-                    <span className={`font-mono text-[10px] ${message.role === "user" ? "text-primary" : "text-muted-foreground"}`}>
-                      {message.role === "user" ? "> USER" : "> TUTOR_AI"}
-                    </span>
-                    <div className={`prose prose-invert prose-sm max-w-none ${message.role === "user" ? "text-foreground" : "text-muted-foreground"}`}>
-                      <MarkdownContent content={message.content} />
-                    </div>
-                  </div>
-                ))}
-                {answering && (
-                  <div className="flex items-center gap-2 text-primary">
-                    <span className="font-mono text-[10px] animate-pulse">{"\u5904\u7406\u4e2d..."}</span>
-                  </div>
-                )}
-              </div>
-
-              {(repair || repairError) && (
-                <div className="space-y-3 border border-border bg-background/70 p-3">
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="font-mono text-[10px] text-primary uppercase tracking-wider">REPAIR_SUGGESTION</span>
-                    {repair?.status === "applied" && (
-                      <span className="font-mono text-[10px] text-muted-foreground">APPLIED</span>
-                    )}
-                  </div>
-                  {repairError && (
-                    <p className="text-xs leading-relaxed text-destructive">{repairError}</p>
-                  )}
-                  {repair && (
-                    <>
-                      <div>
-                        <p className="mb-1 font-mono text-[10px] text-muted-foreground">DIAGNOSIS</p>
-                        <p className="text-xs leading-relaxed text-muted-foreground">{repair.diagnosis}</p>
-                      </div>
-                      <div>
-                        <p className="mb-1 font-mono text-[10px] text-muted-foreground">PATCH_PREVIEW</p>
-                        <pre className="max-h-48 overflow-y-auto whitespace-pre-wrap border border-border bg-muted/40 p-2 text-xs leading-relaxed text-foreground">{repair.afterText}</pre>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={applyRepair}
-                        disabled={repairing || repair.status === "applied"}
-                        className="w-full border border-primary/50 bg-primary/10 px-3 py-2 font-mono text-[11px] text-primary transition-colors hover:bg-primary/15 disabled:cursor-not-allowed disabled:opacity-50"
-                      >
-                        {repair.status === "applied" ? "已应用修复" : repairing ? "应用中..." : "应用修复"}
-                      </button>
-                    </>
-                  )}
-                </div>
-              )}
-            </div>
-          ) : (
-            <div className="flex h-full flex-col items-center justify-center text-center text-muted-foreground">
-              <MessageSquareQuote size={32} className="mb-4 opacity-50" />
-              <p className="font-mono text-xs leading-relaxed max-w-[200px]">
-                {"\u9009\u4e2d\u6587\u5b57\u6216\u53cc\u51fb\u6bb5\u843d\u540e\u53d1\u8d77\u95ee\u7b54"}
-              </p>
-            </div>
-          )}
-        </div>
-
-        {(selectedText || active) && (
-          <div className="border-t border-border bg-card p-4">
-            <div className="mb-3 grid grid-cols-2 gap-2">
-              <button
-                type="button"
-                onClick={() => requestRepair("请检查这段内容是否有公式、Markdown 或概念错误，先给出修复建议。")}
-                disabled={repairing}
-                className="border border-border bg-background px-2 py-1.5 font-mono text-[10px] text-muted-foreground transition-colors hover:border-primary hover:text-primary disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {repairing ? "检查中..." : "检查/建议"}
-              </button>
-              <button
-                type="button"
-                onClick={() => requestRepair("请修复这段内容中的格式、公式或明显表述问题，只做最小必要修改。")}
-                disabled={repairing}
-                className="border border-border bg-background px-2 py-1.5 font-mono text-[10px] text-muted-foreground transition-colors hover:border-primary hover:text-primary disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {repairing ? "修复中..." : "最小修复"}
-              </button>
-            </div>
-            <div className="mb-3 flex flex-wrap gap-2">
-              {quickQuestions.map((q) => (
-                <button
-                  key={q}
-                  onClick={() => ask(q)}
-                  disabled={answering}
-                  className="rounded border border-border bg-background px-2 py-1 font-mono text-[10px] text-muted-foreground hover:border-primary hover:text-primary disabled:opacity-50 transition-colors"
-                >
-                  {q}
-                </button>
-              ))}
-            </div>
-            <form onSubmit={submitQuestion} className="relative flex items-center">
-              <span className="absolute left-3 font-mono text-[12px] text-primary">{">"}</span>
-              <input
-                name="question"
-                placeholder="\u8f93\u5165\u95ee\u9898..."
-                autoComplete="off"
-                disabled={answering}
-                className="w-full bg-background border border-border py-2 pl-7 pr-3 font-mono text-[12px] text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none disabled:opacity-50"
-              />
-            </form>
-          </div>
-        )}
+      {/* Right drawer: mutually-exclusive Tutor / Revise panels */}
+      <aside className={`shrink-0 border-l border-border bg-muted/30 transition-all duration-300 print:hidden ${panel ? "w-80 lg:w-[400px]" : "w-0 overflow-hidden"}`}>
+        {panel === "tutor" && <TutorPanel tutor={tutor} onClose={() => setPanel(null)} />}
+        {panel === "revise" && <RevisePanel revise={revise} onClose={() => setPanel(null)} />}
       </aside>
 
-      {!tutorOpen && (
-        <button onClick={() => setTutorOpen(true)} className="fixed right-0 top-1/2 z-40 flex h-12 w-12 -translate-y-1/2 items-center justify-center rounded-l-md border border-r-0 border-border bg-card text-muted-foreground shadow-lg hover:text-foreground transition-colors print:hidden" title="展开终端">
-          <MessageSquareQuote size={18} />
-        </button>
+      {/* Collapsed launchers */}
+      {!panel && (
+        <div className="fixed right-0 top-1/2 z-40 flex -translate-y-1/2 flex-col gap-2 print:hidden">
+          <button
+            onClick={() => setPanel("tutor")}
+            className="flex h-12 w-12 items-center justify-center rounded-l-md border border-r-0 border-border bg-card text-muted-foreground shadow-lg transition-colors hover:text-primary"
+            title="导师问答"
+          >
+            <Bot size={18} />
+          </button>
+          <button
+            onClick={() => setPanel("revise")}
+            className="flex h-12 w-12 items-center justify-center rounded-l-md border border-r-0 border-border bg-card text-muted-foreground shadow-lg transition-colors hover:text-primary"
+            title="局部改写"
+          >
+            <PencilLine size={18} />
+          </button>
+        </div>
+      )}
+
+      {/* Selection chooser */}
+      {chooser && (
+        <div className="fixed bottom-6 left-1/2 z-50 flex -translate-x-1/2 items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 shadow-xl print:hidden">
+          <span className="max-w-[160px] truncate font-mono text-[10px] text-muted-foreground" title={chooser.text}>已选中：{chooser.text}</span>
+          <button onClick={openTutorFromChooser} className="flex items-center gap-1 rounded border border-primary/40 bg-primary/10 px-2 py-1 font-mono text-[10px] text-primary hover:bg-primary/15">
+            <Bot size={12} /> 问导师
+          </button>
+          <button onClick={openReviseFromChooser} className="flex items-center gap-1 rounded border border-primary/40 bg-primary/10 px-2 py-1 font-mono text-[10px] text-primary hover:bg-primary/15">
+            <PencilLine size={12} /> 改写此处
+          </button>
+          <button onClick={() => setChooser(null)} className="rounded p-1 text-muted-foreground hover:text-foreground">
+            <X size={12} />
+          </button>
+        </div>
       )}
     </div>
   );
-}
-
-function upsertAnnotation(annotations: Annotation[], annotation: Annotation) {
-  const index = annotations.findIndex((item) => item.id === annotation.id);
-  if (index === -1) return [...annotations, annotation];
-  return annotations.map((item) => (item.id === annotation.id ? annotation : item));
-}
-
-async function askTutorStreaming(input: {
-  topic: string;
-  selectedText: string;
-  question: string;
-  history: { role: string; content: string }[];
-  sectionId?: string;
-  annotation: Annotation;
-  signal?: AbortSignal;
-  onToken: (chunk: string) => void;
-}): Promise<Annotation | undefined> {
-  const response = await apiFetch("/api/annotations", {
-    method: "POST",
-    signal: input.signal,
-    body: JSON.stringify({
-      topic: input.topic,
-      selectedText: input.selectedText,
-      question: input.question,
-      history: input.history,
-      sectionId: input.sectionId,
-      annotation: input.annotation,
-      stream: true,
-    }),
-  });
-
-  if (!response.ok) {
-    const errorData = await response.json().catch(() => null);
-    throw new Error(errorData?.error ?? `Tutor request failed (${response.status}).`);
-  }
-
-  const reader = response.body?.getReader();
-  if (!reader) throw new Error("Streaming not supported.");
-
-  const decoder = new TextDecoder("utf-8");
-  let buffer = "";
-
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-
-    // Split by double newline (SSE message boundary)
-    const parts = buffer.split("\n\n");
-    buffer = parts.pop() ?? "";
-
-    for (const part of parts) {
-      const lines = part.split("\n");
-      let eventType = "message";
-      let data = "";
-
-      for (const line of lines) {
-        if (line.startsWith("event: ")) {
-          eventType = line.slice(7).trim();
-        } else if (line.startsWith("data: ")) {
-          data = line.slice(6);
-        }
-      }
-
-      if (!data) continue;
-
-      try {
-        const parsed = JSON.parse(data);
-        if (eventType === "token") {
-          input.onToken(parsed.text ?? "");
-        } else if (eventType === "done") {
-          return parsed.annotation ?? undefined;
-        } else if (eventType === "error") {
-          throw new Error(parsed.error ?? "Tutor request failed.");
-        }
-      } catch (error) {
-        if (error instanceof SyntaxError) continue;
-        throw error;
-      }
-    }
-  }
-
-  return undefined;
 }

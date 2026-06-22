@@ -45,6 +45,7 @@ const AGENT_LABELS: Record<AgentName, string> = {
   POLISHER: "格式润色员",
   REVIEWER: "质量评审员",
   TUTOR: "阅读导师",
+  REVISER: "局部改写员",
 };
 
 const AGENT_DESCRIPTIONS: Record<AgentName, string> = {
@@ -54,6 +55,7 @@ const AGENT_DESCRIPTIONS: Record<AgentName, string> = {
   POLISHER: "负责章节排版、表达润色和格式修复。",
   REVIEWER: "负责质量评审、问题检查和改进建议。",
   TUTOR: "负责阅读页中的批注问答和辅导。",
+  REVISER: "负责阅读页中按要求对选定正文做局部改写与修复。",
 };
 
 const AGENT_BADGES: Record<AgentName, string> = {
@@ -63,6 +65,7 @@ const AGENT_BADGES: Record<AgentName, string> = {
   POLISHER: "润",
   REVIEWER: "审",
   TUTOR: "导",
+  REVISER: "改",
 };
 
 const EMPTY_FIELDS: ModelOverrideFields = {
