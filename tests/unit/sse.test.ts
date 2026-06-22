@@ -62,8 +62,10 @@ test("tutor hook uses authenticated abortable streaming requests", () => {
   assert.match(src, /new AbortController\(\)/u);
   assert.match(src, /apiFetch\("\/api\/annotations"/u);
   assert.doesNotMatch(src, /fetch\("\/api\/annotations"/u);
+  assert.match(src, /createSseParser/u);
   assert.match(src, /signal: input\.signal/u);
   assert.match(src, /stream: true/u);
+  assert.doesNotMatch(src, /\.messages\.push/u);
 });
 
 test("revise hook calls the authenticated revisions endpoints (not repairs)", () => {
@@ -98,10 +100,14 @@ test("reader page keeps section anchoring and the selection chooser", () => {
 test("annotations route bounds tutor streaming requests with friendly SSE errors", () => {
   const routeSource = readFileSync("src/app/api/annotations/route.ts", "utf8");
 
+  assert.match(routeSource, /export const dynamic = "force-dynamic"/u);
   assert.match(routeSource, /TUTOR_ROUTE_TIMEOUT_MS = 65_000/u);
   assert.match(routeSource, /function withDeadline/u);
   assert.match(routeSource, /function tutorErrorMessage/u);
   assert.match(routeSource, /withDeadline\(withQuotaConsumption\(userId, "ask_tutor"/u);
   assert.match(routeSource, /enqueue\("error", JSON\.stringify\(\{\s+error: tutorErrorMessage\(error\),/u);
   assert.match(routeSource, /controller\.close\(\)/u);
+  assert.match(routeSource, /"Cache-Control": "no-cache, no-transform"/u);
+  assert.match(routeSource, /"X-Accel-Buffering": "no"/u);
+  assert.match(routeSource, /stripClientOnlyMessages/u);
 });

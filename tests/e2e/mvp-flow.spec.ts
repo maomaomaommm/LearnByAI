@@ -62,7 +62,11 @@ test("mock beta flow: create course, generate chapter, ask tutor, export", async
   await paragraph.dblclick();
   await page.getByRole("button", { name: /问导师/ }).click();
   await expect(page.getByText("TARGET_TEXT")).toBeVisible();
-  await page.locator("aside button").filter({ hasText: /例/ }).first().click();
+  const tutorQuestion = `Explain this selection briefly ${crypto.randomUUID()}`;
+  await page.locator('aside input[name="question"]').fill(tutorQuestion);
+  await page.locator('aside input[name="question"]').press("Enter");
+  await expect(page.getByText("> USER")).toBeVisible();
+  await expect(page.getByText(tutorQuestion)).toBeVisible();
   await expect(page.getByText("> TUTOR_AI")).toBeVisible({ timeout: 15_000 });
 
   await page.goto(courseUrl);

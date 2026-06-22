@@ -3,6 +3,7 @@
 import { useCallback, useRef, useState } from "react";
 import { apiFetch } from "@/lib/clientApi";
 import { publicSafeErrorMessage } from "@/lib/publicSafeError";
+import { createSseParser } from "@/lib/sse";
 import { Annotation, Course } from "@/lib/types";
 
 export const TUTOR_REQUEST_TIMEOUT_MS = 70_000;
@@ -38,7 +39,7 @@ export function useTutor(course: Course | undefined, chapterId: string) {
   }, []);
 
   const openThread = useCallback((annotation: Annotation) => {
-    setActive(annotation);
+    setActive(cloneAnnotation(annotation));
     setTarget(
       annotation.scope === "chapter" || !annotation.selectedText
         ? { scope: "chapter" }
@@ -56,8 +57,8 @@ export function useTutor(course: Course | undefined, chapterId: string) {
       if (!course) return;
       setAnswering(true);
       const pendingId = crypto.randomUUID();
-      annotation.messages.push({ id: pendingId, role: "assistant", content: "" });
-      setActive({ ...annotation });
+      let draft = appendMessage(annotation, { id: pendingId, role: "assistant", content: "" });
+      setActive(draft);
 
       let saved: Annotation | undefined;
       const controller = new AbortController();
@@ -73,20 +74,16 @@ export function useTutor(course: Course | undefined, chapterId: string) {
           annotation,
           signal: controller.signal,
           onToken: (chunk) => {
-            annotation.messages = annotation.messages.map((message) =>
-              message.id === pendingId ? { ...message, content: message.content + chunk } : message,
-            );
-            setActive({ ...annotation });
+            draft = updateMessageContent(draft, pendingId, (content) => content + chunk);
+            setActive(draft);
           },
         });
       } catch (error) {
         const message = controller.signal.aborted
           ? "导师回答已停止。"
           : publicSafeErrorMessage(error, "导师暂时无法回答，请稍后重试。");
-        annotation.messages = annotation.messages.map((item) =>
-          item.id === pendingId ? { ...item, content: message } : item,
-        );
-        setActive({ ...annotation });
+        draft = updateMessageContent(draft, pendingId, () => message);
+        setActive(draft);
       } finally {
         window.clearTimeout(timeout);
         setAnswering(false);
@@ -94,7 +91,7 @@ export function useTutor(course: Course | undefined, chapterId: string) {
       }
 
       if (saved) setAnnotations((current) => upsertAnnotation(current, saved!));
-      setActive({ ...(saved ?? annotation) });
+      setActive(cloneAnnotation(saved ?? draft));
     },
     [course],
   );
@@ -106,7 +103,7 @@ export function useTutor(course: Course | undefined, chapterId: string) {
         ? active.scope === "chapter" || !active.selectedText
         : target?.scope === "chapter";
 
-      const annotation: Annotation =
+      const baseAnnotation: Annotation =
         active ??
         ({
           id: crypto.randomUUID(),
@@ -120,8 +117,14 @@ export function useTutor(course: Course | undefined, chapterId: string) {
           createdAt: new Date().toISOString(),
         } satisfies Annotation);
 
-      annotation.messages.push({ id: crypto.randomUUID(), role: "user", content: question });
-      setActive({ ...annotation });
+      const annotation = {
+        ...baseAnnotation,
+        messages: [
+          ...baseAnnotation.messages,
+          { id: crypto.randomUUID(), role: "user" as const, content: question },
+        ],
+      };
+      setActive(annotation);
       await streamAnswer(annotation, question);
     },
     [active, chapterId, course, streamAnswer, target],
@@ -166,8 +169,35 @@ export function useTutor(course: Course | undefined, chapterId: string) {
 
 function upsertAnnotation(annotations: Annotation[], annotation: Annotation) {
   const index = annotations.findIndex((item) => item.id === annotation.id);
-  if (index === -1) return [...annotations, annotation];
-  return annotations.map((item) => (item.id === annotation.id ? annotation : item));
+  if (index === -1) return [...annotations, cloneAnnotation(annotation)];
+  return annotations.map((item) => (item.id === annotation.id ? cloneAnnotation(annotation) : item));
+}
+
+function cloneAnnotation(annotation: Annotation): Annotation {
+  return {
+    ...annotation,
+    messages: annotation.messages.map((message) => ({ ...message })),
+  };
+}
+
+function appendMessage(annotation: Annotation, message: Annotation["messages"][number]): Annotation {
+  return {
+    ...annotation,
+    messages: [...annotation.messages, message],
+  };
+}
+
+function updateMessageContent(
+  annotation: Annotation,
+  messageId: string,
+  update: (content: string) => string,
+): Annotation {
+  return {
+    ...annotation,
+    messages: annotation.messages.map((message) =>
+      message.id === messageId ? { ...message, content: update(message.content) } : message,
+    ),
+  };
 }
 
 async function askTutorStreaming(input: {
@@ -203,46 +233,26 @@ async function askTutorStreaming(input: {
   if (!reader) throw new Error("Streaming not supported.");
 
   const decoder = new TextDecoder("utf-8");
-  let buffer = "";
+  let saved: Annotation | undefined;
+  const parser = createSseParser((event) => {
+    if (!event.data) return;
+    const parsed = JSON.parse(event.data);
+    if (event.event === "token") {
+      input.onToken(parsed.text ?? "");
+    } else if (event.event === "done") {
+      saved = parsed.annotation ?? undefined;
+    } else if (event.event === "error") {
+      throw new Error(parsed.error ?? "Tutor request failed.");
+    }
+  });
 
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-
-    const parts = buffer.split("\n\n");
-    buffer = parts.pop() ?? "";
-
-    for (const part of parts) {
-      const lines = part.split("\n");
-      let eventType = "message";
-      let data = "";
-
-      for (const line of lines) {
-        if (line.startsWith("event: ")) {
-          eventType = line.slice(7).trim();
-        } else if (line.startsWith("data: ")) {
-          data = line.slice(6);
-        }
-      }
-
-      if (!data) continue;
-
-      try {
-        const parsed = JSON.parse(data);
-        if (eventType === "token") {
-          input.onToken(parsed.text ?? "");
-        } else if (eventType === "done") {
-          return parsed.annotation ?? undefined;
-        } else if (eventType === "error") {
-          throw new Error(parsed.error ?? "Tutor request failed.");
-        }
-      } catch (error) {
-        if (error instanceof SyntaxError) continue;
-        throw error;
-      }
-    }
+    parser.feed(decoder.decode(value, { stream: true }));
   }
 
-  return undefined;
+  parser.feed(decoder.decode());
+  parser.flush();
+  return saved;
 }

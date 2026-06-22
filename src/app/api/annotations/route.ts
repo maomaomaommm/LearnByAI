@@ -5,10 +5,13 @@ import { parseModelOverridesFromHeaders } from "@/lib/modelOverrides";
 import { withQuotaConsumption } from "@/lib/quota";
 import { safeErrorMessage } from "@/lib/safeError";
 import { deleteServerAnnotation, getServerCourse, listServerAnnotations, saveServerAnnotation, saveServerGenerationJob } from "@/lib/serverStore";
+import { encodeSseEvent } from "@/lib/sse";
 import { resolveModelOverrides } from "@/lib/userModelConfig";
 import { Annotation, Chapter, Course } from "@/lib/types";
 
 const TUTOR_ROUTE_TIMEOUT_MS = 65_000;
+
+export const dynamic = "force-dynamic";
 
 export async function GET(request: Request) {
   const auth = await requireApiUser(request);
@@ -89,9 +92,10 @@ export async function POST(request: Request) {
       }
 
       let annotation: Annotation | undefined;
-      if (anchor.annotation) {
+      const clientAnnotation = stripClientOnlyMessages(anchor.annotation);
+      if (clientAnnotation) {
         const now = new Date().toISOString();
-        annotation = anchor.annotation;
+        annotation = clientAnnotation;
         annotation.messages = [
           ...annotation.messages,
           {
@@ -134,7 +138,7 @@ async function handleStreamingPost(params: {
   const stream = new ReadableStream({
     async start(controller) {
       const enqueue = (event: string, data: string) => {
-        controller.enqueue(encoder.encode(`event: ${event}\ndata: ${data}\n\n`));
+        controller.enqueue(encoder.encode(encodeSseEvent(event, data)));
       };
 
       try {
@@ -184,9 +188,10 @@ async function handleStreamingPost(params: {
           }
 
           let savedAnnotation: Annotation | undefined;
-          if (anchor.annotation) {
+          const clientAnnotation = stripClientOnlyMessages(anchor.annotation);
+          if (clientAnnotation) {
             const now = new Date().toISOString();
-            const annotation = anchor.annotation;
+            const annotation = clientAnnotation;
             annotation.messages = [
               ...annotation.messages,
               {
@@ -223,10 +228,19 @@ async function handleStreamingPost(params: {
   return new Response(stream, {
     headers: {
       "Content-Type": "text/event-stream",
-      "Cache-Control": "no-cache",
+      "Cache-Control": "no-cache, no-transform",
       Connection: "keep-alive",
+      "X-Accel-Buffering": "no",
     },
   });
+}
+
+function stripClientOnlyMessages(annotation: Annotation | undefined) {
+  if (!annotation) return undefined;
+  return {
+    ...annotation,
+    messages: annotation.messages.filter((message) => message.role !== "assistant" || message.content.trim()),
+  };
 }
 
 function withDeadline<T>(promise: Promise<T>, timeoutMs: number) {
