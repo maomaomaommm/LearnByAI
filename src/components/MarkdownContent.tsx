@@ -11,6 +11,7 @@ import rehypeHighlight from "rehype-highlight";
 import "katex/dist/katex.min.css";
 import "highlight.js/styles/github-dark.css";
 import { postRepairMarkdown } from "@/lib/prompts/formatGuard";
+import { normalizeMermaidCode } from "@/lib/mermaid";
 
 interface MarkdownContentProps {
   content: string;
@@ -113,6 +114,9 @@ function loadMermaid() {
         securityLevel: "loose",
         fontFamily: "inherit",
         flowchart: { htmlLabels: true },
+        // Don't let Mermaid inject its own error "bomb" graphic into the DOM on a
+        // parse failure — we render our own source fallback below instead.
+        suppressErrorRendering: true,
       });
       return mod.default;
     });
@@ -129,7 +133,7 @@ function MermaidDiagram({ code }: { code: string }) {
     setSvg("");
     setFailed(false);
     loadMermaid()
-      .then((mermaid) => mermaid.render(`mmd-${Math.random().toString(36).slice(2)}`, code.trim()))
+      .then((mermaid) => mermaid.render(`mmd-${Math.random().toString(36).slice(2)}`, normalizeMermaidCode(code.trim())))
       .then(({ svg }) => {
         if (!cancelled) setSvg(svg);
       })
