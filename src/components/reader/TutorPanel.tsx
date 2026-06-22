@@ -27,7 +27,7 @@ export function TutorPanel({ tutor, onClose }: TutorPanelProps) {
     const question = input.value;
     void tutor.ask(question).then((sent) => {
       if (sent) input.value = "";
-    });
+    }).catch(() => undefined);
   }
 
   return (

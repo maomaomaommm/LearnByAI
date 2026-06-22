@@ -71,6 +71,10 @@ test("tutor hook uses authenticated abortable streaming requests", () => {
   assert.doesNotMatch(src, /请先选择一段正文/u);
   assert.match(src, /target\?\.scope !== "anchored"/u);
   assert.match(src, /课程数据还在加载/u);
+  // IDs must come from randomId(), not crypto.randomUUID(), so the tutor works in
+  // insecure (plain-HTTP) browser contexts where crypto.randomUUID is undefined.
+  assert.doesNotMatch(src, /crypto\.randomUUID/u);
+  assert.match(src, /randomId\(\)/u);
   assert.match(src, /void streamAnswer\(annotation, trimmed\)/u);
   assert.match(src, /return true/u);
 });

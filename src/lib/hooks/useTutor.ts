@@ -2,6 +2,7 @@
 
 import { useCallback, useRef, useState } from "react";
 import { apiFetch } from "@/lib/clientApi";
+import { randomId } from "@/lib/clientId";
 import { publicSafeErrorMessage } from "@/lib/publicSafeError";
 import { createSseParser } from "@/lib/sse";
 import { Annotation, Course } from "@/lib/types";
@@ -61,7 +62,7 @@ export function useTutor(course: Course | undefined, chapterId: string) {
     async (annotation: Annotation, question: string) => {
       if (!course) return;
       setAnswering(true);
-      const pendingId = crypto.randomUUID();
+      const pendingId = randomId();
       let draft = appendMessage(annotation, { id: pendingId, role: "assistant", content: "" });
       setActive(draft);
 
@@ -121,7 +122,7 @@ export function useTutor(course: Course | undefined, chapterId: string) {
       const baseAnnotation: Annotation =
         active ??
         ({
-          id: crypto.randomUUID(),
+          id: randomId(),
           courseId: course.id,
           chapterId,
           sectionId: target?.scope === "anchored" ? target.sectionId : undefined,
@@ -136,7 +137,7 @@ export function useTutor(course: Course | undefined, chapterId: string) {
         ...baseAnnotation,
         messages: [
           ...baseAnnotation.messages,
-          { id: crypto.randomUUID(), role: "user" as const, content: trimmed },
+          { id: randomId(), role: "user" as const, content: trimmed },
         ],
       };
       setActive(annotation);
