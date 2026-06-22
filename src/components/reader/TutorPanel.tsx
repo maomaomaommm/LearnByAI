@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent } from "react";
-import { Bot, MessageSquareQuote, Trash2, X } from "lucide-react";
+import { Bot, MessageSquareQuote, SendHorizontal, Trash2, X } from "lucide-react";
 import { MarkdownContent } from "@/components/MarkdownContent";
 import { useTutor } from "@/lib/hooks/useTutor";
 
@@ -13,7 +13,7 @@ type TutorPanelProps = {
 };
 
 export function TutorPanel({ tutor, onClose }: TutorPanelProps) {
-  const { active, target, answering, annotations } = tutor;
+  const { active, target, answering, annotations, error } = tutor;
   const inConversation = Boolean(active || target);
 
   const targetLabel = active
@@ -22,12 +22,13 @@ export function TutorPanel({ tutor, onClose }: TutorPanelProps) {
       ? target.selectedText
       : "整章泛问";
 
-  function submitQuestion(event: FormEvent<HTMLFormElement>) {
+  async function submitQuestion(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = event.currentTarget;
     const input = form.elements.namedItem("question") as HTMLInputElement;
-    void tutor.ask(input.value);
-    input.value = "";
+    const question = input.value;
+    const sent = await tutor.ask(question);
+    if (sent) input.value = "";
   }
 
   return (
@@ -128,6 +129,7 @@ export function TutorPanel({ tutor, onClose }: TutorPanelProps) {
 
       {inConversation && (
         <div className="border-t border-border bg-card p-4">
+          {error && <p className="mb-3 text-xs leading-relaxed text-destructive">{error}</p>}
           <div className="mb-3 flex flex-wrap gap-2">
             {quickQuestions.map((q) => (
               <button
@@ -140,8 +142,9 @@ export function TutorPanel({ tutor, onClose }: TutorPanelProps) {
               </button>
             ))}
           </div>
-          <form onSubmit={submitQuestion} className="relative flex items-center">
-            <span className="absolute left-3 font-mono text-[12px] text-primary">{">"}</span>
+          <form onSubmit={submitQuestion} className="flex items-center gap-2">
+            <div className="relative flex-1">
+              <span className="absolute left-3 top-1/2 -translate-y-1/2 font-mono text-[12px] text-primary">{">"}</span>
             <input
               name="question"
               placeholder="输入问题..."
@@ -149,6 +152,16 @@ export function TutorPanel({ tutor, onClose }: TutorPanelProps) {
               disabled={answering}
               className="w-full bg-background border border-border py-2 pl-7 pr-3 font-mono text-[12px] text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none disabled:opacity-50"
             />
+            </div>
+            <button
+              type="submit"
+              disabled={answering}
+              className="inline-flex h-9 w-9 shrink-0 items-center justify-center border border-border bg-background text-muted-foreground transition-colors hover:border-primary hover:text-primary disabled:cursor-not-allowed disabled:opacity-50"
+              aria-label="发送问题"
+              title="发送问题"
+            >
+              <SendHorizontal size={14} />
+            </button>
           </form>
         </div>
       )}

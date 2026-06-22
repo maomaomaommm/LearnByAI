@@ -66,6 +66,18 @@ test("tutor hook uses authenticated abortable streaming requests", () => {
   assert.match(src, /signal: input\.signal/u);
   assert.match(src, /stream: true/u);
   assert.doesNotMatch(src, /\.messages\.push/u);
+  assert.match(src, /setError\("请先选择一段正文/u);
+  assert.match(src, /return true/u);
+});
+
+test("tutor panel exposes an explicit send button and error feedback", () => {
+  const src = readFileSync("src/components/reader/TutorPanel.tsx", "utf8");
+
+  assert.match(src, /SendHorizontal/u);
+  assert.match(src, /aria-label="发送问题"/u);
+  assert.match(src, /const sent = await tutor\.ask\(question\)/u);
+  assert.match(src, /if \(sent\) input\.value = ""/u);
+  assert.match(src, /text-destructive/u);
 });
 
 test("revise hook calls the authenticated revisions endpoints (not repairs)", () => {

@@ -17,6 +17,7 @@ export function useTutor(course: Course | undefined, chapterId: string) {
   const [active, setActive] = useState<Annotation>();
   const [target, setTarget] = useState<TutorTarget>();
   const [answering, setAnswering] = useState(false);
+  const [error, setError] = useState("");
   const controllerRef = useRef<AbortController | null>(null);
 
   const reloadAnnotations = useCallback(() => {
@@ -31,15 +32,18 @@ export function useTutor(course: Course | undefined, chapterId: string) {
   const startAnchored = useCallback((selectedText: string, sectionId?: string) => {
     setTarget({ scope: "anchored", selectedText, sectionId });
     setActive(undefined);
+    setError("");
   }, []);
 
   const startGeneral = useCallback(() => {
     setTarget({ scope: "chapter" });
     setActive(undefined);
+    setError("");
   }, []);
 
   const openThread = useCallback((annotation: Annotation) => {
     setActive(cloneAnnotation(annotation));
+    setError("");
     setTarget(
       annotation.scope === "chapter" || !annotation.selectedText
         ? { scope: "chapter" }
@@ -50,6 +54,7 @@ export function useTutor(course: Course | undefined, chapterId: string) {
   const clear = useCallback(() => {
     setActive(undefined);
     setTarget(undefined);
+    setError("");
   }, []);
 
   const streamAnswer = useCallback(
@@ -82,6 +87,7 @@ export function useTutor(course: Course | undefined, chapterId: string) {
         const message = controller.signal.aborted
           ? "导师回答已停止。"
           : publicSafeErrorMessage(error, "导师暂时无法回答，请稍后重试。");
+        setError(controller.signal.aborted ? "" : message);
         draft = updateMessageContent(draft, pendingId, () => message);
         setActive(draft);
       } finally {
@@ -98,7 +104,17 @@ export function useTutor(course: Course | undefined, chapterId: string) {
 
   const ask = useCallback(
     async (question: string) => {
-      if (!course || !question.trim() || (!active && !target)) return;
+      const trimmed = question.trim();
+      if (!trimmed) return false;
+      if (!active && !target) {
+        setError("请先选择一段正文，或点击「针对整章提问」。");
+        return false;
+      }
+      if (!course) {
+        setError("课程数据还在加载，请稍后再试。");
+        return false;
+      }
+      setError("");
       const isChapter = active
         ? active.scope === "chapter" || !active.selectedText
         : target?.scope === "chapter";
@@ -112,7 +128,7 @@ export function useTutor(course: Course | undefined, chapterId: string) {
           sectionId: target?.scope === "anchored" ? target.sectionId : undefined,
           scope: isChapter ? "chapter" : "anchored",
           selectedText: target?.scope === "anchored" ? target.selectedText : undefined,
-          question,
+          question: trimmed,
           messages: [],
           createdAt: new Date().toISOString(),
         } satisfies Annotation);
@@ -121,11 +137,12 @@ export function useTutor(course: Course | undefined, chapterId: string) {
         ...baseAnnotation,
         messages: [
           ...baseAnnotation.messages,
-          { id: crypto.randomUUID(), role: "user" as const, content: question },
+          { id: crypto.randomUUID(), role: "user" as const, content: trimmed },
         ],
       };
       setActive(annotation);
-      await streamAnswer(annotation, question);
+      await streamAnswer(annotation, trimmed);
+      return true;
     },
     [active, chapterId, course, streamAnswer, target],
   );
@@ -155,6 +172,7 @@ export function useTutor(course: Course | undefined, chapterId: string) {
     active,
     target,
     answering,
+    error,
     reloadAnnotations,
     startAnchored,
     startGeneral,
