@@ -10,8 +10,32 @@ test("converts the U+27F6 long arrow (the reported bug) to a flowchart edge", ()
   assert.doesNotMatch(out, /⟶/u);
 });
 
-test("handles arrows with no surrounding spaces", () => {
-  assert.equal(normalizeMermaidCode("A→B"), "A --> B");
+test("injects a default flowchart header when the diagram type is missing", () => {
+  // The second reported case: quoted labels + <br>, but no `flowchart TD` first
+  // line, so Mermaid failed to parse the whole diagram.
+  const input = 'A["多智能体系统关键性质"] ⟶ B["分布式感知与行动<br>局部观测"]\nA ⟶ C["异构性"]';
+  const out = normalizeMermaidCode(input);
+  assert.match(out, /^flowchart TD\n/u);
+  assert.match(out, /A\["多智能体系统关键性质"\] --> B\["分布式感知与行动<br>局部观测"\]/u);
+  assert.doesNotMatch(out, /⟶/u);
+});
+
+test("does not inject a header when one already exists", () => {
+  const out = normalizeMermaidCode("graph LR\n  A --> B");
+  assert.match(out, /^graph LR\n/u);
+  assert.doesNotMatch(out, /flowchart TD/u);
+});
+
+test("treats a %%{init}%% directive before the type as a valid header", () => {
+  const input = '%%{init: {"theme":"dark"}}%%\nflowchart TD\n  A --> B';
+  const out = normalizeMermaidCode(input);
+  assert.equal((out.match(/flowchart TD/gu) ?? []).length, 1);
+});
+
+test("adds a header and converts arrows with no surrounding spaces", () => {
+  const out = normalizeMermaidCode("A→B");
+  assert.match(out, /^flowchart TD\n/u);
+  assert.match(out, /A --> B/u);
 });
 
 test("maps Unicode arrows to ->> inside a sequenceDiagram", () => {
@@ -22,7 +46,7 @@ test("maps Unicode arrows to ->> inside a sequenceDiagram", () => {
 
 test("covers several Unicode arrow glyphs", () => {
   for (const glyph of ["→", "⟶", "⇒", "⇨", "➜", "➡"]) {
-    assert.equal(normalizeMermaidCode(`A ${glyph} B`), "A --> B");
+    assert.match(normalizeMermaidCode(`graph TD\nA ${glyph} B`), /A --> B/u);
   }
 });
 
@@ -32,7 +56,7 @@ test("leaves already-valid Mermaid untouched", () => {
 });
 
 test("does not collapse distinct edges that merely share a line", () => {
-  assert.equal(normalizeMermaidCode("A --> B --> C"), "A --> B --> C");
+  assert.match(normalizeMermaidCode("graph TD\nA --> B --> C"), /A --> B --> C/u);
 });
 
 test("is a no-op on empty input", () => {

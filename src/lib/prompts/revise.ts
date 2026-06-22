@@ -100,9 +100,10 @@ ${JSON_SHAPE}
 - 保持 Markdown 结构：若原文以标题行（#/##/###）开头，afterText 必须保留同级标题且不改其层级。
 - 公式用 Markdown/LaTeX（行内 $...$、块级 $$...$$，块级前后留空行，正文不与 $$ 同行）。
 - 若需要配图，用 \`\`\`mermaid 围栏（平台会渲染）。务必使用合法 Mermaid 语法：
-  - 首行声明类型（flowchart TD / sequenceDiagram / stateDiagram-v2 等）。
+  - 第一行必须声明类型（flowchart TD / sequenceDiagram / stateDiagram-v2 等），缺了首行整张图都无法渲染。
   - 连线/箭头只能用 ASCII：flowchart 用 \`-->\`（带标签 \`A -->|说明| B\`）、sequenceDiagram 用 \`->>\`。严禁使用 Unicode 箭头（→、⟶、⇒、⇨ 等），否则整张图无法渲染。
-  - 节点文字保持简短，避免中文括号、引号、分号等特殊字符（必要时用 \`A["标签"]\`）。图前后要有文字讲解。
+  - 节点文字保持简短，避免中文括号、引号、分号等特殊字符（必要时用 \`A["标签"]\`，标签内换行用 \`<br>\`）。图前后要有文字讲解。
+  - 正确示例（首行类型 + ASCII 箭头）：首行 \`flowchart TD\`，下一行起 \`A["关键性质"] --> B["分布式感知"]\`。
 - issueType 用 "rewrite"；confidence 反映你对改写质量的把握。
 - 不要输出任何客套话（如"您好""以下是"），只输出 JSON。`;
 }
