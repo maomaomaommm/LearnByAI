@@ -125,6 +125,47 @@ export function useRevise(
     [onCourseUpdate, reloadRevisions],
   );
 
+  const reapply = useCallback(
+    async (revisionId: string) => {
+      setBusy(true);
+      setError("");
+      try {
+        const response = await apiFetch(`/api/revisions/${revisionId}/reapply`, { method: "POST" });
+        const data = (await response.json().catch(() => null)) as
+          | { course?: Course; revision?: Revision; error?: string }
+          | null;
+        if (!response.ok) throw new Error(data?.error ?? `Reapply failed (${response.status}).`);
+        if (data?.course) onCourseUpdate(data.course);
+        reloadRevisions();
+      } catch (error) {
+        setError(publicSafeErrorMessage(error, "重新应用失败，请稍后重试。"));
+      } finally {
+        setBusy(false);
+      }
+    },
+    [onCourseUpdate, reloadRevisions],
+  );
+
+  const deleteRevision = useCallback(
+    async (revisionId: string) => {
+      setBusy(true);
+      setError("");
+      try {
+        const response = await apiFetch(`/api/revisions/${revisionId}`, { method: "DELETE" });
+        const data = (await response.json().catch(() => null)) as { error?: string } | null;
+        if (!response.ok) throw new Error(data?.error ?? `Delete revision failed (${response.status}).`);
+        setRevisions((items) => items.filter((item) => item.id !== revisionId));
+        setProposal((item) => (item?.id === revisionId ? undefined : item));
+        reloadRevisions();
+      } catch (error) {
+        setError(publicSafeErrorMessage(error, "删除改写历史失败，请稍后重试。"));
+      } finally {
+        setBusy(false);
+      }
+    },
+    [reloadRevisions],
+  );
+
   return {
     revisions,
     proposal,
@@ -141,5 +182,7 @@ export function useRevise(
     propose,
     apply,
     revert,
+    reapply,
+    deleteRevision,
   };
 }

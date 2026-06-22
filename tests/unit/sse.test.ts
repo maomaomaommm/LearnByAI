@@ -74,6 +74,8 @@ test("revise hook calls the authenticated revisions endpoints (not repairs)", ()
   assert.match(src, /apiFetch\("\/api\/revisions"/u);
   assert.match(src, /apiFetch\("\/api\/revisions\/apply"/u);
   assert.match(src, /\/api\/revisions\/\$\{revisionId\}\/revert/u);
+  assert.match(src, /\/api\/revisions\/\$\{revisionId\}\/reapply/u);
+  assert.match(src, /apiFetch\(`\/api\/revisions\/\$\{revisionId\}`/u);
   assert.doesNotMatch(src, /\/api\/repairs/u);
 });
 

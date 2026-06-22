@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 
-test("revise panel UI: select -> rewrite -> preview diff -> apply -> undo", async ({ page }) => {
-  test.setTimeout(120_000);
+test("revise panel UI: select -> rewrite -> preview diff -> apply -> undo -> reapply -> delete", async ({ page }) => {
+  test.setTimeout(180_000);
   const headers = { "x-learnbyai-user-id": `revise-ui-${crypto.randomUUID()}@example.com` };
 
   await page.route("**/api/**", async (route) => {
@@ -72,4 +72,12 @@ test("revise panel UI: select -> rewrite -> preview diff -> apply -> undo", asyn
   await expect(page.getByTitle("撤销这次改写").first()).toBeVisible({ timeout: 30_000 });
   await page.getByTitle("撤销这次改写").first().click();
   await expect(page.getByText(/已撤销/).first()).toBeVisible({ timeout: 30_000 });
+
+  // Re-apply the reverted revision, then delete the history entry.
+  await expect(page.getByTitle("重新应用这次改写").first()).toBeVisible({ timeout: 30_000 });
+  await page.getByTitle("重新应用这次改写").first().click();
+  await expect(page.getByText(/已应用/).first()).toBeVisible({ timeout: 30_000 });
+  page.once("dialog", (dialog) => void dialog.accept());
+  await page.getByTitle("删除这条改写历史").first().click();
+  await expect(page.getByText("改写历史 · 0")).toBeVisible({ timeout: 30_000 });
 });

@@ -9,6 +9,7 @@ type TextRevisionArgs = {
   beforeText: string;
   afterText: string;
   beforeChapter?: Chapter;
+  afterChapter?: Chapter;
   allowSnapshotFallback?: boolean;
 };
 
@@ -138,12 +139,12 @@ function mapChapter(course: Course, chapterId: string, fn: (chapter: Chapter) =>
   return { course: { ...course, chapters, updatedAt: new Date().toISOString() }, chapter: touched };
 }
 
-function restoreChapterText(chapter: Chapter, beforeChapter: Chapter): Chapter {
+function restoreChapterText(chapter: Chapter, snapshot: Chapter, action: RevisionAction): Chapter {
   return rechecked({
     ...chapter,
-    content: beforeChapter.content,
-    sections: beforeChapter.sections,
-  }, "revert");
+    content: snapshot.content,
+    sections: snapshot.sections,
+  }, action);
 }
 
 export function applyTextRevisionToCourse(
@@ -168,7 +169,27 @@ export function revertTextRevisionInCourse(
         return rechecked(chapter, "revert");
       }
       if (error instanceof RevisionConflictError && args.beforeChapter && args.allowSnapshotFallback !== false) {
-        return restoreChapterText(chapter, args.beforeChapter);
+        return restoreChapterText(chapter, args.beforeChapter, "revert");
+      }
+      throw error;
+    }
+  });
+}
+
+/** Re-apply a previously reverted local revision without spending proposal quota. */
+export function reapplyTextRevisionInCourse(
+  course: Course,
+  args: TextRevisionArgs,
+) {
+  return mapChapter(course, args.chapterId, (chapter) => {
+    try {
+      return patchChapterText(chapter, args.sectionId, args.beforeText, args.afterText, "apply");
+    } catch (error) {
+      if (error instanceof RevisionConflictError && countInRevisionTarget(chapter, args.sectionId, args.afterText) === 1) {
+        return rechecked(chapter, "apply");
+      }
+      if (error instanceof RevisionConflictError && args.afterChapter && args.allowSnapshotFallback !== false) {
+        return restoreChapterText(chapter, args.afterChapter, "apply");
       }
       throw error;
     }

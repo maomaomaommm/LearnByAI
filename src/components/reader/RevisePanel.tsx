@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent } from "react";
-import { PencilLine, Undo2, X } from "lucide-react";
+import { PencilLine, RotateCcw, Trash2, Undo2, X } from "lucide-react";
 import { useRevise } from "@/lib/hooks/useRevise";
 import { RevisionMode, RevisionScope } from "@/lib/types";
 
@@ -188,6 +188,28 @@ export function RevisePanel({ revise, onClose }: RevisePanelProps) {
                         <Undo2 size={13} />
                       </button>
                     )}
+                    {revision.status === "reverted" && (
+                      <button
+                        onClick={() => void revise.reapply(revision.id)}
+                        disabled={busy}
+                        className="rounded p-1 text-muted-foreground/50 transition-colors hover:text-primary disabled:opacity-50"
+                        title="重新应用这次改写"
+                        aria-label="重新应用这次改写"
+                      >
+                        <RotateCcw size={13} />
+                      </button>
+                    )}
+                    <button
+                      onClick={() => {
+                        if (window.confirm("删除这条改写历史？正文内容不会改变。")) void revise.deleteRevision(revision.id);
+                      }}
+                      disabled={busy}
+                      className="rounded p-1 text-muted-foreground/50 transition-colors hover:text-destructive disabled:opacity-50"
+                      title="删除这条改写历史"
+                      aria-label="删除这条改写历史"
+                    >
+                      <Trash2 size={13} />
+                    </button>
                   </div>
                 ))}
               </div>

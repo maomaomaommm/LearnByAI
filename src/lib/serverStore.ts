@@ -498,6 +498,27 @@ export async function getServerRevision(id: string, request?: Request) {
   return !hydrated.userId || hydrated.userId === userId || userId === "local-beta-user" ? hydrated : undefined;
 }
 
+export async function deleteServerRevision(id: string, request?: Request) {
+  const userId = await resolveUserId(request);
+
+  const supabase = createSupabaseServiceClient();
+  if (supabase && isUuid(userId) && isUuid(id)) {
+    await requireSupabaseWrite(
+      "Delete revision",
+      supabase.from("revisions").delete().eq("id", id).eq("user_id", userId),
+    );
+  }
+
+  await hydrateLocalStore();
+  const existing = localRevisions.get(id);
+  if (existing && (!existing.userId || existing.userId === userId || userId === "local-beta-user")) {
+    localRevisions.delete(id);
+    await persistLocalStore({ mergeDisk: false });
+  }
+
+  return true;
+}
+
 export async function listServerRevisions(chapterId: string, request?: Request) {
   const userId = await resolveUserId(request);
   const supabase = createSupabaseServiceClient();

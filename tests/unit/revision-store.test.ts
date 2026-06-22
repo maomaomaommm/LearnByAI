@@ -77,6 +77,15 @@ test("listServerRevisions isolates by chapter", async () => {
   assert.equal(listA[0].chapterId, chapterA);
 });
 
+test("revision can be deleted from the local store", async () => {
+  const chapterId = randomUUID();
+  const revision = await store.saveServerRevision(makeRevision(chapterId));
+  assert.equal((await store.listServerRevisions(chapterId)).length, 1);
+
+  await store.deleteServerRevision(revision.id);
+  assert.equal((await store.listServerRevisions(chapterId)).length, 0);
+});
+
 test("annotation can be saved, listed, and deleted", async () => {
   const chapterId = randomUUID();
   const annotation: Annotation = {
