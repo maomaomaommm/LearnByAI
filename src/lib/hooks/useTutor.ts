@@ -106,6 +106,7 @@ export function useTutor(course: Course | undefined, chapterId: string) {
     async (question: string) => {
       const trimmed = question.trim();
       if (!trimmed) return false;
+      if (answering) return false;
       if (!active && !target) {
         setError("请先选择一段正文，或点击「针对整章提问」。");
         return false;
@@ -141,10 +142,10 @@ export function useTutor(course: Course | undefined, chapterId: string) {
         ],
       };
       setActive(annotation);
-      await streamAnswer(annotation, trimmed);
+      void streamAnswer(annotation, trimmed);
       return true;
     },
-    [active, chapterId, course, streamAnswer, target],
+    [active, answering, chapterId, course, streamAnswer, target],
   );
 
   const stop = useCallback(() => {

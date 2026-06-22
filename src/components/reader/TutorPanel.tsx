@@ -22,13 +22,14 @@ export function TutorPanel({ tutor, onClose }: TutorPanelProps) {
       ? target.selectedText
       : "整章泛问";
 
-  async function submitQuestion(event: FormEvent<HTMLFormElement>) {
+  function submitQuestion(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = event.currentTarget;
     const input = form.elements.namedItem("question") as HTMLInputElement;
     const question = input.value;
-    const sent = await tutor.ask(question);
-    if (sent) input.value = "";
+    void tutor.ask(question).then((sent) => {
+      if (sent) input.value = "";
+    });
   }
 
   return (

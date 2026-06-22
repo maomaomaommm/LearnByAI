@@ -67,6 +67,7 @@ test("tutor hook uses authenticated abortable streaming requests", () => {
   assert.match(src, /stream: true/u);
   assert.doesNotMatch(src, /\.messages\.push/u);
   assert.match(src, /setError\("请先选择一段正文/u);
+  assert.match(src, /void streamAnswer\(annotation, trimmed\)/u);
   assert.match(src, /return true/u);
 });
 
@@ -75,7 +76,7 @@ test("tutor panel exposes an explicit send button and error feedback", () => {
 
   assert.match(src, /SendHorizontal/u);
   assert.match(src, /aria-label="发送问题"/u);
-  assert.match(src, /const sent = await tutor\.ask\(question\)/u);
+  assert.match(src, /void tutor\.ask\(question\)\.then/u);
   assert.match(src, /if \(sent\) input\.value = ""/u);
   assert.match(src, /text-destructive/u);
 });
