@@ -107,18 +107,16 @@ export function useTutor(course: Course | undefined, chapterId: string) {
       const trimmed = question.trim();
       if (!trimmed) return false;
       if (answering) return false;
-      if (!active && !target) {
-        setError("请先选择一段正文，或点击「针对整章提问」。");
-        return false;
-      }
       if (!course) {
         setError("课程数据还在加载，请稍后再试。");
         return false;
       }
       setError("");
+      // No anchored selection and no open thread → default to a free chapter-wide
+      // chat so users can just talk to the tutor without selecting text first.
       const isChapter = active
         ? active.scope === "chapter" || !active.selectedText
-        : target?.scope === "chapter";
+        : target?.scope !== "anchored";
 
       const baseAnnotation: Annotation =
         active ??

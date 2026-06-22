@@ -1,7 +1,7 @@
 import { expect, test, type APIRequestContext } from "@playwright/test";
 
 test("mock beta flow: create course, generate chapter, ask tutor, export", async ({ page }) => {
-  test.setTimeout(90_000);
+  test.setTimeout(120_000);
   const headers = { "x-learnbyai-user-id": `mvp-flow-${crypto.randomUUID()}@example.com` };
 
   await page.route("**/api/**", async (route) => {
@@ -57,6 +57,24 @@ test("mock beta flow: create course, generate chapter, ask tutor, export", async
     chapterLink.click(),
   ]);
   await expect(page.locator("article")).toBeVisible({ timeout: 30_000 });
+
+  // Wait until first-chapter generation has produced readable content so the
+  // rendered article is stable and won't re-render mid-selection, then reload
+  // to reflect the final content before interacting with the tutor.
+  const readableStatuses = new Set(["draft_ready", "ready", "quality_failed"]);
+  const settleDeadline = Date.now() + 30_000;
+  while (Date.now() < settleDeadline) {
+    const read = await page.request.get(`/api/courses/${courseId}`, { headers });
+    if (read.ok()) {
+      const ch = (await read.json()).course?.chapters?.[0] as
+        | { content?: string; sections?: unknown[]; status?: string }
+        | undefined;
+      if (ch && (ch.content || ch.sections?.length) && readableStatuses.has(ch.status ?? "")) break;
+    }
+    await new Promise((r) => setTimeout(r, 1000));
+  }
+  await page.reload();
+  await expect(page.locator("article p").first()).toBeVisible({ timeout: 30_000 });
 
   const paragraph = page.locator("article p").first();
   await paragraph.dblclick();

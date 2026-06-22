@@ -66,7 +66,11 @@ test("tutor hook uses authenticated abortable streaming requests", () => {
   assert.match(src, /signal: input\.signal/u);
   assert.match(src, /stream: true/u);
   assert.doesNotMatch(src, /\.messages\.push/u);
-  assert.match(src, /setError\("请先选择一段正文/u);
+  // Free chat is the default: there is no "must select text first" gate, and an
+  // empty selection falls back to a chapter-wide conversation.
+  assert.doesNotMatch(src, /请先选择一段正文/u);
+  assert.match(src, /target\?\.scope !== "anchored"/u);
+  assert.match(src, /课程数据还在加载/u);
   assert.match(src, /void streamAnswer\(annotation, trimmed\)/u);
   assert.match(src, /return true/u);
 });
@@ -79,6 +83,8 @@ test("tutor panel exposes an explicit send button and error feedback", () => {
   assert.match(src, /void tutor\.ask\(question\)\.then/u);
   assert.match(src, /if \(sent\) input\.value = ""/u);
   assert.match(src, /text-destructive/u);
+  // The composer is always available (free chat), with a chat-first placeholder.
+  assert.match(src, /输入问题，直接和导师聊聊/u);
 });
 
 test("revise hook calls the authenticated revisions endpoints (not repairs)", () => {

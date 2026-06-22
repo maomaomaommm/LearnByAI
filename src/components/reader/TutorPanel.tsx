@@ -14,13 +14,11 @@ type TutorPanelProps = {
 
 export function TutorPanel({ tutor, onClose }: TutorPanelProps) {
   const { active, target, answering, annotations, error } = tutor;
+  // A conversation context exists once a thread is open (active) or a target is
+  // chosen. With neither, the panel shows the history "home" — but the composer
+  // stays available so users can just start chatting (defaults to chapter 泛问).
   const inConversation = Boolean(active || target);
-
-  const targetLabel = active
-    ? active.selectedText ?? "整章泛问"
-    : target?.scope === "anchored"
-      ? target.selectedText
-      : "整章泛问";
+  const anchoredText = active?.selectedText ?? (target?.scope === "anchored" ? target.selectedText : undefined);
 
   function submitQuestion(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -54,13 +52,27 @@ export function TutorPanel({ tutor, onClose }: TutorPanelProps) {
               >
                 ← 历史
               </button>
+              {answering && (
+                <span className="font-mono text-[10px] text-primary animate-pulse">思考中...</span>
+              )}
             </div>
-            <div className="border-l-2 border-primary pl-3">
-              <p className="font-mono text-[10px] text-muted-foreground mb-1">TARGET_TEXT</p>
-              <div className="text-sm leading-relaxed text-foreground italic line-clamp-4">&quot;{targetLabel}&quot;</div>
-            </div>
+            {anchoredText ? (
+              <div className="border-l-2 border-primary pl-3">
+                <p className="font-mono text-[10px] text-muted-foreground mb-1">TARGET_TEXT</p>
+                <div className="text-sm leading-relaxed text-foreground italic line-clamp-4">&quot;{anchoredText}&quot;</div>
+              </div>
+            ) : (
+              <div className="border-l-2 border-border pl-3">
+                <p className="font-mono text-[10px] text-muted-foreground">整章对话 · 关于本章的任何问题都可以问</p>
+              </div>
+            )}
 
             <div className="space-y-4">
+              {(!active || active.messages.length === 0) && !answering && (
+                <p className="font-mono text-[11px] leading-relaxed text-muted-foreground">
+                  {anchoredText ? "向导师追问这段内容吧。" : "问点什么开始对话吧，下面也有常见追问。"}
+                </p>
+              )}
               {active?.messages.map((message) => (
                 <div key={message.id} className="flex flex-col gap-1">
                   <span className={`font-mono text-[10px] ${message.role === "user" ? "text-primary" : "text-muted-foreground"}`}>
@@ -89,7 +101,7 @@ export function TutorPanel({ tutor, onClose }: TutorPanelProps) {
               onClick={tutor.startGeneral}
               className="w-full border border-primary/40 bg-primary/5 px-3 py-2 font-mono text-[11px] text-primary transition-colors hover:bg-primary/10"
             >
-              + 针对整章提问（泛问）
+              + 开启新对话
             </button>
             <div className="font-mono text-[10px] font-bold text-muted-foreground uppercase tracking-widest">
               本章讨论档案 · {annotations.length}
@@ -97,7 +109,7 @@ export function TutorPanel({ tutor, onClose }: TutorPanelProps) {
             {annotations.length === 0 ? (
               <div className="flex flex-col items-center justify-center pt-12 text-center text-muted-foreground">
                 <MessageSquareQuote size={28} className="mb-3 opacity-50" />
-                <p className="font-mono text-xs leading-relaxed max-w-[200px]">选中正文 → 选「问导师」，或点上方泛问本章</p>
+                <p className="font-mono text-xs leading-relaxed max-w-[200px]">直接在下方输入框提问，或选中正文针对某处提问。</p>
               </div>
             ) : (
               <div className="space-y-1">
@@ -128,9 +140,9 @@ export function TutorPanel({ tutor, onClose }: TutorPanelProps) {
         )}
       </div>
 
-      {inConversation && (
-        <div className="border-t border-border bg-card p-4">
-          {error && <p className="mb-3 text-xs leading-relaxed text-destructive">{error}</p>}
+      <div className="border-t border-border bg-card p-4">
+        {error && <p className="mb-3 text-xs leading-relaxed text-destructive">{error}</p>}
+        {inConversation && (
           <div className="mb-3 flex flex-wrap gap-2">
             {quickQuestions.map((q) => (
               <button
@@ -143,29 +155,29 @@ export function TutorPanel({ tutor, onClose }: TutorPanelProps) {
               </button>
             ))}
           </div>
-          <form onSubmit={submitQuestion} className="flex items-center gap-2">
-            <div className="relative flex-1">
-              <span className="absolute left-3 top-1/2 -translate-y-1/2 font-mono text-[12px] text-primary">{">"}</span>
+        )}
+        <form onSubmit={submitQuestion} className="flex items-center gap-2">
+          <div className="relative flex-1">
+            <span className="absolute left-3 top-1/2 -translate-y-1/2 font-mono text-[12px] text-primary">{">"}</span>
             <input
               name="question"
-              placeholder="输入问题..."
+              placeholder={anchoredText ? "追问这段内容..." : "输入问题，直接和导师聊聊..."}
               autoComplete="off"
               disabled={answering}
               className="w-full bg-background border border-border py-2 pl-7 pr-3 font-mono text-[12px] text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none disabled:opacity-50"
             />
-            </div>
-            <button
-              type="submit"
-              disabled={answering}
-              className="inline-flex h-9 w-9 shrink-0 items-center justify-center border border-border bg-background text-muted-foreground transition-colors hover:border-primary hover:text-primary disabled:cursor-not-allowed disabled:opacity-50"
-              aria-label="发送问题"
-              title="发送问题"
-            >
-              <SendHorizontal size={14} />
-            </button>
-          </form>
-        </div>
-      )}
+          </div>
+          <button
+            type="submit"
+            disabled={answering}
+            className="inline-flex h-9 w-9 shrink-0 items-center justify-center border border-border bg-background text-muted-foreground transition-colors hover:border-primary hover:text-primary disabled:cursor-not-allowed disabled:opacity-50"
+            aria-label="发送问题"
+            title="发送问题"
+          >
+            <SendHorizontal size={14} />
+          </button>
+        </form>
+      </div>
     </aside>
   );
 }
