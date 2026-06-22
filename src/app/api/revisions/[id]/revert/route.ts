@@ -2,7 +2,13 @@ import { NextResponse } from "next/server";
 import { requireApiUser } from "@/lib/apiAuth";
 import { restoreChapterSnapshot, revertTextRevisionInCourse, RevisionConflictError } from "@/lib/revisionApply";
 import { safeErrorMessage } from "@/lib/safeError";
-import { getServerCourse, getServerRevision, saveServerCourse, updateServerRevision } from "@/lib/serverStore";
+import {
+  getServerCourse,
+  getServerRevision,
+  listServerRevisions,
+  saveServerCourse,
+  updateServerRevision,
+} from "@/lib/serverStore";
 
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -29,11 +35,20 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       if (!revision.beforeText || !revision.afterText) {
         return NextResponse.json({ error: "Revision has no text to revert." }, { status: 400 });
       }
+      const revisions = await listServerRevisions(revision.chapterId, request);
+      const appliedAt = Date.parse(revision.appliedAt ?? revision.createdAt);
+      const hasLaterActiveRevision = revisions.some((item) => {
+        if (item.id === revision.id || item.status !== "applied") return false;
+        return Date.parse(item.appliedAt ?? item.createdAt) > appliedAt;
+      });
+
       patched = revertTextRevisionInCourse(course, {
         chapterId: revision.chapterId,
         sectionId: revision.sectionId,
         beforeText: revision.beforeText,
         afterText: revision.afterText,
+        beforeChapter: revision.beforeChapter,
+        allowSnapshotFallback: !hasLaterActiveRevision,
       });
     }
 

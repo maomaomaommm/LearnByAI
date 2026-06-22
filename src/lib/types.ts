@@ -216,6 +216,8 @@ export type RevisionStatus = "proposed" | "applied" | "reverted" | "failed";
  * `scope` (see docs/tutor-revise-decoupling-plan.md §4 C1):
  *  - local scopes (selection/paragraph/section): `beforeText`/`afterText`,
  *    reverted by a targeted exact-once text swap that touches only that span.
+ *    Applied revisions may also carry chapter snapshots so undo can recover if
+ *    the exact span was normalized or overwritten after application.
  *  - chapter scope (regen rollback): `beforeChapter` snapshot, reverted by
  *    restoring the whole chapter verbatim.
  */

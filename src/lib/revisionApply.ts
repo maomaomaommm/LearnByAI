@@ -3,6 +3,15 @@ import { Chapter, Course, Section } from "./types";
 
 export class RevisionConflictError extends Error {}
 
+type TextRevisionArgs = {
+  chapterId: string;
+  sectionId?: string;
+  beforeText: string;
+  afterText: string;
+  beforeChapter?: Chapter;
+  allowSnapshotFallback?: boolean;
+};
+
 function countOccurrences(text: string, search: string) {
   if (!search) return 0;
   return text.split(search).length - 1;
@@ -108,6 +117,16 @@ function patchChapterText(
   return rechecked({ ...chapter, sections: nextSections }, action);
 }
 
+function countInRevisionTarget(chapter: Chapter, sectionId: string | undefined, text: string) {
+  if (sectionId) {
+    return chapter.sections?.find((section) => section.id === sectionId)
+      ? countOccurrences(chapter.sections.find((section) => section.id === sectionId)?.content ?? "", text)
+      : 0;
+  }
+  if (chapter.content) return countOccurrences(chapter.content, text);
+  return (chapter.sections ?? []).reduce((total, section) => total + countOccurrences(section.content, text), 0);
+}
+
 function mapChapter(course: Course, chapterId: string, fn: (chapter: Chapter) => Chapter) {
   let touched: Chapter | undefined;
   const chapters = course.chapters.map((chapter) => {
@@ -117,6 +136,14 @@ function mapChapter(course: Course, chapterId: string, fn: (chapter: Chapter) =>
   });
   if (!touched) throw new RevisionConflictError("Chapter not found");
   return { course: { ...course, chapters, updatedAt: new Date().toISOString() }, chapter: touched };
+}
+
+function restoreChapterText(chapter: Chapter, beforeChapter: Chapter): Chapter {
+  return rechecked({
+    ...chapter,
+    content: beforeChapter.content,
+    sections: beforeChapter.sections,
+  }, "revert");
 }
 
 export function applyTextRevisionToCourse(
@@ -131,11 +158,21 @@ export function applyTextRevisionToCourse(
 /** Local-scope revert: swap afterText back to beforeText, re-check, and label as a revert. */
 export function revertTextRevisionInCourse(
   course: Course,
-  args: { chapterId: string; sectionId?: string; beforeText: string; afterText: string },
+  args: TextRevisionArgs,
 ) {
-  return mapChapter(course, args.chapterId, (chapter) =>
-    patchChapterText(chapter, args.sectionId, args.afterText, args.beforeText, "revert"),
-  );
+  return mapChapter(course, args.chapterId, (chapter) => {
+    try {
+      return patchChapterText(chapter, args.sectionId, args.afterText, args.beforeText, "revert");
+    } catch (error) {
+      if (error instanceof RevisionConflictError && countInRevisionTarget(chapter, args.sectionId, args.beforeText) === 1) {
+        return rechecked(chapter, "revert");
+      }
+      if (error instanceof RevisionConflictError && args.beforeChapter && args.allowSnapshotFallback !== false) {
+        return restoreChapterText(chapter, args.beforeChapter);
+      }
+      throw error;
+    }
+  });
 }
 
 /** Chapter-scope revert: restore the whole chapter snapshot verbatim. */

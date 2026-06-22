@@ -43,7 +43,8 @@ export async function POST(request: Request) {
     const course = await getServerCourse(revision.courseId, request);
     if (!course) return NextResponse.json({ error: "Course not found" }, { status: 404 });
 
-    const { course: patched } = applyTextRevisionToCourse(course, {
+    const beforeChapter = course.chapters.find((item) => item.id === revision.chapterId);
+    const { course: patched, chapter: afterChapter } = applyTextRevisionToCourse(course, {
       chapterId: revision.chapterId,
       sectionId: revision.sectionId,
       beforeText: revision.beforeText,
@@ -52,7 +53,7 @@ export async function POST(request: Request) {
     const savedCourse = await saveServerCourse(patched, request);
     const updatedRevision = await updateServerRevision(
       revisionId,
-      { status: "applied", appliedAt: new Date().toISOString() },
+      { status: "applied", appliedAt: new Date().toISOString(), beforeChapter, afterChapter },
       request,
     );
 
