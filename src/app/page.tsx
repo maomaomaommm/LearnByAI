@@ -6,7 +6,6 @@ import {
   ArrowRight,
   Sparkles,
   Bot,
-  BookOpen,
   Route,
   MessageSquare,
   Users,
@@ -112,8 +111,8 @@ function CapabilitiesSection() {
       icon: Users,
       title: "多 AI 协同生成教材",
       description:
-        "7个专业 AI Agent 分工协作：搜集者调研资料、架构师设计课程、作者编写内容、美化者排版润色、审查者质量把关，打造高质量学习材料。",
-      features: ["智能分工", "串行/并行执行", "自动回退机制", "完整审计日志"],
+        "7 个专业 AI Agent 分工协作：ASSISTANT 清洗输入，ARCHITECT 规划课程并可调用联网检索，AUTHOR 编写内容，POLISHER 润色排版，REVIEWER 审查质量；阅读阶段由 TUTOR 答疑、REVISER 局部改写。",
+      features: ["智能分工", "联网检索工具", "自动回退机制", "完整审计日志"],
     },
     {
       icon: Route,
@@ -196,16 +195,10 @@ function ProcessSection() {
       desc: "验证并规范化用户输入",
     },
     {
-      agent: "GATHERER",
-      icon: BookOpen,
-      title: "资料搜集",
-      desc: "调研主题、整理术语和前置知识",
-    },
-    {
       agent: "ARCHITECT",
       icon: Route,
       title: "课程设计",
-      desc: "生成 Course Bible 和章节大纲",
+      desc: "生成 Course Bible 和章节大纲；开启最新进展时调用联网检索",
     },
     {
       agent: "AUTHOR",
@@ -226,6 +219,20 @@ function ProcessSection() {
       desc: "检查质量并评分",
     },
   ];
+  const readingAgents = [
+    {
+      agent: "TUTOR",
+      icon: MessageSquare,
+      title: "锚定问答",
+      desc: "围绕选中正文或整章进行解释、例子和追问",
+    },
+    {
+      agent: "REVISER",
+      icon: Sparkles,
+      title: "局部改写",
+      desc: "对选定正文生成可审查修改建议，支持应用、历史和撤销",
+    },
+  ];
 
   return (
     <section className="border-t border-border px-6 py-24 md:px-12 lg:px-16">
@@ -240,7 +247,7 @@ function ProcessSection() {
             课程生成流程
           </h2>
           <p className="text-sm text-muted-foreground">
-            6 个阶段，多个 Agent 无缝协作
+            5 个生成阶段，阅读阶段另由 TUTOR / REVISER 接力
           </p>
         </motion.div>
 
@@ -274,6 +281,35 @@ function ProcessSection() {
                     {step.title}
                   </h3>
                   <p className="text-xs text-muted-foreground">{step.desc}</p>
+                </div>
+              </motion.div>
+            ))}
+          </div>
+
+          <div className="mt-10 grid gap-4 md:grid-cols-2">
+            {readingAgents.map((agent) => (
+              <motion.div
+                key={agent.agent}
+                initial={{ opacity: 0, y: 12 }}
+                whileInView={{ opacity: 1, y: 0 }}
+                viewport={{ once: true }}
+                transition={{ duration: 0.35 }}
+                className="flex items-start gap-3 rounded-lg border border-border bg-card p-4"
+              >
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-primary/10">
+                  <agent.icon size={16} className="text-primary" />
+                </div>
+                <div>
+                  <div className="mb-1 flex items-center gap-2">
+                    <span className="text-xs font-medium text-primary">
+                      {agent.agent}
+                    </span>
+                    <span className="text-xs text-muted-foreground">阅读阶段</span>
+                  </div>
+                  <h3 className="mb-1 text-sm font-semibold text-foreground">
+                    {agent.title}
+                  </h3>
+                  <p className="text-xs text-muted-foreground">{agent.desc}</p>
                 </div>
               </motion.div>
             ))}

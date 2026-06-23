@@ -73,7 +73,7 @@ export default function AboutPage() {
               {
                 title: "MAOL 多 Agent 编排",
                 items: [
-                  "8 个专业 AI Agent",
+                  "7 个专业 AI Agent",
                   "串行/并行/条件执行",
                   "自动回退机制",
                   "完整审计日志",
@@ -120,12 +120,12 @@ export default function AboutPage() {
           <div className="space-y-3">
             {[
               {
-                name: "GATHERER",
-                desc: "资料搜集、术语整理、前置知识梳理、最新信息检索",
+                name: "ASSISTANT",
+                desc: "轻量级任务、格式转换、状态同步、日志记录和结果聚合",
               },
               {
                 name: "ARCHITECT",
-                desc: "生成 Course Bible、课程大纲、章节依赖和教学路径",
+                desc: "生成 Course Bible、课程大纲、章节依赖和教学路径；开启“纳入最新进展”时调用联网检索工具",
               },
               {
                 name: "AUTHOR",
@@ -146,10 +146,6 @@ export default function AboutPage() {
               {
                 name: "REVISER",
                 desc: "阅读时按用户要求对选定正文做局部改写与修复，支持历史与撤销",
-              },
-              {
-                name: "ASSISTANT",
-                desc: "轻量级任务、格式转换、状态同步、日志记录和结果聚合",
               },
             ].map((agent) => (
               <div
