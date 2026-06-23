@@ -2,38 +2,59 @@ import Link from "next/link";
 import { getAdminOverview } from "@/lib/adminData";
 import { JOB_STATUS_LABEL, StatusPill } from "../parts";
 import { formatDate } from "../format";
+import { OverviewCharts } from "./overview-charts";
 
 export const dynamic = "force-dynamic";
 
+const TONE = {
+  bad: "border-destructive/30 bg-destructive/10",
+  warn: "border-amber-500/30 bg-amber-500/10",
+  info: "border-blue-500/30 bg-blue-500/10",
+} as const;
+
+const TONE_TEXT = {
+  bad: "text-destructive",
+  warn: "text-amber-600 dark:text-amber-300",
+  info: "text-blue-600 dark:text-blue-300",
+} as const;
+
 export default async function AdminOverviewPage() {
   const overview = await getAdminOverview();
-  const cards = [
-    { label: "用户总数", value: overview.stats.userCount },
-    { label: "封禁用户", value: overview.stats.bannedUserCount },
-    { label: "课程总数", value: overview.stats.courseCount },
-    { label: "活跃任务", value: overview.stats.activeJobCount },
-    { label: "失败任务", value: overview.stats.failedJobCount },
-    { label: "质检未通过", value: overview.stats.qualityFailedChapters },
-    { label: "章节完成度", value: `${overview.stats.readyChapters}/${overview.stats.totalChapters}` },
-    { label: "导出记录", value: overview.stats.exportCount },
-  ];
+  const { stats } = overview;
 
   return (
     <div className="space-y-8">
       <section>
-        <p className="font-mono text-xs uppercase tracking-widest text-muted-foreground">Dashboard</p>
-        <h1 className="mt-2 text-3xl font-semibold">后台总览</h1>
-        <p className="mt-2 text-sm text-muted-foreground">查看真实用户、课程、生成任务、质检、用量和导出状态。</p>
+        <h1 className="text-3xl font-semibold">后台总览</h1>
+        <p className="mt-2 text-sm text-muted-foreground">先看需要处理的事，再看趋势与明细。</p>
       </section>
 
-      <section className="grid gap-4 md:grid-cols-4 xl:grid-cols-8">
-        {cards.map((card) => (
-          <div key={card.label} className="rounded-lg border border-border bg-card p-4">
-            <p className="text-sm text-muted-foreground">{card.label}</p>
-            <p className="mt-3 font-mono text-2xl font-semibold">{card.value}</p>
-          </div>
-        ))}
+      <section className="space-y-3">
+        <p className="text-sm text-muted-foreground">待处理</p>
+        <div className="grid gap-4 sm:grid-cols-3">
+          <AttentionCard label="失败任务" value={stats.failedJobCount} tone="bad" hint="查看失败任务" href="/admin/jobs?status=failed" />
+          <AttentionCard label="质检未通过" value={stats.qualityFailedChapters} tone="warn" hint="处理质检" href="/admin/quality?status=failed" />
+          <AttentionCard label="活跃任务" value={stats.activeJobCount} tone="info" hint="查看运行中" href="/admin/jobs?status=running" />
+        </div>
       </section>
+
+      <section className="flex flex-wrap items-center gap-x-5 gap-y-2 rounded-lg border border-border bg-muted/30 px-4 py-3 text-sm text-muted-foreground">
+        <StatInline label="用户" value={stats.userCount} href="/admin/users" />
+        <Divider />
+        <StatInline label="课程" value={stats.courseCount} href="/admin/courses" />
+        <Divider />
+        <StatInline label="章节完成" value={`${stats.readyChapters}/${stats.totalChapters}`} href="/admin/chapters" />
+        <Divider />
+        <StatInline label="导出" value={stats.exportCount} href="/admin/exports" />
+        {stats.bannedUserCount > 0 && (
+          <>
+            <Divider />
+            <StatInline label="封禁用户" value={stats.bannedUserCount} href="/admin/users?status=banned" />
+          </>
+        )}
+      </section>
+
+      <OverviewCharts series={overview.series} />
 
       <section className="grid gap-6 lg:grid-cols-2">
         <Panel title="最近任务" href="/admin/jobs">
@@ -91,6 +112,32 @@ export default async function AdminOverviewPage() {
       </section>
     </div>
   );
+}
+
+function AttentionCard({ label, value, tone, hint, href }: { label: string; value: number; tone: keyof typeof TONE; hint: string; href: string }) {
+  const active = value > 0;
+  return (
+    <Link
+      href={href}
+      className={`rounded-lg border p-4 transition-colors hover:bg-muted/40 ${active ? TONE[tone] : "border-border bg-card"}`}
+    >
+      <p className="text-sm text-muted-foreground">{label}</p>
+      <p className={`mt-2 font-mono text-3xl font-semibold ${active ? TONE_TEXT[tone] : "text-foreground"}`}>{value}</p>
+      <p className="mt-1 text-xs text-muted-foreground">{active ? `${hint} →` : "暂无"}</p>
+    </Link>
+  );
+}
+
+function StatInline({ label, value, href }: { label: string; value: number | string; href: string }) {
+  return (
+    <Link href={href} className="transition-colors hover:text-foreground">
+      {label} <span className="font-mono font-medium text-foreground">{value}</span>
+    </Link>
+  );
+}
+
+function Divider() {
+  return <span className="text-border">·</span>;
 }
 
 function Panel({ title, href, children }: { title: string; href: string; children: React.ReactNode }) {

@@ -1,6 +1,7 @@
 "use client";
 
-import { useRouter } from "next/navigation";
+import Link from "next/link";
+import { usePathname, useRouter } from "next/navigation";
 import { FormEvent, useState } from "react";
 import { ChapterDepthWeight, CourseDifficulty } from "@/lib/types";
 
@@ -181,6 +182,85 @@ export function AdminJsonForm({
         {loading ? "保存中" : "保存"}
       </button>
     </form>
+  );
+}
+
+type AdminNavBadges = { failedJobCount: number; qualityFailedCount: number };
+
+const ADMIN_NAV_GROUPS: Array<{
+  label: string;
+  items: Array<{ href: string; label: string; badge?: "job" | "quality" }>;
+}> = [
+  {
+    label: "运营监控",
+    items: [
+      { href: "/admin", label: "总览" },
+      { href: "/admin/jobs", label: "任务", badge: "job" },
+      { href: "/admin/quality", label: "质检", badge: "quality" },
+      { href: "/admin/usage", label: "用量" },
+    ],
+  },
+  {
+    label: "内容资产",
+    items: [
+      { href: "/admin/users", label: "用户" },
+      { href: "/admin/courses", label: "课程" },
+      { href: "/admin/chapters", label: "章节" },
+      { href: "/admin/exports", label: "导出" },
+    ],
+  },
+  {
+    label: "系统",
+    items: [
+      { href: "/admin/settings", label: "系统设置" },
+      { href: "/admin/audit", label: "操作日志" },
+    ],
+  },
+];
+
+export function AdminNav({ badges }: { badges: AdminNavBadges }) {
+  const pathname = usePathname();
+  const isActive = (href: string) => (href === "/admin" ? pathname === "/admin" : pathname.startsWith(href));
+
+  return (
+    <nav className="space-y-5">
+      {ADMIN_NAV_GROUPS.map((group) => (
+        <div key={group.label}>
+          <p className="px-2 pb-1.5 text-xs text-muted-foreground/70">{group.label}</p>
+          <div className="space-y-0.5">
+            {group.items.map((item) => {
+              const active = isActive(item.href);
+              const badge = item.badge === "job" ? badges.failedJobCount : item.badge === "quality" ? badges.qualityFailedCount : 0;
+              return (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  className={`flex items-center gap-2 rounded-md px-2 py-1.5 text-sm transition-colors ${active ? "bg-muted font-medium text-foreground" : "text-muted-foreground hover:bg-muted/60 hover:text-foreground"}`}
+                >
+                  <span>{item.label}</span>
+                  {item.badge && badge > 0 && (
+                    <span
+                      className={`ml-auto rounded-full px-1.5 py-0.5 text-[10px] font-medium ${item.badge === "job" ? "bg-destructive/15 text-destructive" : "bg-amber-500/15 text-amber-600 dark:text-amber-300"}`}
+                    >
+                      {badge}
+                    </span>
+                  )}
+                </Link>
+              );
+            })}
+          </div>
+        </div>
+      ))}
+      <div>
+        <p className="px-2 pb-1.5 text-xs text-muted-foreground/70">外部</p>
+        <a
+          href="/project/default"
+          className="block rounded-md px-2 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
+        >
+          Supabase 高级后台
+        </a>
+      </div>
+    </nav>
   );
 }
 

@@ -165,6 +165,7 @@ export async function getAdminOverview() {
   const qualityFailedChapters = courses.reduce((total, course) => total + course.qualityFailedCount, 0);
   const readyChapters = courses.reduce((total, course) => total + course.readyCount, 0);
   const totalChapters = courses.reduce((total, course) => total + course.chapterCount, 0);
+  const series = buildOverviewSeries(usageEvents, jobs);
 
   return {
     stats: {
@@ -180,12 +181,92 @@ export async function getAdminOverview() {
       exportCount: exports.length,
       failedQualityReportCount: qualityReports.filter((report) => report.status === "failed").length,
     },
+    series,
     recentCourses: courses.slice(0, 6),
     recentJobs: jobs.slice(0, 10),
     activeJobs,
     failedJobs: failedJobs.slice(0, 10),
     lowQualityReports: qualityReports.filter((report) => report.status === "failed" || report.score < 80).slice(0, 10),
   };
+}
+
+/** Lightweight "needs attention" counts for the sidebar badges — cheap COUNT queries only. */
+export async function getAdminAttentionCounts() {
+  const supabase = requireAdminSupabaseClient();
+  const [failedJobs, activeJobs, failedQuality] = await Promise.all([
+    supabase.from("generation_jobs").select("id", { count: "exact", head: true }).eq("status", "failed"),
+    supabase.from("generation_jobs").select("id", { count: "exact", head: true }).in("status", ACTIVE_ADMIN_JOB_STATUSES),
+    supabase.from("quality_reports").select("id", { count: "exact", head: true }).eq("status", "failed"),
+  ]);
+  assertAdminNoError("统计失败任务", failedJobs.error);
+  assertAdminNoError("统计活跃任务", activeJobs.error);
+  assertAdminNoError("统计未通过质检", failedQuality.error);
+  return {
+    failedJobCount: failedJobs.count ?? 0,
+    activeJobCount: activeJobs.count ?? 0,
+    qualityFailedCount: failedQuality.count ?? 0,
+  };
+}
+
+const OVERVIEW_TREND_DAYS = 14;
+
+export type AdminOverviewSeries = {
+  dailyUsage: Array<{ date: string; label: string; count: number }>;
+  usageByAction: Array<{ action: UsageEvent["action"]; count: number }>;
+  dailyJobs: Array<{ date: string; label: string; succeeded: number; failed: number }>;
+};
+
+// NOTE: usageEvents/jobs here are already capped (2000/1000 most-recent rows), which
+// comfortably covers a 14-day window at current Beta volume. If traffic grows past
+// that, swap these in-memory reduces for SQL date_trunc aggregates instead of raising
+// the row caps.
+function buildOverviewSeries(usageEvents: AdminUsageRow[], jobs: AdminJobRow[]): AdminOverviewSeries {
+  const buckets = buildDailyBuckets(OVERVIEW_TREND_DAYS);
+  const indexByKey = new Map(buckets.map((bucket, index) => [bucket.key, index]));
+
+  const dailyUsage = buckets.map((bucket) => ({ date: bucket.key, label: bucket.label, count: 0 }));
+  for (const event of usageEvents) {
+    const index = indexByKey.get(toLocalDayKey(event.createdAt));
+    if (index !== undefined) dailyUsage[index].count += 1;
+  }
+
+  const usageByAction = USAGE_ACTIONS.map((action) => ({
+    action,
+    count: usageEvents.reduce((total, event) => (event.action === action ? total + 1 : total), 0),
+  }));
+
+  const dailyJobs = buckets.map((bucket) => ({ date: bucket.key, label: bucket.label, succeeded: 0, failed: 0 }));
+  for (const job of jobs) {
+    if (job.status !== "succeeded" && job.status !== "failed") continue;
+    const index = indexByKey.get(toLocalDayKey(job.updatedAt));
+    if (index === undefined) continue;
+    if (job.status === "succeeded") dailyJobs[index].succeeded += 1;
+    else dailyJobs[index].failed += 1;
+  }
+
+  return { dailyUsage, usageByAction, dailyJobs };
+}
+
+function buildDailyBuckets(days: number) {
+  const buckets: Array<{ key: string; label: string }> = [];
+  const today = new Date();
+  for (let offset = days - 1; offset >= 0; offset -= 1) {
+    const day = new Date(today.getFullYear(), today.getMonth(), today.getDate() - offset);
+    buckets.push({ key: formatLocalDayKey(day), label: `${day.getMonth() + 1}.${day.getDate()}` });
+  }
+  return buckets;
+}
+
+function formatLocalDayKey(date: Date) {
+  const month = `${date.getMonth() + 1}`.padStart(2, "0");
+  const day = `${date.getDate()}`.padStart(2, "0");
+  return `${date.getFullYear()}-${month}-${day}`;
+}
+
+function toLocalDayKey(iso?: string) {
+  if (!iso) return "";
+  const date = new Date(iso);
+  return Number.isNaN(date.getTime()) ? "" : formatLocalDayKey(date);
 }
 
 export async function listAdminUsers(options: ListOptions = {}): Promise<AdminUserRow[]> {
