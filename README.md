@@ -6,6 +6,10 @@
 
 Course Bible · Multi-Agent Generation · TQH Quality Harness · Anchored Tutor · Local Reviser · Web Research
 
+**在线体验：** [https://nextome.cn](https://nextome.cn)
+
+如果不想本地部署，可以直接访问线上版本体验课程生成、阅读、Tutor 问答和 Reviser 局部改写。
+
 </div>
 
 ---
