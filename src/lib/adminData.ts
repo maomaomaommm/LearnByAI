@@ -77,6 +77,8 @@ export type AdminJobRow = {
   attempts?: number;
   lockedBy?: string;
   lockedUntil?: string;
+  cancelledByAdmin?: boolean;
+  acknowledgedAt?: string;
   createdAt: string;
   updatedAt: string;
   events: GenerationJob["events"];
@@ -96,6 +98,7 @@ export type AdminQualityRow = {
   score: number;
   status: QualityReport["status"];
   issueCount: number;
+  acknowledgedAt?: string;
   createdAt: string;
   report: QualityReport;
 };
@@ -190,22 +193,126 @@ export async function getAdminOverview() {
   };
 }
 
+const ADMIN_ACK_KEY = "learnbyai_admin_ack";
+
+export type AdminAckState = { jobsAckBefore?: string; qualityAckBefore?: string };
+
+/**
+ * "Acknowledged" watermark stored under its own app_settings key (decoupled from the
+ * settings form). The sidebar/overview badges only count failures that are NOT
+ * admin-cancelled, NOT individually acknowledged, and NEWER than the watermark — so
+ * "标记全部已处理" is a single instant write instead of a mass row update.
+ */
+export async function getAdminAckState(): Promise<AdminAckState> {
+  const supabase = requireAdminSupabaseClient();
+  const { data, error } = await supabase.from("app_settings").select("value").eq("key", ADMIN_ACK_KEY).maybeSingle();
+  assertAdminNoError("读取处理水位", error);
+  const value = (data?.value ?? {}) as AdminAckState;
+  return {
+    jobsAckBefore: typeof value.jobsAckBefore === "string" ? value.jobsAckBefore : undefined,
+    qualityAckBefore: typeof value.qualityAckBefore === "string" ? value.qualityAckBefore : undefined,
+  };
+}
+
+async function setAdminAckState(patch: Partial<AdminAckState>, adminUsername: string) {
+  const supabase = requireAdminSupabaseClient();
+  const current = await getAdminAckState();
+  const next = { ...current, ...patch };
+  const { error } = await supabase.from("app_settings").upsert({
+    key: ADMIN_ACK_KEY,
+    value: next,
+    updated_by: adminUsername,
+    updated_at: new Date().toISOString(),
+  });
+  assertAdminNoError("保存处理水位", error);
+  return next;
+}
+
 /** Lightweight "needs attention" counts for the sidebar badges — cheap COUNT queries only. */
 export async function getAdminAttentionCounts() {
   const supabase = requireAdminSupabaseClient();
+  const ack = await getAdminAckState();
+
+  let failedJobsQuery = supabase
+    .from("generation_jobs")
+    .select("id", { count: "exact", head: true })
+    .eq("status", "failed")
+    .is("payload->>cancelledByAdmin", null)
+    .is("payload->>acknowledgedAt", null);
+  if (ack.jobsAckBefore) failedJobsQuery = failedJobsQuery.gt("updated_at", ack.jobsAckBefore);
+
+  let failedQualityQuery = supabase
+    .from("quality_reports")
+    .select("id", { count: "exact", head: true })
+    .eq("status", "failed")
+    .is("payload->>acknowledgedAt", null);
+  if (ack.qualityAckBefore) failedQualityQuery = failedQualityQuery.gt("created_at", ack.qualityAckBefore);
+
   const [failedJobs, activeJobs, failedQuality] = await Promise.all([
-    supabase.from("generation_jobs").select("id", { count: "exact", head: true }).eq("status", "failed"),
+    failedJobsQuery,
     supabase.from("generation_jobs").select("id", { count: "exact", head: true }).in("status", ACTIVE_ADMIN_JOB_STATUSES),
-    supabase.from("quality_reports").select("id", { count: "exact", head: true }).eq("status", "failed"),
+    failedQualityQuery,
   ]);
-  assertAdminNoError("统计失败任务", failedJobs.error);
-  assertAdminNoError("统计活跃任务", activeJobs.error);
-  assertAdminNoError("统计未通过质检", failedQuality.error);
+  // Badges are non-critical and this runs on every admin page (the layout) — degrade to
+  // 0 on error rather than throwing and 500-ing the whole backend.
+  logAdminSoftError("统计失败任务", failedJobs.error);
+  logAdminSoftError("统计活跃任务", activeJobs.error);
+  logAdminSoftError("统计未通过质检", failedQuality.error);
   return {
     failedJobCount: failedJobs.count ?? 0,
     activeJobCount: activeJobs.count ?? 0,
     qualityFailedCount: failedQuality.count ?? 0,
   };
+}
+
+/** True if a failed job should be hidden from the default list / not nag the badge. */
+export function isAdminJobProcessed(job: Pick<AdminJobRow, "status" | "cancelledByAdmin" | "acknowledgedAt" | "updatedAt">, ack: AdminAckState): boolean {
+  if (job.cancelledByAdmin || job.acknowledgedAt) return true;
+  if (job.status === "failed" && ack.jobsAckBefore && Date.parse(job.updatedAt) <= Date.parse(ack.jobsAckBefore)) return true;
+  return false;
+}
+
+/** True if a failed quality report should be hidden from the default list / not nag the badge. */
+export function isAdminQualityProcessed(report: Pick<AdminQualityRow, "status" | "acknowledgedAt" | "createdAt">, ack: AdminAckState): boolean {
+  if (report.status !== "failed") return false;
+  if (report.acknowledgedAt) return true;
+  if (ack.qualityAckBefore && Date.parse(report.createdAt) <= Date.parse(ack.qualityAckBefore)) return true;
+  return false;
+}
+
+export async function acknowledgeAdminJob(jobId: string, context: AdminActionContext) {
+  const supabase = requireAdminSupabaseClient();
+  const { data, error } = await supabase.from("generation_jobs").select("payload").eq("id", jobId).maybeSingle();
+  assertAdminNoError("读取待标记任务", error);
+  if (!data?.payload) throw new Error("任务不存在。");
+  const job = { ...(data.payload as GenerationJob), acknowledgedAt: new Date().toISOString() };
+  await updateGenerationJobRow(job);
+  await recordAdminAudit(context, "acknowledge_job", "job", jobId, `标记任务已处理：${jobId}`);
+  return { ok: true };
+}
+
+export async function acknowledgeAllFailedAdminJobs(context: AdminActionContext) {
+  const state = await setAdminAckState({ jobsAckBefore: new Date().toISOString() }, context.adminUsername);
+  await recordAdminAudit(context, "acknowledge_all_jobs", "job", undefined, "标记当前全部失败任务为已处理");
+  return { ok: true, jobsAckBefore: state.jobsAckBefore };
+}
+
+export async function acknowledgeAdminQualityReport(reportId: string, context: AdminActionContext) {
+  const supabase = requireAdminSupabaseClient();
+  const { data, error } = await supabase.from("quality_reports").select("payload").eq("id", reportId).maybeSingle();
+  assertAdminNoError("读取待标记质检报告", error);
+  if (!data?.payload) throw new Error("质检报告不存在。");
+  const report = { ...(data.payload as QualityReport), acknowledgedAt: new Date().toISOString() };
+  const { error: updateError } = await supabase.from("quality_reports").update({ payload: report }).eq("id", reportId);
+  assertAdminNoError("标记质检已处理", updateError);
+  await recordAdminAudit(context, "acknowledge_quality", "quality", reportId, `标记质检已处理：${reportId}`);
+  return { ok: true };
+}
+
+export async function acknowledgeAllFailedQuality(context: AdminActionContext) {
+  const state = await setAdminAckState({ qualityAckBefore: new Date().toISOString() }, context.adminUsername);
+  await recordAdminAudit(context, "acknowledge_all_quality", "quality", undefined, "标记当前全部未通过质检为已处理");
+  return { ok: true, qualityAckBefore: state.qualityAckBefore };
 }
 
 const OVERVIEW_TREND_DAYS = 14;
@@ -481,6 +588,8 @@ export async function listAdminJobs(options: ListOptions & { courseId?: string }
           attempts: job.attempts ?? row.attempts ?? 0,
           lockedBy: job.lockedBy ?? row.locked_by ?? undefined,
           lockedUntil: job.lockedUntil ?? row.locked_until ?? undefined,
+          cancelledByAdmin: job.cancelledByAdmin ?? undefined,
+          acknowledgedAt: job.acknowledgedAt ?? undefined,
           createdAt: job.createdAt ?? row.created_at,
           updatedAt: job.updatedAt ?? row.updated_at,
           events: job.events ?? [],
@@ -556,6 +665,7 @@ export async function listAdminQualityReports(options: ListOptions = {}): Promis
       score: row.score,
       status: row.status as QualityReport["status"],
       issueCount: report.issues?.length ?? 0,
+      acknowledgedAt: report.acknowledgedAt,
       createdAt: row.created_at,
       report,
     };
@@ -1016,6 +1126,7 @@ async function markAdminJobCancelled(jobId: string) {
     ...job,
     status: "failed",
     error: "管理员已取消该任务。",
+    cancelledByAdmin: true,
     lockedBy: undefined,
     lockedUntil: undefined,
     updatedAt: now,

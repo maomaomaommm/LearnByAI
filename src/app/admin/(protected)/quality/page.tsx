@@ -1,15 +1,22 @@
 import Link from "next/link";
-import { listAdminQualityReports } from "@/lib/adminData";
+import { getAdminAckState, isAdminQualityProcessed, listAdminQualityReports } from "@/lib/adminData";
 import { AdminActionButton, QUALITY_STATUS_LABEL, StatusPill } from "../../parts";
 import { AdminPageHeader } from "../../admin-ui";
 import { formatDate } from "../../format";
 
 export const dynamic = "force-dynamic";
 
-export default async function AdminQualityPage({ searchParams }: { searchParams: Promise<{ status?: string; courseId?: string; all?: string }> }) {
+export default async function AdminQualityPage({ searchParams }: { searchParams: Promise<{ status?: string; courseId?: string; all?: string; processed?: string }> }) {
   const params = await searchParams;
   const showAll = params.all === "1";
-  const reports = await listAdminQualityReports({ status: params.status, courseId: params.courseId, latest: !showAll });
+  const showProcessed = params.processed === "1";
+  const [reports, ack] = await Promise.all([
+    listAdminQualityReports({ status: params.status, courseId: params.courseId, latest: !showAll }),
+    getAdminAckState(),
+  ]);
+
+  const visible = showProcessed ? reports : reports.filter((report) => !isAdminQualityProcessed(report, ack));
+  const hiddenCount = reports.length - visible.length;
 
   const filteredCourse = params.courseId ? reports.find((r) => r.courseId === params.courseId) : null;
   const filteredCourseName = filteredCourse?.courseTopic ?? params.courseId;
@@ -19,16 +26,22 @@ export default async function AdminQualityPage({ searchParams }: { searchParams:
     const status = overrides.status ?? params.status;
     const courseId = overrides.courseId ?? params.courseId;
     const all = overrides.all ?? params.all;
+    const processed = overrides.processed ?? params.processed;
     if (status) sp.set("status", status);
     if (courseId) sp.set("courseId", courseId);
     if (all) sp.set("all", all);
+    if (processed) sp.set("processed", processed);
     const qs = sp.toString();
     return `/admin/quality${qs ? `?${qs}` : ""}`;
   }
 
   return (
     <div className="space-y-6">
-      <AdminPageHeader title="质检管理" description="章节质检报告、低分项与重检 / 重生。" />
+      <AdminPageHeader
+        title="质检管理"
+        description="只显示需要处理的未通过项；已标记处理的默认收起。"
+        action={<AdminActionButton action="acknowledge_all_quality" label="标记全部已处理" confirmText="确认把当前全部未通过质检标记为已处理？记录会保留，可随时切换显示。" />}
+      />
 
       {params.courseId && (
         <div className="flex items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 px-4 py-2 text-sm text-blue-700">
@@ -46,45 +59,60 @@ export default async function AdminQualityPage({ searchParams }: { searchParams:
         </select>
         {params.courseId && <input type="hidden" name="courseId" value={params.courseId} />}
         <input type="hidden" name="all" value={showAll ? "1" : ""} />
+        {showProcessed && <input type="hidden" name="processed" value="1" />}
         <button className="rounded-md bg-foreground px-4 py-2 text-sm text-background">筛选</button>
         <Link href="/admin/quality" className="rounded-md border border-border px-4 py-2 text-sm text-muted-foreground hover:text-foreground">清空</Link>
       </form>
 
-      <div className="flex items-center justify-between">
-        <p className="text-sm text-muted-foreground">当前显示：{showAll ? "全部历史报告" : "每个章节/目标的最新报告"}</p>
-        <Link
-          href={buildFilterUrl({ all: showAll ? undefined : "1" })}
-          className="rounded-md border border-border px-3 py-1.5 text-sm text-muted-foreground hover:text-foreground"
-        >{showAll ? "只看最新" : "显示全部历史"}</Link>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <p className="text-sm text-muted-foreground">
+          {showAll ? "全部历史报告" : "每个章节/目标的最新报告"}
+          {!showProcessed && hiddenCount > 0 ? ` · 已收起 ${hiddenCount} 条已处理` : ""}
+        </p>
+        <div className="flex gap-2">
+          <Link href={buildFilterUrl({ processed: showProcessed ? undefined : "1" })} className="rounded-md border border-border px-3 py-1.5 text-sm text-muted-foreground hover:text-foreground">
+            {showProcessed ? "只看待处理" : "显示已处理"}
+          </Link>
+          <Link href={buildFilterUrl({ all: showAll ? undefined : "1" })} className="rounded-md border border-border px-3 py-1.5 text-sm text-muted-foreground hover:text-foreground">
+            {showAll ? "只看最新" : "显示全部历史"}
+          </Link>
+        </div>
       </div>
 
       <div className="grid gap-4">
-        {reports.map((report) => (
-          <div key={report.id} className="rounded-lg border border-border bg-card p-4">
-            <div className="flex flex-wrap items-start justify-between gap-4">
-              <div>
-                {report.courseId ? (
-                  <Link href={buildFilterUrl({ courseId: report.courseId })} className="text-xs text-muted-foreground hover:text-foreground hover:underline">{report.courseTopic ?? report.courseId}</Link>
-                ) : null}
-                <h2 className="mt-1 text-lg font-semibold">{report.chapterTitle ?? report.courseTopic ?? report.targetType}</h2>
-                <p className="mt-2 text-sm text-muted-foreground">{report.issueCount} 个问题 · {report.userEmail ?? report.userId ?? "未知用户"} · {formatDate(report.createdAt)}</p>
+        {visible.map((report) => {
+          const processed = isAdminQualityProcessed(report, ack);
+          return (
+            <div key={report.id} className="rounded-lg border border-border bg-card p-4">
+              <div className="flex flex-wrap items-start justify-between gap-4">
+                <div>
+                  {report.courseId ? (
+                    <Link href={buildFilterUrl({ courseId: report.courseId })} className="text-xs text-muted-foreground hover:text-foreground hover:underline">{report.courseTopic ?? report.courseId}</Link>
+                  ) : null}
+                  <h2 className="mt-1 text-lg font-semibold">{report.chapterTitle ?? report.courseTopic ?? report.targetType}</h2>
+                  <p className="mt-2 text-sm text-muted-foreground">{report.issueCount} 个问题 · {report.userEmail ?? report.userId ?? "未知用户"} · {formatDate(report.createdAt)}</p>
+                </div>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {processed && <StatusPill tone="muted">已处理</StatusPill>}
+                  <StatusPill tone={report.status === "failed" ? "bad" : report.score < 80 ? "warn" : "good"}>{QUALITY_STATUS_LABEL[report.status] ?? report.status} {report.score}/100</StatusPill>
+                </div>
               </div>
-              <StatusPill tone={report.status === "failed" ? "bad" : report.score < 80 ? "warn" : "good"}>{QUALITY_STATUS_LABEL[report.status] ?? report.status} {report.score}/100</StatusPill>
+              {report.report.issues?.length ? (
+                <ul className="mt-3 space-y-1 text-sm text-muted-foreground">
+                  {report.report.issues.slice(0, 4).map((issue, index) => <li key={`${issue.check}-${index}`}>[{issue.severity}] {issue.message}</li>)}
+                </ul>
+              ) : null}
+              {report.courseId && report.chapterId && (
+                <div className="mt-4 flex flex-wrap gap-2">
+                  {report.status === "failed" && !processed && <AdminActionButton action="acknowledge_quality" payload={{ reportId: report.id }} label="标记已处理" />}
+                  <AdminActionButton action="review_chapter" payload={{ courseId: report.courseId, chapterId: report.chapterId }} label="重新质检" />
+                  <AdminActionButton action="regenerate_chapter" payload={{ courseId: report.courseId, chapterId: report.chapterId }} label="重新生成" confirmText="确认重新生成该章节？" variant="danger" />
+                </div>
+              )}
             </div>
-            {report.report.issues?.length ? (
-              <ul className="mt-3 space-y-1 text-sm text-muted-foreground">
-                {report.report.issues.slice(0, 4).map((issue, index) => <li key={`${issue.check}-${index}`}>[{issue.severity}] {issue.message}</li>)}
-              </ul>
-            ) : null}
-            {report.courseId && report.chapterId && (
-              <div className="mt-4 flex flex-wrap gap-2">
-                <AdminActionButton action="review_chapter" payload={{ courseId: report.courseId, chapterId: report.chapterId }} label="重新质检" />
-                <AdminActionButton action="regenerate_chapter" payload={{ courseId: report.courseId, chapterId: report.chapterId }} label="重新生成" confirmText="确认重新生成该章节？" variant="danger" />
-              </div>
-            )}
-          </div>
-        ))}
-        {!reports.length && <p className="rounded-lg border border-border bg-card px-4 py-12 text-center text-muted-foreground">暂无质检报告。</p>}
+          );
+        })}
+        {!visible.length && <p className="rounded-lg border border-border bg-card px-4 py-12 text-center text-muted-foreground">{showProcessed ? "暂无质检报告。" : "没有待处理的质检 🎉"}</p>}
       </div>
     </div>
   );

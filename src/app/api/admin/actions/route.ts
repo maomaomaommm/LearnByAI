@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 import { adminJsonError, requireAdminApiSession } from "@/lib/adminRoute";
 import {
+  acknowledgeAdminJob,
+  acknowledgeAdminQualityReport,
+  acknowledgeAllFailedAdminJobs,
+  acknowledgeAllFailedQuality,
   banAdminUser,
   cancelActiveAdminJobs,
   cancelAdminJob,
@@ -28,6 +32,10 @@ type AdminActionInput =
   | { action: "cancel_job"; jobId?: string }
   | { action: "delete_job"; jobId?: string }
   | { action: "retry_job"; jobId?: string }
+  | { action: "acknowledge_job"; jobId?: string }
+  | { action: "acknowledge_all_jobs" }
+  | { action: "acknowledge_quality"; reportId?: string }
+  | { action: "acknowledge_all_quality" }
   | { action: "cancel_active_jobs"; userId?: string; courseId?: string; chapterId?: string }
   | { action: "review_chapter"; courseId?: string; chapterId?: string }
   | { action: "regenerate_chapter"; courseId?: string; chapterId?: string }
@@ -65,6 +73,16 @@ export async function POST(request: Request) {
       case "retry_job":
         requireField(input.jobId, "任务 ID");
         return NextResponse.json({ job: await retryAdminJob(input.jobId, context) }, { status: 202 });
+      case "acknowledge_job":
+        requireField(input.jobId, "任务 ID");
+        return NextResponse.json(await acknowledgeAdminJob(input.jobId, context));
+      case "acknowledge_all_jobs":
+        return NextResponse.json(await acknowledgeAllFailedAdminJobs(context));
+      case "acknowledge_quality":
+        requireField(input.reportId, "质检报告 ID");
+        return NextResponse.json(await acknowledgeAdminQualityReport(input.reportId, context));
+      case "acknowledge_all_quality":
+        return NextResponse.json(await acknowledgeAllFailedQuality(context));
       case "cancel_active_jobs":
         return NextResponse.json(await cancelActiveAdminJobs({ userId: input.userId, courseId: input.courseId, chapterId: input.chapterId }, context));
       case "review_chapter":

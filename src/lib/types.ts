@@ -123,6 +123,8 @@ export type QualityReport = {
   status: QualityStatus;
   issues: QualityIssue[];
   createdAt: string;
+  /** Admin marked this failed report as handled; drops it from the attention badge/list. */
+  acknowledgedAt?: string;
 };
 
 export type AgentEvent = {
@@ -149,6 +151,10 @@ export type GenerationJob = {
   lockedUntil?: string;
   attempts?: number;
   modelOverrides?: ModelOverrides;
+  /** Set when an admin cancels the job — distinguishes an intentional cancel from a real failure. */
+  cancelledByAdmin?: boolean;
+  /** Admin marked this failed job as handled; drops it from the attention badge/list. */
+  acknowledgedAt?: string;
   createdAt: string;
   updatedAt: string;
 };

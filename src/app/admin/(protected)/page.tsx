@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { getAdminOverview } from "@/lib/adminData";
+import { getAdminAttentionCounts, getAdminOverview } from "@/lib/adminData";
 import { JOB_STATUS_LABEL, StatusPill } from "../parts";
 import { formatDate } from "../format";
 import { OverviewCharts } from "./overview-charts";
@@ -19,7 +19,7 @@ const TONE_TEXT = {
 } as const;
 
 export default async function AdminOverviewPage() {
-  const overview = await getAdminOverview();
+  const [overview, attention] = await Promise.all([getAdminOverview(), getAdminAttentionCounts()]);
   const { stats } = overview;
 
   return (
@@ -32,9 +32,9 @@ export default async function AdminOverviewPage() {
       <section className="space-y-3">
         <p className="text-sm text-muted-foreground">待处理</p>
         <div className="grid gap-4 sm:grid-cols-3">
-          <AttentionCard label="失败任务" value={stats.failedJobCount} tone="bad" hint="查看失败任务" href="/admin/jobs?status=failed" />
-          <AttentionCard label="质检未通过" value={stats.qualityFailedChapters} tone="warn" hint="处理质检" href="/admin/quality?status=failed" />
-          <AttentionCard label="活跃任务" value={stats.activeJobCount} tone="info" hint="查看运行中" href="/admin/jobs?status=running" />
+          <AttentionCard label="失败任务" value={attention.failedJobCount} tone="bad" hint="查看失败任务" href="/admin/jobs?status=failed" />
+          <AttentionCard label="质检未通过" value={attention.qualityFailedCount} tone="warn" hint="处理质检" href="/admin/quality?status=failed" />
+          <AttentionCard label="活跃任务" value={attention.activeJobCount} tone="info" hint="查看运行中" href="/admin/jobs?status=running" />
         </div>
       </section>
 
