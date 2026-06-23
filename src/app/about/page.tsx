@@ -67,7 +67,7 @@ export default function AboutPage() {
                 title: "后端",
                 items: [
                   "Next.js App Router API",
-                  "Gemini 3.1 Pro 模型",
+                  "自定义模型接入",
                 ],
               },
               {

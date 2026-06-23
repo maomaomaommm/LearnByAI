@@ -9,7 +9,9 @@ test("public pages describe the real seven agents without a fake gatherer", () =
 
   assert.doesNotMatch(publicCopy, /GATHERER/u);
   assert.doesNotMatch(publicCopy, /8\s*个专业 AI Agent/u);
+  assert.doesNotMatch(publicCopy, /Gemini 3\.1 Pro/u);
   assert.match(about, /7 个专业 AI Agent/u);
+  assert.match(about, /自定义模型接入/u);
 
   for (const agent of ["ASSISTANT", "ARCHITECT", "AUTHOR", "POLISHER", "REVIEWER", "TUTOR", "REVISER"]) {
     assert.match(publicCopy, new RegExp(agent, "u"));
