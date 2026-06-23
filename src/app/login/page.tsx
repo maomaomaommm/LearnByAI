@@ -1,7 +1,8 @@
 "use client";
 
 import { FormEvent, useEffect, useState } from "react";
-import { LogIn, UserPlus } from "lucide-react";
+import Link from "next/link";
+import { LogIn, MailCheck, UserPlus } from "lucide-react";
 import { toast } from "sonner";
 import {
   AUTH_MESSAGES,
@@ -14,6 +15,7 @@ import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 export default function LoginPage() {
   const [mode, setMode] = useState<EmailPasswordAuthMode>("login");
   const [message, setMessage] = useState("");
+  const [notice, setNotice] = useState("");
   const [loading, setLoading] = useState(false);
   const [ready, setReady] = useState(false);
   const [nextPath, setNextPath] = useState("/courses");
@@ -33,6 +35,7 @@ export default function LoginPage() {
     event.preventDefault();
     setLoading(true);
     setMessage("");
+    setNotice("");
 
     const form = new FormData(event.currentTarget);
     const email = String(form.get("email")).trim();
@@ -47,18 +50,24 @@ export default function LoginPage() {
 
     try {
       const result = await authenticateWithEmailPassword(supabase, mode, { email, password });
-      if (!result.ok) {
-        setMessage(result.message);
-        if (result.nextMode) setMode(result.nextMode);
+      if (result.ok) {
+        toast.success(mode === "login" ? "登录成功" : "注册并登录成功", {
+          description: gated ? "正在返回上一步..." : "正在进入课程中心...",
+        });
+        setTimeout(() => {
+          window.location.assign(nextPath);
+        }, 900);
         return;
       }
 
-      toast.success(mode === "login" ? "登录成功" : "注册并登录成功", {
-        description: gated ? "正在返回上一步..." : "正在进入课程中心...",
-      });
-      setTimeout(() => {
-        window.location.assign(nextPath);
-      }, 900);
+      // Email verification is required — show a "check your inbox" panel, not an error.
+      if (result.needsConfirmation) {
+        setNotice(result.message);
+        return;
+      }
+
+      setMessage(result.message);
+      if (result.nextMode) setMode(result.nextMode);
     } finally {
       setLoading(false);
     }
@@ -96,12 +105,20 @@ export default function LoginPage() {
           </p>
         )}
 
+        {notice && (
+          <div className="mb-5 flex items-start gap-2 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-3 text-xs text-emerald-700 dark:text-emerald-300">
+            <MailCheck size={16} className="mt-0.5 shrink-0" />
+            <span>{notice}</span>
+          </div>
+        )}
+
         <div className="mb-5 grid grid-cols-2 rounded-md border border-border bg-background p-1">
           <button
             type="button"
             onClick={() => {
               setMode("login");
               setMessage("");
+              setNotice("");
             }}
             className={`rounded px-3 py-2 text-sm transition-colors ${
               mode === "login" ? "bg-foreground text-background" : "text-muted-foreground hover:text-foreground"
@@ -114,6 +131,7 @@ export default function LoginPage() {
             onClick={() => {
               setMode("signup");
               setMessage("");
+              setNotice("");
             }}
             className={`rounded px-3 py-2 text-sm transition-colors ${
               mode === "signup" ? "bg-foreground text-background" : "text-muted-foreground hover:text-foreground"
@@ -147,6 +165,13 @@ export default function LoginPage() {
           autoComplete={mode === "signup" ? "new-password" : "current-password"}
           className="mb-4 w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:border-primary"
         />
+        {mode === "login" && (
+          <div className="-mt-2 mb-4 text-right">
+            <Link href="/forgot-password" className="text-xs text-muted-foreground transition-colors hover:text-foreground">
+              {AUTH_UI_TEXT.forgotPassword}
+            </Link>
+          </div>
+        )}
         <button
           type="submit"
           disabled={loading}

@@ -59,7 +59,7 @@ test("email password sign-up succeeds immediately when Supabase returns a sessio
   assert.deepEqual(calls, ["signup"]);
 });
 
-test("email password sign-up falls back to password login when no session is returned", async () => {
+test("email password sign-up reports email verification when no session is returned", async () => {
   const calls: string[] = [];
   const client = createClient({
     signUp: async () => {
@@ -77,25 +77,29 @@ test("email password sign-up falls back to password login when no session is ret
     password: "secret-password",
   });
 
-  assert.deepEqual(result, { ok: true });
-  assert.deepEqual(calls, ["signup", "signin"]);
+  // Verification required: do NOT try to auto-login, surface a "check inbox" state.
+  assert.deepEqual(result, {
+    ok: false,
+    needsConfirmation: true,
+    message: AUTH_MESSAGES.confirmEmailSent,
+  });
+  assert.deepEqual(calls, ["signup"]);
 });
 
-test("email password sign-up switches back to login if auto-login is unavailable", async () => {
+test("email password login flags an unverified email instead of wrong password", async () => {
   const client = createClient({
-    signUp: async () => ({ data: { session: null } }),
     signInWithPassword: async () => ({ data: null, error: new Error("Email not confirmed") }),
   });
 
-  const result = await authenticateWithEmailPassword(client, "signup", {
-    email: "new@example.com",
+  const result = await authenticateWithEmailPassword(client, "login", {
+    email: "pending@example.com",
     password: "secret-password",
   });
 
   assert.deepEqual(result, {
     ok: false,
-    message: AUTH_MESSAGES.signupNeedsLogin,
-    nextMode: "login",
+    needsConfirmation: true,
+    message: AUTH_MESSAGES.emailNotConfirmed,
   });
 });
 
