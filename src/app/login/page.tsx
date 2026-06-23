@@ -16,9 +16,17 @@ export default function LoginPage() {
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
   const [ready, setReady] = useState(false);
+  const [nextPath, setNextPath] = useState("/courses");
+  const [gated, setGated] = useState(false);
 
   useEffect(() => {
     setReady(true);
+    // Read the return path without useSearchParams so the page needs no Suspense boundary.
+    const raw = new URLSearchParams(window.location.search).get("next");
+    if (raw && raw.startsWith("/") && !raw.startsWith("//")) {
+      setNextPath(raw);
+      setGated(true);
+    }
   }, []);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
@@ -46,10 +54,10 @@ export default function LoginPage() {
       }
 
       toast.success(mode === "login" ? "登录成功" : "注册并登录成功", {
-        description: "正在进入课程中心...",
+        description: gated ? "正在返回上一步..." : "正在进入课程中心...",
       });
       setTimeout(() => {
-        window.location.assign("/courses");
+        window.location.assign(nextPath);
       }, 900);
     } finally {
       setLoading(false);
@@ -81,6 +89,12 @@ export default function LoginPage() {
             {mode === "login" ? AUTH_UI_TEXT.loginTitle : AUTH_UI_TEXT.signupTitle}
           </h1>
         </div>
+
+        {gated && (
+          <p className="mb-5 rounded-md border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+            登录或注册后即可继续创建课程，你刚才的填写会保留。
+          </p>
+        )}
 
         <div className="mb-5 grid grid-cols-2 rounded-md border border-border bg-background p-1">
           <button

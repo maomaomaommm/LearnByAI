@@ -7,11 +7,30 @@ import { ArrowRight, BookOpen, Target, User, Clock, GraduationCap, Loader2, Rout
 import Link from "next/link";
 import { apiFetch } from "@/lib/clientApi";
 import { publicSafeErrorMessage } from "@/lib/publicSafeError";
+import { useUser } from "@/lib/hooks/useUser";
 import { Course, CourseCreateResponse } from "@/lib/types";
+
+const DRAFT_KEY = "learnbyai_create_draft";
+const LOGIN_NEXT = `/login?next=${encodeURIComponent("/create")}`;
+
+type CreateDraft = {
+  topic?: string;
+  goal?: string;
+  background?: string;
+  styles?: string[];
+  learningMode?: string;
+  difficulty?: string;
+  chapterCountPreset?: string;
+  chapterCountCustom?: string;
+  generationProfile?: string;
+  includeRecentResearch?: boolean;
+};
 
 export default function CreateCoursePage() {
   const router = useRouter();
+  const user = useUser();
   const [hydrated, setHydrated] = useState(false);
+  const [draft, setDraft] = useState<CreateDraft | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [progress, setProgress] = useState(0);
@@ -19,7 +38,21 @@ export default function CreateCoursePage() {
 
   useEffect(() => {
     setHydrated(true);
+    try {
+      const raw = window.localStorage.getItem(DRAFT_KEY);
+      if (raw) {
+        setDraft(JSON.parse(raw) as CreateDraft);
+        window.localStorage.removeItem(DRAFT_KEY);
+      }
+    } catch {
+      /* ignore a malformed draft */
+    }
   }, []);
+
+  // Guide signed-out visitors to log in / register first, then bring them back here.
+  useEffect(() => {
+    if (user === null) router.replace(LOGIN_NEXT);
+  }, [user, router]);
 
   useEffect(() => {
     if (!loading) return;
@@ -54,15 +87,15 @@ export default function CreateCoursePage() {
     setError("");
     setProgress(3);
     setProgressStage("分析你的目标与基础");
-    
+
     const formData = new FormData(event.currentTarget);
     const values = Object.fromEntries(formData);
+    const styles = formData.getAll("styles").map(String);
     const customCount = Number(values.chapterCountCustom);
     const presetCount = Number(values.chapterCountPreset);
     const chapterCount = Number.isFinite(customCount) && customCount > 0
       ? customCount
       : (Number.isFinite(presetCount) && presetCount > 0 ? presetCount : 8);
-    const styles = formData.getAll("styles").map(String);
     const input = {
       topic: String(values.topic),
       goal: String(values.goal),
@@ -80,12 +113,14 @@ export default function CreateCoursePage() {
         method: "POST",
         body: JSON.stringify(input),
       });
-      
+
       if (!response.ok) {
         if (response.status === 401) {
-          setError("请先登录后再生成课程。正在打开登录页...");
+          // Session expired mid-fill — preserve everything and route through login.
+          persistDraft(values, styles);
+          setError("登录已过期，正在前往登录，你的填写已保留...");
           setLoading(false);
-          router.push("/login");
+          router.push(LOGIN_NEXT);
           return;
         }
         const data = (await response.json().catch(() => undefined)) as { error?: string } | undefined;
@@ -93,10 +128,10 @@ export default function CreateCoursePage() {
       }
       const data = (await response.json()) as Course | CourseCreateResponse;
       const course: Course = "course" in data ? data.course : data;
-      
+
       setProgress(100);
       setProgressStage("生成完成，正在打开课程");
-      
+
       router.push(`/courses/${course.id}`);
     } catch (error) {
       setError(publicSafeErrorMessage(error, "Course creation failed. Please try again."));
@@ -104,13 +139,28 @@ export default function CreateCoursePage() {
     }
   }
 
+  if (user === undefined) {
+    return <CenteredNote text="检查登录状态…" />;
+  }
+  if (user === null) {
+    return <CenteredNote text="创建课程需要登录，正在前往登录 / 注册…" />;
+  }
+
+  const styleOptions: [string, string, string][] = [
+    ["intuition", "直觉优先", "先讲清“为什么”，建立直觉再形式化"],
+    ["example", "例子说明", "例子先行，以例带理"],
+    ["rigor", "严谨推导", "完整推导，讲究严谨"],
+    ["analogy", "类比通俗", "用熟悉事物打比方，降低门槛"],
+    ["code", "公式代码", "公式配可运行代码，理论与实现并行"],
+  ];
+
   return (
     <div className="min-h-screen bg-background py-12 px-4 sm:px-6 lg:px-8">
       <div className="mx-auto max-w-2xl mt-8">
         <Link href="/" className="mb-8 inline-flex items-center gap-2 text-xs text-muted-foreground hover:text-foreground transition-colors">
           <ArrowLeft size={14} /> 返回首页
         </Link>
-        
+
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
@@ -119,11 +169,17 @@ export default function CreateCoursePage() {
           <h1 className="mb-2 font-mono text-2xl font-bold text-foreground">定制你的专属课程</h1>
           <p className="mb-8 text-sm text-muted-foreground">让多个 AI Agent 为你量身打造系统的学习内容</p>
 
+          {draft && !loading && (
+            <p className="mb-6 rounded-md border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+              已恢复你上次的填写，检查后即可继续生成。
+            </p>
+          )}
+
           <AnimatePresence mode="wait">
             {!loading ? (
-              <motion.form 
+              <motion.form
                 key="form"
-                onSubmit={createCourse} 
+                onSubmit={createCourse}
                 className="space-y-5"
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
@@ -134,7 +190,7 @@ export default function CreateCoursePage() {
                     <BookOpen size={16} className="text-foreground" />
                     <h2 className="text-sm font-semibold text-foreground">你想学习什么？</h2>
                   </div>
-                  <input name="topic" placeholder="例如：量子计算、Rust 语言实战、微观经济学" required className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground outline-none placeholder:text-muted-foreground focus:border-foreground" />
+                  <input name="topic" defaultValue={draft?.topic} placeholder="例如：量子计算、Rust 语言实战、微观经济学" required className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground outline-none placeholder:text-muted-foreground focus:border-foreground" />
                 </div>
 
                 <div className="rounded-lg border border-border bg-card p-5">
@@ -142,7 +198,7 @@ export default function CreateCoursePage() {
                     <Target size={16} className="text-foreground" />
                     <h2 className="text-sm font-semibold text-foreground">你的具体目标</h2>
                   </div>
-                  <textarea name="goal" placeholder="例如：系统掌握核心概念，能够读懂相关论文，并能用代码独立复现经典算法" required rows={2} className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground outline-none placeholder:text-muted-foreground focus:border-foreground resize-none" />
+                  <textarea name="goal" defaultValue={draft?.goal} placeholder="例如：系统掌握核心概念，能够读懂相关论文，并能用代码独立复现经典算法" required rows={2} className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground outline-none placeholder:text-muted-foreground focus:border-foreground resize-none" />
                 </div>
 
                 <div className="rounded-lg border border-border bg-card p-5">
@@ -150,7 +206,7 @@ export default function CreateCoursePage() {
                     <User size={16} className="text-foreground" />
                     <h2 className="text-sm font-semibold text-foreground">你目前的基础</h2>
                   </div>
-                  <textarea name="background" placeholder="例如：会 Python 编程，学过大学微积分和线性代数，但没有深入接触过当前领域" required rows={2} className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground outline-none placeholder:text-muted-foreground focus:border-foreground resize-none" />
+                  <textarea name="background" defaultValue={draft?.background} placeholder="例如：会 Python 编程，学过大学微积分和线性代数，但没有深入接触过当前领域" required rows={2} className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground outline-none placeholder:text-muted-foreground focus:border-foreground resize-none" />
                 </div>
 
                 <div className="grid gap-5 md:grid-cols-2">
@@ -162,18 +218,12 @@ export default function CreateCoursePage() {
                       </h2>
                     </div>
                     <div className="grid gap-2 sm:grid-cols-2">
-                      {[
-                        ["intuition", "直觉优先", "先讲清“为什么”，建立直觉再形式化"],
-                        ["example", "例子说明", "例子先行，以例带理"],
-                        ["rigor", "严谨推导", "完整推导，讲究严谨"],
-                        ["analogy", "类比通俗", "用熟悉事物打比方，降低门槛"],
-                        ["code", "公式代码", "公式配可运行代码，理论与实现并行"],
-                      ].map(([value, label, description]) => (
+                      {styleOptions.map(([value, label, description]) => (
                         <label
                           key={value}
                           className="flex cursor-pointer items-start gap-2 rounded-md border border-border bg-background p-3 text-sm has-[:checked]:border-foreground"
                         >
-                          <input type="checkbox" name="styles" value={value} className="mt-0.5" />
+                          <input type="checkbox" name="styles" value={value} defaultChecked={draft?.styles?.includes(value) ?? false} className="mt-0.5" />
                           <span>
                             <span className="font-medium text-foreground">{label}</span>
                             <span className="mt-1 block text-xs text-muted-foreground">{description}</span>
@@ -188,7 +238,7 @@ export default function CreateCoursePage() {
                       <GraduationCap size={16} className="text-foreground" />
                       <h2 className="text-sm font-semibold text-foreground">学习方式</h2>
                     </div>
-                    <select name="learningMode" defaultValue="standard" className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:border-foreground">
+                    <select name="learningMode" defaultValue={draft?.learningMode ?? "standard"} className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:border-foreground">
                       <option value="standard">标准教材 · 系统讲授（默认）</option>
                       <option value="project">项目驱动 · 围绕贯穿项目</option>
                       <option value="exercise">习题驱动 · 问题与练习推进</option>
@@ -200,7 +250,7 @@ export default function CreateCoursePage() {
                       <GraduationCap size={16} className="text-foreground" />
                       <h2 className="text-sm font-semibold text-foreground">难度基调</h2>
                     </div>
-                    <select name="difficulty" defaultValue="intermediate" className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:border-foreground">
+                    <select name="difficulty" defaultValue={draft?.difficulty ?? "intermediate"} className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:border-foreground">
                       <option value="intro">入门科普 · 多铺垫、少推导</option>
                       <option value="intermediate">进阶系统 · 均衡严谨</option>
                       <option value="research">研究前沿 · 直击最新方法</option>
@@ -222,7 +272,7 @@ export default function CreateCoursePage() {
                             type="radio"
                             name="chapterCountPreset"
                             value={value}
-                            defaultChecked={value === "8"}
+                            defaultChecked={draft ? draft.chapterCountPreset === value : value === "8"}
                             className="mr-2"
                           />
                           <span className="font-medium text-foreground">{label}</span>
@@ -238,6 +288,7 @@ export default function CreateCoursePage() {
                         type="number"
                         min={3}
                         max={20}
+                        defaultValue={draft?.chapterCountCustom}
                         placeholder="留空则用上方档位"
                         className="w-40 rounded-md border border-border bg-background px-2 py-1 text-xs text-foreground outline-none focus:border-foreground"
                       />
@@ -259,7 +310,7 @@ export default function CreateCoursePage() {
                             type="radio"
                             name="generationProfile"
                             value={value}
-                            defaultChecked={value === "fast"}
+                            defaultChecked={draft ? draft.generationProfile === value : value === "fast"}
                             className="mr-2"
                           />
                           <span className="font-medium text-foreground">{label}</span>
@@ -273,6 +324,7 @@ export default function CreateCoursePage() {
                       <input
                         type="checkbox"
                         name="includeRecentResearch"
+                        defaultChecked={draft?.includeRecentResearch ?? false}
                         className="mt-0.5"
                       />
                       <span>
@@ -296,7 +348,7 @@ export default function CreateCoursePage() {
                 {error && <p className="text-destructive text-sm mt-2">{error}</p>}
               </motion.form>
             ) : (
-              <motion.div 
+              <motion.div
                 key="generating"
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
@@ -326,6 +378,37 @@ export default function CreateCoursePage() {
             )}
           </AnimatePresence>
         </motion.div>
+      </div>
+    </div>
+  );
+}
+
+function persistDraft(values: Record<string, FormDataEntryValue>, styles: string[]) {
+  const draft: CreateDraft = {
+    topic: String(values.topic ?? ""),
+    goal: String(values.goal ?? ""),
+    background: String(values.background ?? ""),
+    styles,
+    learningMode: String(values.learningMode ?? "standard"),
+    difficulty: String(values.difficulty ?? "intermediate"),
+    chapterCountPreset: values.chapterCountPreset ? String(values.chapterCountPreset) : undefined,
+    chapterCountCustom: values.chapterCountCustom ? String(values.chapterCountCustom) : undefined,
+    generationProfile: String(values.generationProfile ?? "fast"),
+    includeRecentResearch: values.includeRecentResearch === "on",
+  };
+  try {
+    window.localStorage.setItem(DRAFT_KEY, JSON.stringify(draft));
+  } catch {
+    /* storage may be unavailable — non-fatal */
+  }
+}
+
+function CenteredNote({ text }: { text: string }) {
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-background px-4">
+      <div className="flex items-center gap-3 text-sm text-muted-foreground">
+        <Loader2 size={16} className="animate-spin" />
+        {text}
       </div>
     </div>
   );
