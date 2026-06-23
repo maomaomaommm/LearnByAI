@@ -1,7 +1,8 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getAdminCourse } from "@/lib/adminData";
-import { AdminActionButton, AdminJsonForm, CHAPTER_STATUS_LABEL, DEPTH_LABEL, JOB_STATUS_LABEL, QUALITY_STATUS_LABEL, StatusPill } from "../../../parts";
+import { AdminActionButton, AdminJsonForm, CHAPTER_STATUS_LABEL, DEPTH_LABEL, JOB_STATUS_LABEL, QUALITY_STATUS_LABEL, RowMenu, StatusPill } from "../../../parts";
+import { AdminField, ADMIN_INPUT_CLASS } from "../../../admin-ui";
 import { formatDate } from "../../../format";
 
 export const dynamic = "force-dynamic";
@@ -34,19 +35,19 @@ export default async function AdminCourseDetailPage({ params }: { params: Promis
         <AdminJsonForm action="update_course">
           <input type="hidden" name="courseId" value={course.id} />
           <div className="grid gap-4 lg:grid-cols-2">
-            <Field label="课程主题"><input name="topic" defaultValue={course.topic} required className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:border-foreground" /></Field>
-            <Field label="章节数量"><input name="chapterCount" type="number" min={3} max={20} defaultValue={course.targetChapterCount ?? 8} className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:border-foreground" /></Field>
+            <AdminField label="课程主题"><input name="topic" defaultValue={course.topic} required className={ADMIN_INPUT_CLASS} /></AdminField>
+            <AdminField label="章节数量"><input name="chapterCount" type="number" min={3} max={20} defaultValue={course.targetChapterCount ?? 8} className={ADMIN_INPUT_CLASS} /></AdminField>
           </div>
-          <Field label="学习目标"><textarea name="goal" defaultValue={course.goal} rows={2} required className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:border-foreground" /></Field>
-          <Field label="学习背景"><textarea name="background" defaultValue={course.background ?? ""} rows={2} className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:border-foreground" /></Field>
-          <Field label="学习偏好"><textarea name="preference" defaultValue={course.preference ?? ""} rows={2} className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:border-foreground" /></Field>
-          <Field label="难度基调">
-            <select name="difficulty" defaultValue={course.difficulty ?? "intermediate"} className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:border-foreground">
+          <AdminField label="学习目标"><textarea name="goal" defaultValue={course.goal} rows={2} required className={ADMIN_INPUT_CLASS} /></AdminField>
+          <AdminField label="学习背景"><textarea name="background" defaultValue={course.background ?? ""} rows={2} className={ADMIN_INPUT_CLASS} /></AdminField>
+          <AdminField label="学习偏好"><textarea name="preference" defaultValue={course.preference ?? ""} rows={2} className={ADMIN_INPUT_CLASS} /></AdminField>
+          <AdminField label="难度基调">
+            <select name="difficulty" defaultValue={course.difficulty ?? "intermediate"} className={ADMIN_INPUT_CLASS}>
               <option value="intro">入门科普</option>
               <option value="intermediate">进阶系统</option>
               <option value="research">研究前沿</option>
             </select>
-          </Field>
+          </AdminField>
         </AdminJsonForm>
       </section>
 
@@ -55,9 +56,32 @@ export default async function AdminCourseDetailPage({ params }: { params: Promis
           <h2 className="font-medium">章节列表</h2>
           <div className="flex gap-2">
             {course.activeJobCount > 0 && <AdminActionButton action="cancel_active_jobs" payload={{ courseId: course.id }} label="取消本课程任务" confirmText="确认取消本课程全部活跃任务？" variant="danger" />}
-            <AdminActionButton action="delete_course" payload={{ courseId: course.id }} label="删除课程" confirmText={`危险操作：确认删除课程「${course.topic}」？`} variant="danger" />
+            <RowMenu>
+              <AdminActionButton action="delete_course" payload={{ courseId: course.id }} label="删除课程" confirmText={`危险操作：确认删除课程「${course.topic}」？`} variant="danger" />
+            </RowMenu>
           </div>
         </div>
+
+        <details className="border-b border-border">
+          <summary className="cursor-pointer px-4 py-3 text-sm font-medium text-muted-foreground hover:text-foreground">+ 新增章节</summary>
+          <div className="px-4 pb-4">
+            <AdminJsonForm action="create_chapter">
+              <input type="hidden" name="courseId" value={course.id} />
+              <div className="grid gap-4 lg:grid-cols-[1fr_auto]">
+                <AdminField label="章节标题"><input name="title" required className={ADMIN_INPUT_CLASS} /></AdminField>
+                <AdminField label="篇幅权重">
+                  <select name="depthWeight" defaultValue="normal" className={ADMIN_INPUT_CLASS}>
+                    <option value="core">核心章</option>
+                    <option value="normal">常规章</option>
+                    <option value="light">轻量章</option>
+                  </select>
+                </AdminField>
+              </div>
+              <AdminField label="章节说明"><textarea name="description" rows={2} className={ADMIN_INPUT_CLASS} /></AdminField>
+            </AdminJsonForm>
+          </div>
+        </details>
+
         <div className="divide-y divide-border">
           {course.course.chapters.map((chapter, index) => {
             const job = jobsByChapter.get(chapter.id);
@@ -82,13 +106,36 @@ export default async function AdminCourseDetailPage({ params }: { params: Promis
                   <p className="mt-2 line-clamp-2 text-sm text-muted-foreground">{chapter.description}</p>
                   {job?.error && <p className="mt-2 text-xs text-destructive">错误：{job.error}</p>}
                   <p className="mt-2 text-xs text-muted-foreground">正文：{hasBody ? "已有正文" : "暂无正文"} · 章节 ID：{chapter.id}</p>
+
+                  <details className="mt-3">
+                    <summary className="cursor-pointer text-xs text-muted-foreground hover:text-foreground">编辑章节信息</summary>
+                    <div className="mt-3 max-w-2xl">
+                      <AdminJsonForm action="update_chapter">
+                        <input type="hidden" name="courseId" value={course.id} />
+                        <input type="hidden" name="chapterId" value={chapter.id} />
+                        <div className="grid gap-4 lg:grid-cols-[1fr_auto]">
+                          <AdminField label="章节标题"><input name="title" defaultValue={chapter.title} required className={ADMIN_INPUT_CLASS} /></AdminField>
+                          <AdminField label="篇幅权重">
+                            <select name="depthWeight" defaultValue={chapter.depthWeight ?? "normal"} className={ADMIN_INPUT_CLASS}>
+                              <option value="core">核心章</option>
+                              <option value="normal">常规章</option>
+                              <option value="light">轻量章</option>
+                            </select>
+                          </AdminField>
+                        </div>
+                        <AdminField label="章节说明"><textarea name="description" defaultValue={chapter.description} rows={2} className={ADMIN_INPUT_CLASS} /></AdminField>
+                      </AdminJsonForm>
+                    </div>
+                  </details>
                 </div>
                 <div className="flex flex-wrap items-start gap-2 lg:justify-end">
                   {hasBody && <AdminActionButton action="review_chapter" payload={{ courseId: course.id, chapterId: chapter.id }} label="重新质检" confirmText={`确认重新质检「${chapter.title}」？`} />}
-                  <AdminActionButton action="regenerate_chapter" payload={{ courseId: course.id, chapterId: chapter.id }} label="重新生成" confirmText={`确认重新生成「${chapter.title}」？这会清空当前章节正文和质检报告。`} variant="danger" />
                   <AdminActionButton action="repair_chapter_status" payload={{ courseId: course.id, chapterId: chapter.id, status: hasBody ? "draft_ready" : "pending" }} label="修复状态" confirmText={`确认修复「${chapter.title}」的状态？`} />
-                  <AdminActionButton action="delete_chapter" payload={{ courseId: course.id, chapterId: chapter.id }} label="删除章节" confirmText={`危险操作：确认删除章节「${chapter.title}」？`} variant="danger" />
-                  {job && ["pending", "queued", "running", "retrying"].includes(job.status) && <AdminActionButton action="cancel_job" payload={{ jobId: job.id }} label="取消任务" confirmText={`确认取消任务 ${job.id}？`} variant="danger" />}
+                  <RowMenu>
+                    <AdminActionButton action="regenerate_chapter" payload={{ courseId: course.id, chapterId: chapter.id }} label="重新生成" confirmText={`确认重新生成「${chapter.title}」？这会清空当前章节正文和质检报告。`} variant="danger" />
+                    <AdminActionButton action="delete_chapter" payload={{ courseId: course.id, chapterId: chapter.id }} label="删除章节" confirmText={`危险操作：确认删除章节「${chapter.title}」？`} variant="danger" />
+                    {job && ["pending", "queued", "running", "retrying"].includes(job.status) && <AdminActionButton action="cancel_job" payload={{ jobId: job.id }} label="取消任务" confirmText={`确认取消任务 ${job.id}？`} variant="danger" />}
+                  </RowMenu>
                 </div>
               </div>
             );
@@ -115,8 +162,4 @@ export default async function AdminCourseDetailPage({ params }: { params: Promis
       </section>
     </div>
   );
-}
-
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return <label className="block"><span className="mb-1 block text-sm text-muted-foreground">{label}</span>{children}</label>;
 }

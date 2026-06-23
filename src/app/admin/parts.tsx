@@ -129,6 +129,31 @@ export function AdminActionButton({
   );
 }
 
+export function RowMenu({ children, label = "更多操作" }: { children: React.ReactNode; label?: string }) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <span className="relative inline-block text-left">
+      <button
+        type="button"
+        aria-label={label}
+        onClick={() => setOpen((value) => !value)}
+        className="rounded-md border border-border px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
+      >
+        ⋯
+      </button>
+      {open && (
+        <>
+          <span className="fixed inset-0 z-10" onClick={() => setOpen(false)} aria-hidden="true" />
+          <span className="absolute right-0 z-20 mt-1 flex min-w-44 flex-col items-stretch gap-1 rounded-md border border-border bg-card p-2 shadow-md">
+            {children}
+          </span>
+        </>
+      )}
+    </span>
+  );
+}
+
 export function AdminJsonForm({
   action,
   children,

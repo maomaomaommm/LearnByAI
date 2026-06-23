@@ -4,7 +4,9 @@ import {
   banAdminUser,
   cancelActiveAdminJobs,
   cancelAdminJob,
+  createAdminChapter,
   createAdminCourse,
+  createAdminUser,
   deleteAdminChapter,
   deleteAdminCourse,
   deleteAdminExport,
@@ -17,9 +19,10 @@ import {
   retryAdminJob,
   saveAdminSettingsAction,
   unbanAdminUser,
+  updateAdminChapter,
   updateAdminCourse,
 } from "@/lib/adminData";
-import { Chapter, CourseDifficulty, ExplanationStyle, LearningMode } from "@/lib/types";
+import { Chapter, ChapterDepthWeight, CourseDifficulty, ExplanationStyle, LearningMode } from "@/lib/types";
 
 type AdminActionInput =
   | { action: "cancel_job"; jobId?: string }
@@ -29,10 +32,13 @@ type AdminActionInput =
   | { action: "review_chapter"; courseId?: string; chapterId?: string }
   | { action: "regenerate_chapter"; courseId?: string; chapterId?: string }
   | { action: "repair_chapter_status"; courseId?: string; chapterId?: string; status?: Chapter["status"] }
+  | { action: "create_chapter"; courseId?: string; title?: string; description?: string; depthWeight?: ChapterDepthWeight }
+  | { action: "update_chapter"; courseId?: string; chapterId?: string; title?: string; description?: string; depthWeight?: ChapterDepthWeight }
   | { action: "delete_chapter"; courseId?: string; chapterId?: string }
   | { action: "delete_course"; courseId?: string }
   | { action: "create_course"; userId?: string; topic?: string; goal?: string; background?: string; preference?: string; styles?: ExplanationStyle[]; learningMode?: LearningMode; chapterCount?: number; difficulty?: CourseDifficulty }
   | { action: "update_course"; courseId?: string; topic?: string; goal?: string; background?: string; preference?: string; styles?: ExplanationStyle[]; learningMode?: LearningMode; chapterCount?: number; difficulty?: CourseDifficulty }
+  | { action: "create_user"; email?: string; password?: string }
   | { action: "delete_user"; userId?: string }
   | { action: "ban_user"; userId?: string }
   | { action: "unban_user"; userId?: string }
@@ -74,6 +80,18 @@ export async function POST(request: Request) {
         requireField(input.chapterId, "章节 ID");
         requireField(input.status, "章节状态");
         return NextResponse.json({ course: await repairAdminChapterStatus(input.courseId, input.chapterId, input.status, context) });
+      case "create_chapter":
+        requireField(input.courseId, "课程 ID");
+        requireField(input.title, "章节标题");
+        return NextResponse.json(
+          { course: await createAdminChapter(input.courseId, { title: input.title, description: input.description ?? "", depthWeight: input.depthWeight }, context) },
+          { status: 201 },
+        );
+      case "update_chapter":
+        requireField(input.courseId, "课程 ID");
+        requireField(input.chapterId, "章节 ID");
+        requireField(input.title, "章节标题");
+        return NextResponse.json({ course: await updateAdminChapter(input.courseId, input.chapterId, { title: input.title, description: input.description ?? "", depthWeight: input.depthWeight }, context) });
       case "delete_chapter":
         requireField(input.courseId, "课程 ID");
         requireField(input.chapterId, "章节 ID");
@@ -86,6 +104,10 @@ export async function POST(request: Request) {
       case "update_course":
         requireField(input.courseId, "课程 ID");
         return NextResponse.json({ course: await updateAdminCourse({ courseId: input.courseId, ...readCourseInput(input) }, context) });
+      case "create_user":
+        requireField(input.email, "邮箱");
+        requireField(input.password, "密码");
+        return NextResponse.json({ result: await createAdminUser({ email: input.email, password: input.password }, context) }, { status: 201 });
       case "delete_user":
         requireField(input.userId, "用户 ID");
         return NextResponse.json(await deleteAdminUser(input.userId, context));

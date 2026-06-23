@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getAdminUser } from "@/lib/adminData";
 import { JOB_STATUS_LABEL, StatusPill, USAGE_ACTION_LABEL } from "../../../parts";
+import { AdminPageHeader } from "../../../admin-ui";
 import { formatDate } from "../../../format";
 
 export const dynamic = "force-dynamic";
@@ -13,11 +14,11 @@ export default async function AdminUserDetailPage({ params }: { params: Promise<
 
   return (
     <div className="space-y-6">
-      <div>
-        <p className="font-mono text-xs uppercase tracking-widest text-muted-foreground">User Detail</p>
-        <h1 className="mt-2 text-3xl font-semibold">{user.email}</h1>
-        <p className="mt-2 font-mono text-xs text-muted-foreground">{user.id}</p>
-      </div>
+      <AdminPageHeader
+        title={user.email}
+        action={<Link href="/admin/users" className="text-sm text-muted-foreground hover:text-foreground">返回用户列表</Link>}
+      />
+      <p className="-mt-2 font-mono text-xs text-muted-foreground">{user.id}</p>
 
       <section className="grid gap-4 md:grid-cols-4">
         <Card label="状态" value={user.isBanned ? "已封禁" : "正常"} />

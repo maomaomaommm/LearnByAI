@@ -1,6 +1,6 @@
-import Link from "next/link";
 import { listAdminUsageEvents, USAGE_ACTIONS } from "@/lib/adminData";
 import { USAGE_ACTION_LABEL } from "../../parts";
+import { AdminFilterBar, AdminPageHeader, AdminTable, ADMIN_INPUT_CLASS } from "../../admin-ui";
 import { formatDate } from "../../format";
 
 export const dynamic = "force-dynamic";
@@ -15,10 +15,7 @@ export default async function AdminUsagePage({ searchParams }: { searchParams: P
 
   return (
     <div className="space-y-6">
-      <div>
-        <p className="font-mono text-xs uppercase tracking-widest text-muted-foreground">Usage</p>
-        <h1 className="mt-2 text-3xl font-semibold">用量统计</h1>
-      </div>
+      <AdminPageHeader title="用量统计" description="按动作统计的近期用量事件。" />
 
       <section className="grid gap-4 md:grid-cols-4">
         {USAGE_ACTIONS.map((action) => (
@@ -29,33 +26,24 @@ export default async function AdminUsagePage({ searchParams }: { searchParams: P
         ))}
       </section>
 
-      <form className="flex flex-wrap gap-3 rounded-lg border border-border bg-card p-4">
-        <select name="action" defaultValue={params.action ?? ""} className="rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:border-foreground">
+      <AdminFilterBar clearHref="/admin/usage">
+        <select name="action" defaultValue={params.action ?? ""} className={ADMIN_INPUT_CLASS + " w-auto"}>
           <option value="">全部动作</option>
           {USAGE_ACTIONS.map((action) => <option key={action} value={action}>{USAGE_ACTION_LABEL[action]}</option>)}
         </select>
-        <button className="rounded-md bg-foreground px-4 py-2 text-sm text-background">筛选</button>
-        <Link href="/admin/usage" className="rounded-md border border-border px-4 py-2 text-sm text-muted-foreground hover:text-foreground">清空</Link>
-      </form>
+        {params.userId && <input type="hidden" name="userId" value={params.userId} />}
+      </AdminFilterBar>
 
-      <div className="overflow-hidden rounded-lg border border-border bg-card">
-        <table className="w-full text-left text-sm">
-          <thead className="border-b border-border bg-muted/40 text-xs text-muted-foreground">
-            <tr><th className="px-4 py-3 font-medium">动作</th><th className="px-4 py-3 font-medium">用户</th><th className="px-4 py-3 font-medium">时间</th><th className="px-4 py-3 font-medium">ID</th></tr>
-          </thead>
-          <tbody className="divide-y divide-border">
-            {usage.map((event) => (
-              <tr key={event.id} className="hover:bg-muted/30">
-                <td className="px-4 py-3">{USAGE_ACTION_LABEL[event.action] ?? event.action}</td>
-                <td className="px-4 py-3 text-muted-foreground">{event.userEmail ?? event.userId ?? "未知用户"}</td>
-                <td className="px-4 py-3 text-muted-foreground">{formatDate(event.createdAt)}</td>
-                <td className="px-4 py-3 font-mono text-xs text-muted-foreground">{event.id}</td>
-              </tr>
-            ))}
-            {!usage.length && <tr><td colSpan={4} className="px-4 py-12 text-center text-muted-foreground">暂无用量记录。</td></tr>}
-          </tbody>
-        </table>
-      </div>
+      <AdminTable head={["动作", "用户", "时间", "ID"]} isEmpty={!usage.length} empty="暂无用量记录。">
+        {usage.map((event) => (
+          <tr key={event.id} className="hover:bg-muted/30">
+            <td className="px-4 py-3">{USAGE_ACTION_LABEL[event.action] ?? event.action}</td>
+            <td className="px-4 py-3 text-muted-foreground">{event.userEmail ?? event.userId ?? "未知用户"}</td>
+            <td className="px-4 py-3 text-muted-foreground">{formatDate(event.createdAt)}</td>
+            <td className="px-4 py-3 font-mono text-xs text-muted-foreground">{event.id}</td>
+          </tr>
+        ))}
+      </AdminTable>
     </div>
   );
 }

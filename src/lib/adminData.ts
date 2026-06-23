@@ -7,7 +7,7 @@ import { createSupabaseServiceClient } from "./supabase/server";
 import { deleteServerCourseByAdmin, snapshotChapterBeforeRegen } from "./serverStore";
 import { normalizeCourse, normalizeLearningMode, normalizeStyles } from "./normalizeCourse";
 import { buildStyleGuidance } from "./prompts/styleGuidance";
-import { Chapter, Course, CourseDifficulty, ExplanationStyle, ExportJob, GenerationJob, LearningMode, QualityReport, UsageEvent } from "./types";
+import { Chapter, ChapterDepthWeight, Course, CourseDifficulty, ExplanationStyle, ExportJob, GenerationJob, LearningMode, QualityReport, UsageEvent } from "./types";
 
 export const ACTIVE_ADMIN_JOB_STATUSES: GenerationJob["status"][] = ["pending", "queued", "running", "retrying"];
 export const INACTIVE_ADMIN_JOB_STATUSES: GenerationJob["status"][] = ["succeeded", "failed"];
@@ -726,6 +726,21 @@ export async function updateAdminCourse(input: {
   return nextCourse;
 }
 
+export async function createAdminUser(input: { email: string; password: string }, context: AdminActionContext) {
+  const email = input.email.trim().toLowerCase();
+  if (!email) throw new Error("邮箱不能为空。");
+  if (input.password.length < 6) throw new Error("密码至少需要 6 位。");
+  const supabase = requireAdminSupabaseClient();
+  const { data, error } = await supabase.auth.admin.createUser({
+    email,
+    password: input.password,
+    email_confirm: true,
+  });
+  assertAdminNoError("创建用户", error);
+  await recordAdminAudit(context, "create_user", "user", data.user?.id, `创建用户：${email}`);
+  return { ok: true, userId: data.user?.id };
+}
+
 export async function deleteAdminUser(userId: string, context: AdminActionContext) {
   await cancelActiveAdminJobs({ userId }, context, false);
   const supabase = requireAdminSupabaseClient();
@@ -791,6 +806,46 @@ export async function deleteAdminChapter(courseId: string, chapterId: string, co
   await persistAdminCourse(nextCourse);
   await recordAdminAudit(context, "delete_chapter", "chapter", chapterId, `删除章节：${chapter.title}`);
   return nextCourse;
+}
+
+export async function createAdminChapter(
+  courseId: string,
+  input: { title: string; description: string; depthWeight?: ChapterDepthWeight },
+  context: AdminActionContext,
+) {
+  const title = input.title.trim();
+  if (!title) throw new Error("章节标题不能为空。");
+  const course = await readAdminCoursePayload(courseId);
+  const chapter: Chapter = {
+    id: crypto.randomUUID(),
+    title,
+    description: input.description.trim(),
+    time: { readingMinutes: 0, exerciseMinutes: 0, practiceMinutes: 0, extensionMinutes: 0 },
+    depthWeight: input.depthWeight ?? "normal",
+    status: "pending",
+  };
+  const nextCourse = { ...course, chapters: [...course.chapters, chapter], updatedAt: new Date().toISOString() };
+  await persistAdminCourse(nextCourse);
+  await recordAdminAudit(context, "create_chapter", "chapter", chapter.id, `新增章节：${chapter.title}`);
+  return nextCourse;
+}
+
+export async function updateAdminChapter(
+  courseId: string,
+  chapterId: string,
+  input: { title: string; description: string; depthWeight?: ChapterDepthWeight },
+  context: AdminActionContext,
+) {
+  const title = input.title.trim();
+  if (!title) throw new Error("章节标题不能为空。");
+  const patch: Partial<Chapter> = {
+    title,
+    description: input.description.trim(),
+    ...(input.depthWeight ? { depthWeight: input.depthWeight } : {}),
+  };
+  const course = await patchAdminChapter(courseId, chapterId, patch);
+  await recordAdminAudit(context, "update_chapter", "chapter", chapterId, `编辑章节：${title}`);
+  return course;
 }
 
 export async function repairAdminChapterStatus(courseId: string, chapterId: string, status: Chapter["status"], context: AdminActionContext) {

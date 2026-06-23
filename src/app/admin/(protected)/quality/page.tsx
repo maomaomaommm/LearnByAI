@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { listAdminQualityReports } from "@/lib/adminData";
 import { AdminActionButton, QUALITY_STATUS_LABEL, StatusPill } from "../../parts";
+import { AdminPageHeader } from "../../admin-ui";
 import { formatDate } from "../../format";
 
 export const dynamic = "force-dynamic";
@@ -27,10 +28,7 @@ export default async function AdminQualityPage({ searchParams }: { searchParams:
 
   return (
     <div className="space-y-6">
-      <div>
-        <p className="font-mono text-xs uppercase tracking-widest text-muted-foreground">Quality</p>
-        <h1 className="mt-2 text-3xl font-semibold">质检管理</h1>
-      </div>
+      <AdminPageHeader title="质检管理" description="章节质检报告、低分项与重检 / 重生。" />
 
       {params.courseId && (
         <div className="flex items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 px-4 py-2 text-sm text-blue-700">
