@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="zh-CN">
+  <body style="margin:0;padding:24px;background:#f6f7f9;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+    <div style="max-width:480px;margin:0 auto;background:#ffffff;border:1px solid #e6e8eb;border-radius:12px;padding:32px;">
+      <h1 style="margin:0 0 8px;font-size:18px;color:#111;">验证你的 LearnByAI 邮箱</h1>
+      <p style="margin:0 0 20px;font-size:14px;line-height:1.6;color:#444;">
+        用下面的验证码完成注册，或直接点击按钮。两者二选一即可。
+      </p>
+
+      <div style="font-size:32px;letter-spacing:10px;font-weight:700;text-align:center;color:#111;background:#f2f4f6;border-radius:10px;padding:18px 0;margin:0 0 20px;">
+        {{ .Token }}
+      </div>
+
+      <p style="text-align:center;margin:0 0 24px;">
+        <a href="{{ .ConfirmationURL }}" style="display:inline-block;background:#111;color:#fff;text-decoration:none;font-size:14px;padding:12px 28px;border-radius:8px;">
+          点击验证邮箱
+        </a>
+      </p>
+
+      <p style="margin:0;font-size:12px;line-height:1.6;color:#8a8f98;">
+        如果这不是你本人的操作，忽略本邮件即可。验证码与链接均会过期。
+      </p>
+    </div>
+  </body>
+</html>

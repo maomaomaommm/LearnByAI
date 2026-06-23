@@ -2,7 +2,7 @@
 
 import { FormEvent, useEffect, useState } from "react";
 import Link from "next/link";
-import { LogIn, MailCheck, UserPlus } from "lucide-react";
+import { LogIn, MailCheck, ShieldCheck, UserPlus } from "lucide-react";
 import { toast } from "sonner";
 import {
   AUTH_MESSAGES,
@@ -10,6 +10,7 @@ import {
   EmailPasswordAuthMode,
   authenticateWithEmailPassword,
 } from "@/lib/emailPasswordAuth";
+import { publicSafeErrorMessage } from "@/lib/publicSafeError";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 
 export default function LoginPage() {
@@ -21,6 +22,12 @@ export default function LoginPage() {
   const [nextPath, setNextPath] = useState("/courses");
   const [gated, setGated] = useState(false);
 
+  // When verification is required we switch into a "enter the 6-digit code" step.
+  const [pendingEmail, setPendingEmail] = useState<string | null>(null);
+  const [pendingNote, setPendingNote] = useState("");
+  const [verifying, setVerifying] = useState(false);
+  const [codeMsg, setCodeMsg] = useState("");
+
   useEffect(() => {
     setReady(true);
     // Read the return path without useSearchParams so the page needs no Suspense boundary.
@@ -30,6 +37,13 @@ export default function LoginPage() {
       setGated(true);
     }
   }, []);
+
+  function redirectAfterAuth() {
+    toast.success("验证成功", {
+      description: gated ? "正在返回上一步..." : "正在进入课程中心...",
+    });
+    setTimeout(() => window.location.assign(nextPath), 900);
+  }
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -49,7 +63,10 @@ export default function LoginPage() {
     }
 
     try {
-      const result = await authenticateWithEmailPassword(supabase, mode, { email, password });
+      const result = await authenticateWithEmailPassword(supabase, mode, { email, password }, {
+        // Clicking the email link instead of typing the code lands here with a clear result.
+        emailRedirectTo: `${window.location.origin}/auth/callback`,
+      });
       if (result.ok) {
         toast.success(mode === "login" ? "登录成功" : "注册并登录成功", {
           description: gated ? "正在返回上一步..." : "正在进入课程中心...",
@@ -60,9 +77,12 @@ export default function LoginPage() {
         return;
       }
 
-      // Email verification is required — show a "check your inbox" panel, not an error.
+      // Email verification required — move to the code step (also works if the user
+      // would rather click the link in the email).
       if (result.needsConfirmation) {
-        setNotice(result.message);
+        setPendingEmail(email);
+        setPendingNote(result.message);
+        setCodeMsg("");
         return;
       }
 
@@ -73,6 +93,53 @@ export default function LoginPage() {
     }
   }
 
+  async function verifyCode(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setVerifying(true);
+    setCodeMsg("");
+
+    const token = String(new FormData(event.currentTarget).get("code")).trim();
+    const supabase = createSupabaseBrowserClient();
+    if (!supabase || !pendingEmail) {
+      setCodeMsg(AUTH_MESSAGES.serviceUnavailable);
+      setVerifying(false);
+      return;
+    }
+
+    try {
+      const { data, error } = await supabase.auth.verifyOtp({
+        email: pendingEmail,
+        token,
+        type: "signup",
+      });
+      if (error || !data?.session) {
+        setCodeMsg(AUTH_MESSAGES.codeVerifyFailed);
+        return;
+      }
+      redirectAfterAuth();
+    } finally {
+      setVerifying(false);
+    }
+  }
+
+  async function resendCode() {
+    const supabase = createSupabaseBrowserClient();
+    if (!supabase || !pendingEmail) return;
+    setCodeMsg("");
+    const { error } = await supabase.auth.resend({ type: "signup", email: pendingEmail });
+    if (error) {
+      setCodeMsg(publicSafeErrorMessage(error, "发送失败，请稍后再试。"));
+      return;
+    }
+    toast.success(AUTH_MESSAGES.codeResent);
+  }
+
+  function backToForm() {
+    setPendingEmail(null);
+    setPendingNote("");
+    setCodeMsg("");
+  }
+
   async function logout() {
     const supabase = createSupabaseBrowserClient();
     if (supabase) {
@@ -81,6 +148,70 @@ export default function LoginPage() {
     setMessage(AUTH_MESSAGES.signedOut);
   }
 
+  // ---- Code-entry step ----------------------------------------------------
+  if (pendingEmail) {
+    return (
+      <div className="min-h-screen bg-background px-4 py-20">
+        <div className="mx-auto max-w-sm rounded-lg border border-border bg-card p-6">
+          <div className="mb-6 flex items-center gap-2">
+            <ShieldCheck size={18} className="text-primary" />
+            <h1 className="font-mono text-lg font-semibold text-foreground">{AUTH_UI_TEXT.verifyTitle}</h1>
+          </div>
+
+          <p className="mb-5 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-3 text-xs text-emerald-700 dark:text-emerald-300">
+            {pendingNote}
+            <br />
+            验证码已发到 <span className="font-medium">{pendingEmail}</span>。在下面输入 6 位码，或直接点开邮件里的链接完成验证。
+          </p>
+
+          <form onSubmit={verifyCode}>
+            <label className="mb-2 block text-xs text-muted-foreground" htmlFor="code">
+              {AUTH_UI_TEXT.codeLabel}
+            </label>
+            <input
+              id="code"
+              name="code"
+              type="text"
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              pattern="[0-9]*"
+              maxLength={6}
+              required
+              placeholder="6 位数字"
+              className="mb-4 w-full rounded-md border border-border bg-background px-3 py-2 text-center font-mono text-lg tracking-[0.4em] text-foreground outline-none focus:border-primary"
+            />
+            <button
+              type="submit"
+              disabled={verifying}
+              className="w-full rounded-md bg-foreground px-4 py-2 text-sm font-medium text-background disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {verifying ? AUTH_UI_TEXT.working : AUTH_UI_TEXT.verifyButton}
+            </button>
+            {codeMsg && <p className="mt-4 text-sm text-muted-foreground">{codeMsg}</p>}
+          </form>
+
+          <div className="mt-5 flex items-center justify-between text-xs">
+            <button
+              type="button"
+              onClick={() => void resendCode()}
+              className="text-muted-foreground transition-colors hover:text-foreground"
+            >
+              {AUTH_UI_TEXT.resendCode}
+            </button>
+            <button
+              type="button"
+              onClick={backToForm}
+              className="text-muted-foreground transition-colors hover:text-foreground"
+            >
+              {AUTH_UI_TEXT.useAnotherEmail}
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ---- Login / sign-up form ----------------------------------------------
   return (
     <div className="min-h-screen bg-background px-4 py-20">
       <form

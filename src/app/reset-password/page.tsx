@@ -23,6 +23,14 @@ export default function ResetPasswordPage() {
       return;
     }
 
+    // The link came back expired/invalid (often a mail scanner opened it first).
+    const hash = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+    if (hash.get("error") || hash.get("error_code")) {
+      setMessage(AUTH_MESSAGES.linkExpired);
+      setPhase("invalid");
+      return;
+    }
+
     // The recovery link carries the token in the URL hash; the client parses it
     // automatically (detectSessionInUrl) and fires PASSWORD_RECOVERY once ready.
     const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
@@ -85,7 +93,7 @@ export default function ResetPasswordPage() {
 
         {phase === "invalid" && (
           <div className="space-y-4">
-            <p className="text-sm text-muted-foreground">{AUTH_MESSAGES.recoveryLinkInvalid}</p>
+            <p className="text-sm text-muted-foreground">{message || AUTH_MESSAGES.recoveryLinkInvalid}</p>
             <Link
               href="/forgot-password"
               className="inline-block rounded-md border border-border px-4 py-2 text-sm text-muted-foreground transition-colors hover:text-foreground"
