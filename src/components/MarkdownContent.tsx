@@ -107,7 +107,7 @@ function CodeCopyButton({ code }: { code: string }) {
 let mermaidLoader: Promise<typeof import("mermaid").default> | null = null;
 function loadMermaid() {
   if (!mermaidLoader) {
-    mermaidLoader = import("mermaid").then((mod) => {
+    mermaidLoader = import("mermaid").then(async (mod) => {
       mod.default.initialize({
         startOnLoad: false,
         theme: "dark",
@@ -118,6 +118,18 @@ function loadMermaid() {
         // parse failure — we render our own source fallback below instead.
         suppressErrorRendering: true,
       });
+      // Mermaid sizes each node to the measured label width. If it measures
+      // before the async web fonts (Inter/Outfit/JetBrains) finish loading, it
+      // uses the narrower fallback metrics; the real font then swaps in wider
+      // and the trailing characters overflow and clip. Wait for fonts so the
+      // measured box matches what actually renders.
+      if (typeof document !== "undefined" && document.fonts?.ready) {
+        try {
+          await document.fonts.ready;
+        } catch {
+          // Non-fatal — fall back to rendering immediately.
+        }
+      }
       return mod.default;
     });
   }
