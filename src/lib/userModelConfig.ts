@@ -31,9 +31,10 @@ export async function resolveModelOverrides(
     getAdminAppSettings(),
   ]);
 
-  // Merge order: request overrides > user profile > admin settings
+  // mergeModelOverrides(winner, base): the FIRST argument wins.
+  // Precedence: request overrides > user profile > admin defaults.
   return mergeModelOverrides(
+    mergeModelOverrides(requestOverrides, userOverrides),
     adminSettings.modelOverrides,
-    mergeModelOverrides(userOverrides, requestOverrides),
   );
 }

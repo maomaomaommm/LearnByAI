@@ -151,6 +151,13 @@ test("AI model config merges user profile below request overrides and above admi
   assert.match(userConfigSource, /resolveModelOverrides/u);
   assert.match(userConfigSource, /getUserModelOverrides/u);
   assert.match(userConfigSource, /mergeModelOverrides/u);
+  // mergeModelOverrides(winner, base): first arg wins. Request must beat the
+  // saved profile, and that result must beat admin defaults — guards against
+  // the args being flipped (which made the saved config shadow live input).
+  assert.match(
+    userConfigSource,
+    /mergeModelOverrides\(\s*mergeModelOverrides\(requestOverrides,\s*userOverrides\),\s*adminSettings\.modelOverrides,?\s*\)/u,
+  );
   assert.match(settingsSource, /taskOverrides/u);
   assert.match(settingsSource, /adminOverrides/u);
   assert.match(aiSource, /options\?\.overrides/u);
