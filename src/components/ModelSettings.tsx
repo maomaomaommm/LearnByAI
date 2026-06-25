@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Activity, Loader2, Settings2, Sparkles } from "lucide-react";
+import { toast } from "sonner";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { Button } from "@/components/ui/button";
 import {
@@ -12,6 +13,15 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -79,11 +89,14 @@ export function ModelSettings({ className, showLabel = false, size }: ModelSetti
   const [status, setStatus] = useState("");
   const [settings, setSettings] = useState<ModelSettingsState>(() => emptySettings());
   const [isLoading, setIsLoading] = useState(false);
+  const [pendingSave, setPendingSave] = useState(false);
+  const [confirmClose, setConfirmClose] = useState(false);
   const buttonSize = size ?? (showLabel ? "sm" : "icon-sm");
 
   useEffect(() => {
     if (!open) return;
     setStatus("");
+    setPendingSave(false);
     setIsLoading(true);
     const local = readStoredSettings();
     setSettings(local);
@@ -141,7 +154,7 @@ export function ModelSettings({ className, showLabel = false, size }: ModelSetti
     }));
   }
 
-  async function saveSettings() {
+  async function saveSettings(): Promise<boolean> {
     setStatus("保存中…");
     const normalized = normalizeModelOverrides(toOverrides(settings));
     if (normalized) {
@@ -149,12 +162,18 @@ export function ModelSettings({ className, showLabel = false, size }: ModelSetti
     } else {
       localStorage.removeItem(MODEL_CONFIG_STORAGE_KEY);
     }
+    // The config now lives in localStorage, which is what actually drives
+    // requests — so it has taken effect even before cloud sync finishes.
+    setPendingSave(false);
 
     try {
       const token = await getAccessToken();
       if (!token) {
-        setStatus(normalized ? "已保存到本地（未登录无法同步到云端）。" : "已清除本地设置。");
-        return;
+        setStatus("");
+        toast.success(normalized ? "已保存并生效" : "已清除本地设置", {
+          description: normalized ? "登录后可同步到云端、跨设备使用。" : undefined,
+        });
+        return true;
       }
       const res = await fetch("/api/user/model-config", {
         method: "PUT",
@@ -166,18 +185,26 @@ export function ModelSettings({ className, showLabel = false, size }: ModelSetti
       });
       if (!res.ok) {
         const data = (await res.json().catch(() => ({}))) as { error?: string };
-        setStatus(data.error ?? "同步到云端失败。");
-        return;
+        setStatus("");
+        toast.error("云端同步失败", { description: data.error ?? "本地已保存，请稍后重试。" });
+        return false;
       }
-      setStatus(normalized ? "模型设置已保存并同步到云端。" : "云端设置已清除。");
+      setStatus("");
+      toast.success(normalized ? "模型设置已保存" : "云端设置已清除", {
+        description: normalized ? "已同步到云端，立即生效。" : undefined,
+      });
+      return true;
     } catch {
-      setStatus("网络错误，云端同步失败，但本地已保存。");
+      setStatus("");
+      toast.error("云端同步失败", { description: "本地已保存，但网络异常。" });
+      return false;
     }
   }
 
   async function clearSettings() {
     localStorage.removeItem(MODEL_CONFIG_STORAGE_KEY);
     setSettings(emptySettings());
+    setPendingSave(false);
     setStatus("清除中…");
 
     try {
@@ -201,8 +228,29 @@ export function ModelSettings({ className, showLabel = false, size }: ModelSetti
     }
   }
 
+  function handleOpenChange(next: boolean) {
+    // Closing with a tested-but-unsaved config: intercept and confirm.
+    if (!next && pendingSave) {
+      setConfirmClose(true);
+      return;
+    }
+    setOpen(next);
+  }
+
+  async function handleSaveAndClose() {
+    await saveSettings();
+    setConfirmClose(false);
+    setOpen(false);
+  }
+
+  function handleDiscardAndClose() {
+    setConfirmClose(false);
+    setOpen(false);
+  }
+
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
+    <>
+      <Dialog open={open} onOpenChange={handleOpenChange}>
       <Tooltip>
         <TooltipTrigger asChild>
           <Button
@@ -246,6 +294,7 @@ export function ModelSettings({ className, showLabel = false, size }: ModelSetti
               values={settings.default}
               onChange={updateDefault}
               getTestPayload={() => ({ agent: "default", overrides: toOverrides(settings) })}
+              onTestSuccess={() => setPendingSave(true)}
             />
           </section>
 
@@ -286,6 +335,7 @@ export function ModelSettings({ className, showLabel = false, size }: ModelSetti
                     values={settings.agents[agent]}
                     onChange={(field, value) => updateAgent(agent, field, value)}
                     getTestPayload={() => ({ agent, overrides: toOverrides(settings) })}
+                    onTestSuccess={() => setPendingSave(true)}
                   />
                 </AccordionContent>
               </AccordionItem>
@@ -307,7 +357,26 @@ export function ModelSettings({ className, showLabel = false, size }: ModelSetti
           </div>
         </DialogFooter>
       </DialogContent>
-    </Dialog>
+      </Dialog>
+
+      <AlertDialog open={confirmClose} onOpenChange={setConfirmClose}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>是否保存本次测试配置？</AlertDialogTitle>
+            <AlertDialogDescription>
+              你测试通过的配置还没有保存，直接退出不会生效。
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>取消</AlertDialogCancel>
+            <Button variant="ghost" onClick={handleDiscardAndClose}>
+              不保存退出
+            </Button>
+            <Button onClick={handleSaveAndClose}>保存并退出</Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
   );
 }
 
@@ -316,11 +385,13 @@ function Fields({
   values,
   onChange,
   getTestPayload,
+  onTestSuccess,
 }: {
   idPrefix: string;
   values: ModelOverrideFields;
   onChange: (field: keyof ModelOverrideFields, value: string) => void;
   getTestPayload: () => unknown;
+  onTestSuccess?: () => void;
 }) {
   const [isTesting, setIsTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ ok: boolean; msg: string } | null>(null);
@@ -341,6 +412,7 @@ function Fields({
       const data = await readJsonResponse(res);
       if (data.ok) {
         setTestResult({ ok: true, msg: `连接成功（${data.elapsed}ms）` });
+        onTestSuccess?.();
       } else {
         setTestResult({ ok: false, msg: data.error || "请求失败" });
       }
