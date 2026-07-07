@@ -30,7 +30,7 @@ export async function GET(
 
   const body = await readExportContent(job, asset);
   const fileName = asset?.fileName ?? job.fileName ?? `export.${job.format}`;
-  const contentType = asset?.contentType ?? job.contentType ?? (job.format === "tex" ? "application/x-tex; charset=utf-8" : "application/pdf");
+  const contentType = asset?.contentType ?? job.contentType ?? (job.format === "tex" ? "application/x-tex" : "application/pdf");
 
   return new NextResponse(body, {
     headers: {

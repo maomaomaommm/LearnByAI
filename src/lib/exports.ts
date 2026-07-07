@@ -10,7 +10,7 @@ import { Course, ExportAsset, ExportJob } from "./types";
 
 const exportJobs = new Map<string, ExportJob>();
 const UNGENERATED_CHAPTER_TEXT = "本章节尚未生成。";
-const TEX_CONTENT_TYPE = "text/plain; charset=utf-8";
+const TEX_CONTENT_TYPE = "application/x-tex";
 const PDF_LINES_PER_PAGE = 52;
 const PDF_WRAP_WIDTH = 42;
 
