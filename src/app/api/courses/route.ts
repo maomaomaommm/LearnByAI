@@ -10,6 +10,7 @@ import { listServerCourses, saveServerCourse, saveServerGenerationJob } from "@/
 import { resolveModelOverrides } from "@/lib/userModelConfig";
 import { normalizeLearningMode, normalizeStyles } from "@/lib/normalizeCourse";
 import { buildStyleGuidance } from "@/lib/prompts/styleGuidance";
+import { extractFilesText } from "@/lib/fileExtract";
 import { Course, CourseDifficulty, ExplanationStyle, GenerationProfile, LearningMode } from "@/lib/types";
 
 type CourseInput = {
@@ -23,6 +24,7 @@ type CourseInput = {
   difficulty?: CourseDifficulty;
   generationProfile?: GenerationProfile;
   includeRecentResearch?: boolean;
+  referenceMaterial?: string;
 };
 
 export async function GET(request: Request) {
@@ -33,7 +35,7 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const input = (await request.json()) as CourseInput;
+  const input = await parseCourseInput(request);
   const auth = await requireApiUser(request);
   if ("response" in auth) return auth.response;
 
@@ -65,6 +67,46 @@ export async function POST(request: Request) {
     scheduleCoursePlanning(request, persistedJob.id);
   }
   return NextResponse.json({ course: linkedCourse, job: publicGenerationJob(persistedJob) });
+}
+
+/**
+ * 解析课程创建请求。同时支持两种 Content-Type：
+ * - multipart/form-data：可携带上传文件（txt/md/pdf/docx），文本字段从 formData 读取
+ * - application/json：保持原有行为，不带文件
+ * 上传的文件会被提取为纯文本，合并到 referenceMaterial 字段供 prompt 使用。
+ */
+async function parseCourseInput(request: Request): Promise<CourseInput> {
+  const contentType = request.headers.get("content-type") ?? "";
+
+  if (contentType.includes("multipart/form-data")) {
+    const form = await request.formData();
+
+    const styles = form.getAll("styles").map(String) as ExplanationStyle[];
+    const customCount = Number(form.get("chapterCountCustom"));
+    const presetCount = Number(form.get("chapterCountPreset"));
+    const chapterCount = Number.isFinite(customCount) && customCount > 0
+      ? customCount
+      : (Number.isFinite(presetCount) && presetCount > 0 ? presetCount : 8);
+
+    const files = form.getAll("files").filter((entry): entry is File => entry instanceof File);
+    const referenceMaterial = await extractFilesText(files);
+
+    return {
+      topic: String(form.get("topic") ?? ""),
+      goal: String(form.get("goal") ?? ""),
+      background: String(form.get("background") ?? ""),
+      preference: String(form.get("preference") ?? "") || undefined,
+      styles,
+      learningMode: (String(form.get("learningMode") || "standard") as LearningMode),
+      chapterCount,
+      difficulty: (String(form.get("difficulty") || "intermediate") as CourseDifficulty),
+      generationProfile: (String(form.get("generationProfile") || "fast") as GenerationProfile),
+      includeRecentResearch: form.get("includeRecentResearch") === "on",
+      referenceMaterial,
+    };
+  }
+
+  return (await request.json()) as CourseInput;
 }
 
 function scheduleCoursePlanning(request: Request, jobId: string) {

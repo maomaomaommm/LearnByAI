@@ -38,6 +38,7 @@ export type CourseInput = {
   difficulty: CourseDifficulty;
   generationProfile?: GenerationProfile;
   includeRecentResearch?: boolean;
+  referenceMaterial?: string;
 };
 
 export type CourseGeneration = {
@@ -1314,6 +1315,7 @@ export async function planCourseOutline(
         ...input,
         researchBrief,
         researchDate,
+        referenceMaterial: input.referenceMaterial,
       };
 
       const skeletonJob = appendJobEvent(jobId, {

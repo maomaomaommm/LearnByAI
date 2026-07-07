@@ -3,7 +3,8 @@
 import { useRouter } from "next/navigation";
 import { FormEvent, useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { ArrowRight, BookOpen, Target, User, Clock, GraduationCap, Loader2, Route, Zap, FileCheck, ArrowLeft } from "lucide-react";
+import { ArrowRight, BookOpen, Target, User, Clock, GraduationCap, Loader2, Route, Zap, FileCheck, ArrowLeft, Paperclip, X } from "lucide-react";
+import { useRef } from "react";
 import Link from "next/link";
 import { apiFetch } from "@/lib/clientApi";
 import { publicSafeErrorMessage } from "@/lib/publicSafeError";
@@ -35,6 +36,8 @@ export default function CreateCoursePage() {
   const [error, setError] = useState("");
   const [progress, setProgress] = useState(0);
   const [progressStage, setProgressStage] = useState("准备生成");
+  const [files, setFiles] = useState<File[]>([]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     setHydrated(true);
@@ -88,30 +91,32 @@ export default function CreateCoursePage() {
     setProgress(3);
     setProgressStage("分析你的目标与基础");
 
-    const formData = new FormData(event.currentTarget);
-    const values = Object.fromEntries(formData);
-    const styles = formData.getAll("styles").map(String);
+    const form = new FormData(event.currentTarget);
+    const values = Object.fromEntries(form);
+    const styles = form.getAll("styles").map(String);
     const customCount = Number(values.chapterCountCustom);
     const presetCount = Number(values.chapterCountPreset);
     const chapterCount = Number.isFinite(customCount) && customCount > 0
       ? customCount
       : (Number.isFinite(presetCount) && presetCount > 0 ? presetCount : 8);
-    const input = {
-      topic: String(values.topic),
-      goal: String(values.goal),
-      background: String(values.background),
-      styles,
-      learningMode: String(values.learningMode || "standard"),
-      chapterCount,
-      difficulty: String(values.difficulty || "intermediate"),
-      generationProfile: String(values.generationProfile || "fast"),
-      includeRecentResearch: values.includeRecentResearch === "on",
-    };
+
+    // 用 multipart/form-data 提交：文本字段 + 上传文件，后端提取文件文本作为参考资料
+    const payload = new FormData();
+    payload.append("topic", String(values.topic));
+    payload.append("goal", String(values.goal));
+    payload.append("background", String(values.background));
+    for (const style of styles) payload.append("styles", style);
+    payload.append("learningMode", String(values.learningMode || "standard"));
+    payload.append("chapterCount", String(chapterCount));
+    payload.append("difficulty", String(values.difficulty || "intermediate"));
+    payload.append("generationProfile", String(values.generationProfile || "fast"));
+    payload.append("includeRecentResearch", values.includeRecentResearch === "on" ? "on" : "off");
+    for (const file of files) payload.append("files", file);
 
     try {
       const response = await apiFetch("/api/courses", {
         method: "POST",
-        body: JSON.stringify(input),
+        body: payload,
       });
 
       if (!response.ok) {
@@ -207,6 +212,45 @@ export default function CreateCoursePage() {
                     <h2 className="text-sm font-semibold text-foreground">你目前的基础</h2>
                   </div>
                   <textarea name="background" defaultValue={draft?.background} placeholder="例如：会 Python 编程，学过大学微积分和线性代数，但没有深入接触过当前领域" required rows={2} className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground outline-none placeholder:text-muted-foreground focus:border-foreground resize-none" />
+                </div>
+
+                <div className="rounded-lg border border-border bg-card p-5">
+                  <div className="mb-3 flex items-center gap-2">
+                    <Paperclip size={16} className="text-foreground" />
+                    <h2 className="text-sm font-semibold text-foreground">
+                      上传参考资料 <span className="text-xs font-normal text-muted-foreground">（可选）</span>
+                    </h2>
+                  </div>
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    multiple
+                    accept=".txt,.md,.pdf,.docx"
+                    onChange={(e) => {
+                      const picked = Array.from(e.target.files ?? []);
+                      setFiles((prev) => [...prev, ...picked]);
+                      // 允许重复选同一个文件
+                      if (fileInputRef.current) fileInputRef.current.value = "";
+                    }}
+                    className="block w-full text-sm text-muted-foreground file:mr-3 file:rounded-md file:border-0 file:bg-foreground file:px-3 file:py-1.5 file:text-xs file:font-medium file:text-background hover:file:bg-foreground/90"
+                  />
+                  {files.length > 0 && (
+                    <ul className="mt-3 space-y-1.5">
+                      {files.map((file, index) => (
+                        <li key={`${file.name}-${index}`} className="flex items-center justify-between rounded-md border border-border bg-background px-3 py-1.5 text-xs text-foreground">
+                          <span className="truncate">{file.name}</span>
+                          <button
+                            type="button"
+                            onClick={() => setFiles((prev) => prev.filter((_, i) => i !== index))}
+                            className="ml-2 shrink-0 text-muted-foreground hover:text-foreground"
+                          >
+                            <X size={14} />
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  <p className="mt-2 text-xs text-muted-foreground">支持 txt / md / pdf / docx。内容会作为参考资料辅助课程规划，仅本次生成使用，不会保存。</p>
                 </div>
 
                 <div className="grid gap-5 md:grid-cols-2">
