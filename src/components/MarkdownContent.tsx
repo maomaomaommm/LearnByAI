@@ -113,7 +113,11 @@ function loadMermaid() {
         theme: "dark",
         securityLevel: "loose",
         fontFamily: "inherit",
-        flowchart: { htmlLabels: true },
+        // htmlLabels:false renders labels as SVG <text> instead of HTML inside a
+        // fixed-width <foreignObject> (which clips overflow). SVG text is never
+        // clipped, so CJK / mixed-width labels always show in full even if width
+        // measurement is a hair off — fixes the "half-shown label" bug.
+        flowchart: { htmlLabels: false },
         // Don't let Mermaid inject its own error "bomb" graphic into the DOM on a
         // parse failure — we render our own source fallback below instead.
         suppressErrorRendering: true,
