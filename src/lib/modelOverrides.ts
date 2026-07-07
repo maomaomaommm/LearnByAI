@@ -57,6 +57,18 @@ export function hasModelOverrides(value: ModelOverrides | undefined) {
   return Boolean(value?.default || value?.agents);
 }
 
+export function explicitAgentOverride(
+  overrides: ModelOverrides | undefined,
+  agent: AgentName,
+): ModelOverrides | undefined {
+  const fields = overrides?.agents?.[agent];
+  if (!fields) return undefined;
+  return {
+    version: 1,
+    agents: { [agent]: fields },
+  };
+}
+
 function normalizeAgents(value: unknown): ModelOverrides["agents"] | undefined {
   if (!isRecord(value)) return undefined;
 

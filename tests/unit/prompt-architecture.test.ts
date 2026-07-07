@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { buildChapterWriterPrompt, getChapterLengthGuide } from "../../src/lib/prompts/chapterWriter";
-import { buildCoursePlannerPrompt } from "../../src/lib/prompts/coursePlanner";
+import {
+  buildCourseBiblePrompt,
+  buildCoursePlannerPrompt,
+  buildCourseSkeletonPrompt,
+} from "../../src/lib/prompts/coursePlanner";
 import { Chapter, Course } from "../../src/lib/types";
 
 test("course planner prompt asks for chapter contracts", () => {
@@ -12,11 +16,50 @@ test("course planner prompt asks for chapter contracts", () => {
     preference: "公式结合例题",
     weeklyHours: 6,
     chapterLength: "medium",
+    researchDate: "2026-06-16",
+    researchBrief: "论文：Example Alignment，首次公开于 2026-05-01，来源：https://arxiv.org/abs/2605.00001",
   });
 
   assert.match(prompt, /chapterContracts/u);
   assert.match(prompt, /章节契约/u);
+  assert.match(prompt, /必须优先依据上方联网研究摘要/u);
+  assert.match(prompt, /Example Alignment/u);
+  assert.doesNotMatch(prompt, /模型知识截止时间（约 2025 年 4 月）/u);
   assert.doesNotMatch(prompt, /[�]/u);
+});
+
+test("Kimi course planning is split into a short skeleton and a separate course bible", () => {
+  const input = {
+    topic: "大模型安全对齐",
+    goal: "掌握最新方法",
+    background: "了解 Transformer",
+    preference: "论文结合实践",
+    weeklyHours: 8,
+    chapterLength: "medium" as const,
+    researchDate: "2026-06-16",
+    researchBrief: "近期论文摘要",
+  };
+  const skeletonPrompt = buildCourseSkeletonPrompt(input);
+  const biblePrompt = buildCourseBiblePrompt(input, {
+    profile: "从基础到前沿",
+    chapters: [{
+      title: "安全对齐基础",
+      description: "建立基础",
+      purpose: "理解问题",
+      connectionFromPrevious: "课程起点",
+      setupForNext: "引出偏好优化",
+      time: {
+        readingMinutes: 150,
+        exerciseMinutes: 90,
+        practiceMinutes: 120,
+        extensionMinutes: 60,
+      },
+    }],
+  });
+
+  assert.doesNotMatch(skeletonPrompt, /chapterContracts/u);
+  assert.match(biblePrompt, /chapterContracts/u);
+  assert.match(biblePrompt, /不要重复输出 chapters/u);
 });
 
 test("chapter writer prompt includes length guide and contract", () => {

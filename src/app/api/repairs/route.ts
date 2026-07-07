@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireApiUser } from "@/lib/apiAuth";
 import { proposeContentRepair } from "@/lib/maol/client";
-import { parseModelOverridesFromHeaders } from "@/lib/modelOverrides";
+import { explicitAgentOverride, parseModelOverridesFromHeaders } from "@/lib/modelOverrides";
 import { resolveRepairAnchor } from "@/lib/repairAnchor";
 import { safeErrorMessage } from "@/lib/safeError";
 import { getServerCourse } from "@/lib/serverStore";
@@ -49,7 +49,7 @@ export async function POST(request: Request) {
       sectionId: resolvedAnchor.sectionId,
       selectedText: resolvedAnchor.text,
       userMessage,
-      overrides: parseModelOverridesFromHeaders(request.headers),
+      overrides: explicitAgentOverride(parseModelOverridesFromHeaders(request.headers), "TUTOR"),
     });
 
     return NextResponse.json({

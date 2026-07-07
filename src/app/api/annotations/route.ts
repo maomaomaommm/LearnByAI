@@ -1,11 +1,13 @@
 import { NextResponse } from "next/server";
 import { requireApiUser } from "@/lib/apiAuth";
 import { askTutor } from "@/lib/maol/client";
-import { parseModelOverridesFromHeaders } from "@/lib/modelOverrides";
+import { explicitAgentOverride, parseModelOverridesFromHeaders } from "@/lib/modelOverrides";
 import { withQuotaConsumption } from "@/lib/quota";
 import { safeErrorMessage } from "@/lib/safeError";
 import { getServerCourse, listServerAnnotations, saveServerAnnotation, saveServerGenerationJob } from "@/lib/serverStore";
 import { Annotation, Course } from "@/lib/types";
+
+const TUTOR_ROUTE_TIMEOUT_MS = 65_000;
 
 export async function GET(request: Request) {
   const auth = await requireApiUser(request);
@@ -29,12 +31,12 @@ export async function POST(request: Request) {
   if ("response" in annotationValidation) return annotationValidation.response;
 
   const userId = auth.userId;
-  const overrides = parseModelOverridesFromHeaders(request.headers);
+  const overrides = explicitAgentOverride(parseModelOverridesFromHeaders(request.headers), "TUTOR");
   const tutorContext = annotationValidation.course && annotationValidation.annotation
     ? buildTutorContext(annotationValidation.course, annotationValidation.annotation)
     : undefined;
   try {
-    const result = await withQuotaConsumption(userId, "ask_tutor", async () => {
+    const result = await withDeadline(withQuotaConsumption(userId, "ask_tutor", async () => {
       const response = await askTutor({
         topic: input.topic,
         selectedText: input.selectedText,
@@ -67,7 +69,7 @@ export async function POST(request: Request) {
       }
 
       return { ...response, annotation };
-    });
+    }), TUTOR_ROUTE_TIMEOUT_MS);
     if (!result.ok) {
       return NextResponse.json({ error: result.quota.message }, { status: 429 });
     }
@@ -79,6 +81,25 @@ export async function POST(request: Request) {
       { status: 502 },
     );
   }
+}
+
+function withDeadline<T>(promise: Promise<T>, timeoutMs: number) {
+  return new Promise<T>((resolve, reject) => {
+    const timeout = setTimeout(
+      () => reject(new Error(`Tutor route timed out after ${timeoutMs}ms`)),
+      timeoutMs,
+    );
+    promise.then(
+      (value) => {
+        clearTimeout(timeout);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timeout);
+        reject(error);
+      },
+    );
+  });
 }
 
 function tutorErrorMessage(error: unknown) {

@@ -8,11 +8,16 @@ import { buildChapterRepairPrompt } from "../prompts/chapterRepairer";
 import { buildChapterReviewPrompt } from "../prompts/chapterReviewer";
 import { buildChapterWriterPrompt, getChapterLengthGuide } from "../prompts/chapterWriter";
 import { buildContentRepairPrompt } from "../prompts/contentRepair";
-import { buildCoursePlannerCompactPrompt, buildCoursePlannerJsonRepairPrompt, buildCoursePlannerPrompt } from "../prompts/coursePlanner";
+import {
+  buildCourseBiblePrompt,
+  buildCourseSkeletonPrompt,
+  CourseSkeleton,
+} from "../prompts/coursePlanner";
 import { buildFormatGuardPrompt, postRepairMarkdown, preRepairMarkdown } from "../prompts/formatGuard";
 import { runChapterQualityPipelineWithRepair } from "../quality/pipeline";
 import { safeErrorMessage } from "../safeError";
 import { Chapter, ChapterGenerateResponse, Course, CourseBible, CourseCreateResponse, GenerationJob, QualityIssue, Section } from "../types";
+import { researchLatestCourseKnowledge } from "../webResearch";
 import { dispatchAgentText } from "./dispatcher";
 import { assertMockFallbackAllowed } from "./fallback";
 import { markdownToSections } from "./integrator";
@@ -32,8 +37,7 @@ export type CourseGeneration = {
   chapters: Omit<Chapter, "id" | "content" | "review" | "status">[];
 };
 
-const COURSE_PLANNER_TIMEOUT_MS = 240_000;
-const COURSE_PLANNER_REPAIR_TIMEOUT_MS = 180_000;
+const COURSE_PLANNER_STAGE_TIMEOUT_MS = 360_000;
 const REMOTE_FORMAT_GUARD_MAX_CHARS = 6_000;
 const CHUNKED_REPAIR_MIN_CHARS = 6_000;
 const REPAIR_CHUNK_MAX_CHARS = 1_800;
@@ -728,7 +732,11 @@ export async function askTutor(input: {
         ...input,
         history: compactTutorHistory(input.history ?? []),
       }),
+      temperature: 0.3,
+      maxTokens: 2048,
       timeoutMs: TUTOR_TIMEOUT_MS,
+      maxAttempts: 1,
+      stream: false,
       overrides: input.overrides,
       mock: () => createMockAnswer(input.selectedText, input.question),
       onJobUpdate: input.onJobUpdate,
@@ -825,30 +833,63 @@ export async function planCourseOutline(
   jobId: string,
   options: { overrides?: ModelOverrides; onJobUpdate?: (job: GenerationJob) => Promise<void> | void } = {},
 ): Promise<CourseGeneration> {
-  const mock = () => {
-    const course = createMockCourse(input);
-    return JSON.stringify({
-      profile: course.profile,
-      courseBible: course.courseBible,
-      chapters: course.chapters.map(stripGeneratedChapterFields),
-    });
-  };
-
   try {
-    const plannerText = await dispatchAgentText({
+    const researchStartedJob = appendJobEvent(jobId, {
       agent: "ARCHITECT",
+      status: "running",
+      message: "正在联网检索最新论文与领域进展。",
+    }, { preserveJobStatus: true });
+    if (researchStartedJob) await options.onJobUpdate?.(researchStartedJob);
+
+    const researchDate = new Date().toISOString().slice(0, 10);
+    const researchBrief = await researchLatestCourseKnowledge(input, options.overrides);
+
+    const researchCompletedJob = appendJobEvent(jobId, {
+      agent: "ARCHITECT",
+      status: "running",
+      message: "联网检索完成，正在依据最新资料规划课程。",
+    }, { preserveJobStatus: true });
+    if (researchCompletedJob) await options.onJobUpdate?.(researchCompletedJob);
+
+    const plannerInput = {
+      ...input,
+      researchBrief,
+      researchDate,
+    };
+
+    const skeletonJob = appendJobEvent(jobId, {
+      agent: "ARCHITECT",
+      status: "running",
+      message: "Kimi 正在生成章节路线。",
+    }, { preserveJobStatus: true });
+    if (skeletonJob) await options.onJobUpdate?.(skeletonJob);
+
+    const skeletonText = await dispatchCoursePlannerStage(
+      buildCourseSkeletonPrompt(plannerInput),
       jobId,
-      prompt: buildCoursePlannerPrompt(input),
-      temperature: 0.2,
-      maxTokens: 8192,
-      timeoutMs: COURSE_PLANNER_TIMEOUT_MS,
-      stream: false,
-      responseFormat: "json_object",
-      overrides: options.overrides,
-      mock,
-      onJobUpdate: options.onJobUpdate,
-    });
-    return await parseCourseGenerationJson(input, plannerText, jobId, options, mock);
+      options.overrides,
+      4096,
+      options.onJobUpdate,
+    );
+    const skeleton = parseJson<CourseSkeleton>(skeletonText);
+    assertCourseSkeleton(skeleton);
+
+    const bibleJob = appendJobEvent(jobId, {
+      agent: "ARCHITECT",
+      status: "running",
+      message: "章节路线完成，Kimi 正在生成 Course Bible 和章节契约。",
+    }, { preserveJobStatus: true });
+    if (bibleJob) await options.onJobUpdate?.(bibleJob);
+
+    const bibleText = await dispatchCoursePlannerStage(
+      buildCourseBiblePrompt(plannerInput, skeleton),
+      jobId,
+      options.overrides,
+      6144,
+      options.onJobUpdate,
+    );
+    const courseBible = parseJson<{ courseBible: CourseBible }>(bibleText).courseBible;
+    return mergeCoursePlanningStages(skeleton, courseBible);
   } catch (error) {
     assertMockFallbackAllowed(error, options.overrides, "ARCHITECT");
     const fallback = createMockCourse(input);
@@ -860,76 +901,63 @@ export async function planCourseOutline(
   }
 }
 
-async function parseCourseGenerationJson(
-  input: CourseInput,
-  plannerText: string,
+function dispatchCoursePlannerStage(
+  prompt: string,
   jobId: string,
-  options: { overrides?: ModelOverrides; onJobUpdate?: (job: GenerationJob) => Promise<void> | void },
-  mock: () => string,
+  overrides: ModelOverrides | undefined,
+  maxTokens: number,
+  onJobUpdate?: (job: GenerationJob) => Promise<void> | void,
 ) {
-  try {
-    return parseJson<CourseGeneration>(plannerText);
-  } catch (error) {
-    const parseError = safeErrorMessage(error, "课程规划 JSON 解析失败。");
-    const repairJob = appendJobEvent(jobId, {
-      agent: "ARCHITECT",
-      status: "running",
-      message: `课程规划 JSON 无法解析，正在自动修复：${parseError}`,
-    }, { preserveJobStatus: true });
-    if (repairJob) await options.onJobUpdate?.(repairJob);
+  return dispatchAgentText({
+    agent: "ARCHITECT",
+    jobId,
+    prompt,
+    temperature: 0.2,
+    maxTokens,
+    timeoutMs: COURSE_PLANNER_STAGE_TIMEOUT_MS,
+    maxAttempts: 1,
+    stream: true,
+    responseFormat: "json_object",
+    overrides,
+    mock: () => "{}",
+    onJobUpdate,
+  });
+}
 
-    const repairedText = await dispatchAgentText({
-      agent: "ARCHITECT",
-      jobId,
-      prompt: buildCoursePlannerJsonRepairPrompt(input, clipPlannerTextForRepair(plannerText), parseError),
-      temperature: 0,
-      maxTokens: 8192,
-      timeoutMs: COURSE_PLANNER_REPAIR_TIMEOUT_MS,
-      stream: false,
-      responseFormat: "json_object",
-      overrides: options.overrides,
-      mock,
-      onJobUpdate: options.onJobUpdate,
-    });
-
-    try {
-      return parseJson<CourseGeneration>(repairedText);
-    } catch (repairError) {
-      const compactReason = safeErrorMessage(repairError, parseError);
-      const compactJob = appendJobEvent(jobId, {
-        agent: "ARCHITECT",
-        status: "running",
-        message: `课程规划 JSON 自动修复仍未通过，正在改用紧凑规划：${compactReason}`,
-      }, { preserveJobStatus: true });
-      if (compactJob) await options.onJobUpdate?.(compactJob);
-
-      const compactText = await dispatchAgentText({
-        agent: "ARCHITECT",
-        jobId,
-        prompt: buildCoursePlannerCompactPrompt(input, compactReason),
-        temperature: 0,
-        maxTokens: 6144,
-        timeoutMs: COURSE_PLANNER_REPAIR_TIMEOUT_MS,
-        stream: false,
-        responseFormat: "json_object",
-        overrides: options.overrides,
-        mock,
-        onJobUpdate: options.onJobUpdate,
-      });
-
-      try {
-        return parseJson<CourseGeneration>(compactText);
-      } catch (compactError) {
-        throw new Error(`课程规划 JSON 自动修复失败：${safeErrorMessage(compactError, compactReason)}`);
-      }
-    }
+function assertCourseSkeleton(skeleton: CourseSkeleton) {
+  if (!skeleton.profile?.trim()) throw new Error("课程章节路线缺少 profile。");
+  if (!Array.isArray(skeleton.chapters) || skeleton.chapters.length < 6 || skeleton.chapters.length > 8) {
+    throw new Error("课程章节路线必须包含 6 到 8 章。");
+  }
+  const titles = skeleton.chapters.map((chapter) => chapter.title?.trim());
+  if (titles.some((title) => !title) || new Set(titles).size !== titles.length) {
+    throw new Error("课程章节标题为空或重复。");
   }
 }
 
-function clipPlannerTextForRepair(text: string) {
-  const limit = 24000;
-  if (text.length <= limit) return text;
-  return `${text.slice(0, limit)}\n\n[后续内容过长已截断，请根据原始课程需求和已给出的结构补全合法 JSON。]`;
+function mergeCoursePlanningStages(skeleton: CourseSkeleton, courseBible: CourseBible): CourseGeneration {
+  if (!courseBible || !Array.isArray(courseBible.chapterContracts)) {
+    throw new Error("Course Bible 缺少章节契约。");
+  }
+
+  const contracts = new Map(courseBible.chapterContracts.map((contract) => [contract.chapterTitle, contract]));
+  const chapters = skeleton.chapters.map((chapter) => {
+    const contract = contracts.get(chapter.title);
+    if (!contract) throw new Error(`章节契约缺失：${chapter.title}`);
+    return {
+      ...chapter,
+      contract,
+    };
+  });
+
+  return {
+    profile: skeleton.profile,
+    courseBible: {
+      ...courseBible,
+      chapterContracts: chapters.map((chapter) => chapter.contract),
+    },
+    chapters,
+  };
 }
 
 function stripGeneratedChapterFields(chapter: Chapter): Omit<Chapter, "id" | "content" | "review" | "status"> {
