@@ -1,5 +1,6 @@
 import "server-only";
 
+import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { getSupabaseExportsBucket, hasSupabaseServerConfig } from "./config";
@@ -195,6 +196,9 @@ async function createPdfBytes(course: Course) {
 }
 
 async function createBrowserPdfBytes(html: string) {
+  if (!process.env.PLAYWRIGHT_BROWSERS_PATH && existsSync("/opt/ms-playwright")) {
+    process.env.PLAYWRIGHT_BROWSERS_PATH = "/opt/ms-playwright";
+  }
   const { chromium } = await import("playwright");
   const browser = await chromium.launch({
     headless: true,
