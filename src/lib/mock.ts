@@ -12,6 +12,9 @@ export function createMockCourse(input: {
   difficulty: CourseDifficulty;
   generationProfile?: GenerationProfile;
   includeRecentResearch?: boolean;
+  courseRequirements?: string;
+  referenceMaterial?: string;
+  styleSample?: string;
 }): Course {
   const firstChapterId = crypto.randomUUID();
   const styleSummary = input.styles.length

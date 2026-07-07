@@ -10,8 +10,8 @@ import { listServerCourses, saveServerCourse, saveServerGenerationJob } from "@/
 import { resolveModelOverrides } from "@/lib/userModelConfig";
 import { normalizeLearningMode, normalizeStyles } from "@/lib/normalizeCourse";
 import { buildStyleGuidance } from "@/lib/prompts/styleGuidance";
-import { extractFilesText } from "@/lib/fileExtract";
-import { Course, CourseDifficulty, ExplanationStyle, GenerationProfile, LearningMode } from "@/lib/types";
+import { extractCourseMaterials } from "@/lib/courseMaterials";
+import { Course, CourseDifficulty, CourseInputMaterial, CourseMaterialPurpose, ExplanationStyle, GenerationProfile, LearningMode } from "@/lib/types";
 
 type CourseInput = {
   topic: string;
@@ -24,7 +24,10 @@ type CourseInput = {
   difficulty?: CourseDifficulty;
   generationProfile?: GenerationProfile;
   includeRecentResearch?: boolean;
+  courseRequirements?: string;
   referenceMaterial?: string;
+  styleSample?: string;
+  inputMaterials?: CourseInputMaterial[];
 };
 
 export async function GET(request: Request) {
@@ -35,10 +38,10 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const input = await parseCourseInput(request);
   const auth = await requireApiUser(request);
   if ("response" in auth) return auth.response;
 
+  const input = await parseCourseInput(request);
   const userId = auth.userId;
   const headerOverrides = parseModelOverridesFromHeaders(request.headers);
   const modelOverrides = await resolveModelOverrides(userId, headerOverrides);
@@ -73,7 +76,7 @@ export async function POST(request: Request) {
  * 解析课程创建请求。同时支持两种 Content-Type：
  * - multipart/form-data：可携带上传文件（txt/md/pdf/docx），文本字段从 formData 读取
  * - application/json：保持原有行为，不带文件
- * 上传的文件会被提取为纯文本，合并到 referenceMaterial 字段供 prompt 使用。
+ * 上传的文件会被提取为纯文本，按用途分为课程要求、参考资料和写作风格样例。
  */
 async function parseCourseInput(request: Request): Promise<CourseInput> {
   const contentType = request.headers.get("content-type") ?? "";
@@ -82,14 +85,25 @@ async function parseCourseInput(request: Request): Promise<CourseInput> {
     const form = await request.formData();
 
     const styles = form.getAll("styles").map(String) as ExplanationStyle[];
+    const directCount = Number(form.get("chapterCount"));
     const customCount = Number(form.get("chapterCountCustom"));
     const presetCount = Number(form.get("chapterCountPreset"));
-    const chapterCount = Number.isFinite(customCount) && customCount > 0
-      ? customCount
-      : (Number.isFinite(presetCount) && presetCount > 0 ? presetCount : 8);
+    const chapterCount = Number.isFinite(directCount) && directCount > 0
+      ? directCount
+      : Number.isFinite(customCount) && customCount > 0
+        ? customCount
+        : (Number.isFinite(presetCount) && presetCount > 0 ? presetCount : 8);
 
-    const files = form.getAll("files").filter((entry): entry is File => entry instanceof File);
-    const referenceMaterial = await extractFilesText(files);
+    const materialEntries = readFiles(form, "materials");
+    const legacyFileEntries = materialEntries.length ? [] : readFiles(form, "files");
+    const files = materialEntries.length ? materialEntries : legacyFileEntries;
+    const purposes = form.getAll("materialKinds").map(String);
+    const materials = await extractCourseMaterials(
+      files.map((file, index) => ({
+        file,
+        purpose: purposes[index] as CourseMaterialPurpose | undefined,
+      })),
+    );
 
     return {
       topic: String(form.get("topic") ?? ""),
@@ -102,11 +116,15 @@ async function parseCourseInput(request: Request): Promise<CourseInput> {
       difficulty: (String(form.get("difficulty") || "intermediate") as CourseDifficulty),
       generationProfile: (String(form.get("generationProfile") || "fast") as GenerationProfile),
       includeRecentResearch: form.get("includeRecentResearch") === "on",
-      referenceMaterial,
+      ...materials,
     };
   }
 
   return (await request.json()) as CourseInput;
+}
+
+function readFiles(form: FormData, key: string): File[] {
+  return form.getAll(key).filter((entry): entry is File => entry instanceof File && entry.size > 0);
 }
 
 function scheduleCoursePlanning(request: Request, jobId: string) {
@@ -139,6 +157,10 @@ function createPendingCourse(input: CourseInput, userId: string): Course {
     difficulty: normalizeDifficulty(input.difficulty),
     generationProfile: normalizeGenerationProfile(input.generationProfile),
     includeRecentResearch: input.includeRecentResearch === true,
+    courseRequirements: input.courseRequirements,
+    referenceMaterial: input.referenceMaterial,
+    styleSample: input.styleSample,
+    inputMaterials: input.inputMaterials,
     profile: "课程规划队列中。",
     courseBible: {
       targetLearner: input.background,

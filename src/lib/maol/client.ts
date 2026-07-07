@@ -38,7 +38,9 @@ export type CourseInput = {
   difficulty: CourseDifficulty;
   generationProfile?: GenerationProfile;
   includeRecentResearch?: boolean;
+  courseRequirements?: string;
   referenceMaterial?: string;
+  styleSample?: string;
 };
 
 export type CourseGeneration = {

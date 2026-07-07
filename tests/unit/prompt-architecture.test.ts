@@ -22,6 +22,9 @@ test("course planner prompt asks for chapter contracts", () => {
     learningMode: "project",
     chapterCount: 8,
     difficulty: "intermediate",
+    courseRequirements: "课程必须包含 FFT 应用目录和阶段性项目。",
+    referenceMaterial: "参考资料：卷积定理、采样定理和窗函数例题。",
+    styleSample: "写作样例：先用直觉类比，再给出严谨公式。",
   });
 
   assert.match(prompt, /chapterContracts/u);
@@ -33,6 +36,12 @@ test("course planner prompt asks for chapter contracts", () => {
   assert.match(prompt, /学习方式约束/u);
   assert.match(prompt, /贯穿全程的项目/u);
   assert.doesNotMatch(prompt, /讲解偏好：/u);
+  assert.match(prompt, /用户上传的课程要求/u);
+  assert.match(prompt, /FFT 应用目录/u);
+  assert.match(prompt, /用户上传的参考资料/u);
+  assert.match(prompt, /采样定理/u);
+  assert.match(prompt, /用户上传的写作风格样例/u);
+  assert.match(prompt, /直觉类比/u);
 });
 
 test("course skeleton prompt injects chapter count, difficulty, per-chapter depth and style/mode", () => {

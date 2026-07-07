@@ -18,6 +18,22 @@ export type ExplanationStyle = "intuition" | "example" | "rigor" | "analogy" | "
 
 export type LearningMode = "standard" | "project" | "exercise" | "case";
 
+export type CourseMaterialPurpose = "auto" | "requirements" | "reference" | "style";
+
+export type CourseMaterialRole = Exclude<CourseMaterialPurpose, "auto">;
+
+export type CourseInputMaterial = {
+  name: string;
+  size: number;
+  type?: string;
+  purpose: CourseMaterialPurpose;
+  role?: CourseMaterialRole;
+  status: "used" | "skipped";
+  chars?: number;
+  truncated?: boolean;
+  reason?: string;
+};
+
 export type Chapter = {
   id: string;
   title: string;
@@ -99,6 +115,10 @@ export type Course = {
   difficulty: CourseDifficulty;
   generationProfile?: GenerationProfile;
   includeRecentResearch?: boolean;
+  courseRequirements?: string;
+  referenceMaterial?: string;
+  styleSample?: string;
+  inputMaterials?: CourseInputMaterial[];
   profile: string;
   courseBible: CourseBible;
   chapters: Chapter[];
