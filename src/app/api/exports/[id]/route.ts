@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { requireApiUser } from "@/lib/apiAuth";
-import { getExportJob, readExportContent } from "@/lib/exports";
+import { findExportAsset, getExportJob, readExportContent } from "@/lib/exports";
 import { getServerExport } from "@/lib/serverStore";
+import { ExportJob } from "@/lib/types";
 
 export async function GET(
   request: Request,
@@ -21,12 +22,20 @@ export async function GET(
     return NextResponse.json({ error: "Export not found" }, { status: 404 });
   }
 
-  const body = await readExportContent(job);
+  const requestedAsset = new URL(request.url).searchParams.get("asset") as ExportJob["format"] | null;
+  const asset = requestedAsset ? findExportAsset(job, requestedAsset) : undefined;
+  if (requestedAsset && requestedAsset !== job.format && !asset) {
+    return NextResponse.json({ error: "Export asset not found" }, { status: 404 });
+  }
+
+  const body = await readExportContent(job, asset);
+  const fileName = asset?.fileName ?? job.fileName ?? `export.${job.format}`;
+  const contentType = asset?.contentType ?? job.contentType ?? (job.format === "tex" ? "application/x-tex; charset=utf-8" : "application/pdf");
 
   return new NextResponse(body, {
     headers: {
-      "content-type": job.contentType ?? (job.format === "tex" ? "application/x-tex; charset=utf-8" : "application/pdf"),
-      "content-disposition": contentDisposition(job.fileName ?? `export.${job.format}`),
+      "content-type": contentType,
+      "content-disposition": contentDisposition(fileName),
     },
   });
 }

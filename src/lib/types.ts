@@ -188,12 +188,22 @@ export type ExportJob = {
   fileName?: string;
   storagePath?: string;
   storageProvider?: "local" | "supabase";
+  assets?: ExportAsset[];
   content?: string;
   contentType?: string;
   encoding?: "utf8" | "base64";
   error?: string;
   createdAt: string;
   updatedAt: string;
+};
+
+export type ExportAsset = {
+  format: ExportJob["format"];
+  fileName: string;
+  storagePath?: string;
+  storageProvider?: "local" | "supabase";
+  contentType?: string;
+  encoding?: "utf8" | "base64";
 };
 
 export type UsageEvent = {

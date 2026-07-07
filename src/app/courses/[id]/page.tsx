@@ -86,6 +86,7 @@ export default function CourseOverviewPage() {
   const [course, setCourse] = useState<Course>();
   const [exporting, setExporting] = useState<ExportJob["format"] | "">("");
   const [exportError, setExportError] = useState("");
+  const [latestTexSource, setLatestTexSource] = useState<{ exportId: string; fileName: string } | null>(null);
   const [backgroundJob, setBackgroundJob] = useState("");
   const [jobStatus, setJobStatus] = useState<Record<string, JobStatus>>({});
   const [jobErrors, setJobErrors] = useState<Record<string, string>>({});
@@ -230,24 +231,31 @@ export default function CourseOverviewPage() {
         method: "POST",
         body: JSON.stringify({ courseId: course.id, format }),
       });
-      const data = await response.json();
+      const data = (await response.json()) as { export?: ExportJob; error?: string };
       if (!response.ok || !data.export) throw new Error(data.error ?? "Export failed");
-      const downloadResponse = await apiFetch(`/api/exports/${data.export.id}`);
-      if (!downloadResponse.ok) throw new Error("Export download failed");
-      const blob = await downloadResponse.blob();
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = data.export.fileName ?? `${course.topic}.${format}`;
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      URL.revokeObjectURL(url);
+      await downloadExportFile(data.export.id, data.export.fileName ?? `${course.topic}.${format}`);
+      const texAsset = data.export.assets?.find((asset) => asset.format === "tex");
+      setLatestTexSource(texAsset ? { exportId: data.export.id, fileName: texAsset.fileName } : null);
     } catch (error) {
       setExportError(publicSafeErrorMessage(error, "Export failed. Please try again."));
     } finally {
       setExporting("");
     }
+  }
+
+  async function downloadExportFile(exportId: string, fileName: string, asset?: ExportJob["format"]) {
+    const suffix = asset ? `?asset=${asset}` : "";
+    const downloadResponse = await apiFetch(`/api/exports/${exportId}${suffix}`);
+    if (!downloadResponse.ok) throw new Error("Export download failed");
+    const blob = await downloadResponse.blob();
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = fileName;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
   }
 
   const hasLoadedCourse = Boolean(course);
@@ -327,6 +335,15 @@ export default function CourseOverviewPage() {
             </button>
           </div>
           {exportError && <p className="mt-4 text-sm text-destructive">{exportError}</p>}
+          {latestTexSource && (
+            <button
+              type="button"
+              onClick={() => void downloadExportFile(latestTexSource.exportId, latestTexSource.fileName, "tex")}
+              className="mt-4 inline-flex items-center gap-1 text-xs text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+            >
+              <Download size={13} /> 下载本次 TeX 源文件
+            </button>
+          )}
         </div>
 
         {showStudio ? (
