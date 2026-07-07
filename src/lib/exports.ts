@@ -10,6 +10,7 @@ import { Course, ExportAsset, ExportJob } from "./types";
 
 const exportJobs = new Map<string, ExportJob>();
 const UNGENERATED_CHAPTER_TEXT = "本章节尚未生成。";
+const TEX_CONTENT_TYPE = "text/plain; charset=utf-8";
 const PDF_LINES_PER_PAGE = 52;
 const PDF_WRAP_WIDTH = 42;
 
@@ -37,7 +38,7 @@ export async function createCourseExport(course: Course, format: ExportJob["form
     status: "succeeded",
     fileName: `${baseName}.${format}`,
     storagePath: `${pathSegment(userId ?? "local-beta-user")}/${pathSegment(course.id)}/${exportId}.${format}`,
-    contentType: format === "tex" ? "application/x-tex; charset=utf-8" : "application/pdf",
+    contentType: format === "tex" ? TEX_CONTENT_TYPE : "application/pdf",
     encoding: format === "tex" ? "utf8" : "base64",
     createdAt: now,
     updatedAt: now,
@@ -48,7 +49,7 @@ export async function createCourseExport(course: Course, format: ExportJob["form
       format: "tex",
       fileName: `${baseName}.tex`,
       storagePath: `${pathSegment(userId ?? "local-beta-user")}/${pathSegment(course.id)}/${exportId}.tex`,
-      contentType: "application/x-tex; charset=utf-8",
+      contentType: TEX_CONTENT_TYPE,
       encoding: "utf8",
     };
     await writeExportAsset(texAsset, tex, userId);
