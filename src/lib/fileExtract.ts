@@ -45,9 +45,10 @@ export async function extractFilesText(files: File[]): Promise<string | undefine
     if (!text) continue;
     const block = `【文件：${file.name}】\n${text}`;
     if (total + block.length > MAX_TOTAL_CHARS) {
-      const remaining = Math.max(0, MAX_TOTAL_CHARS - total);
+      const suffix = "\n…（已达参考资料总量上限，后续文件已截断）";
+      const remaining = Math.max(0, MAX_TOTAL_CHARS - total - suffix.length);
       if (remaining > 0) {
-        parts.push(block.slice(0, remaining) + "\n…（已达参考资料总量上限，后续文件已截断）");
+        parts.push(block.slice(0, remaining) + suffix);
       }
       break;
     }
@@ -56,6 +57,10 @@ export async function extractFilesText(files: File[]): Promise<string | undefine
   }
 
   const merged = parts.join("\n\n---\n\n").trim();
+  // 最终兜底:合并后的分隔符可能略超上限,严格截断到 MAX_TOTAL_CHARS
+  if (merged.length > MAX_TOTAL_CHARS) {
+    return merged.slice(0, MAX_TOTAL_CHARS).trim() || undefined;
+  }
   return merged || undefined;
 }
 
