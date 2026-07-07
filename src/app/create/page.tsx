@@ -1,13 +1,26 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { FormEvent, useEffect, useState } from "react";
+import { ChangeEvent, FormEvent, useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { ArrowRight, BookOpen, Target, User, Clock, GraduationCap, Loader2, Route, Zap, FileCheck, ArrowLeft } from "lucide-react";
+import { ArrowRight, BookOpen, Target, User, Clock, GraduationCap, Loader2, Route, Zap, FileCheck, ArrowLeft, Upload, Trash2, FileText } from "lucide-react";
 import Link from "next/link";
 import { apiFetch } from "@/lib/clientApi";
 import { publicSafeErrorMessage } from "@/lib/publicSafeError";
-import { Course, CourseCreateResponse } from "@/lib/types";
+import { Course, CourseCreateResponse, CourseMaterialPurpose } from "@/lib/types";
+
+type PendingMaterial = {
+  id: string;
+  file: File;
+  purpose: CourseMaterialPurpose;
+};
+
+const materialPurposeOptions: { value: CourseMaterialPurpose; label: string }[] = [
+  { value: "auto", label: "自动判断" },
+  { value: "requirements", label: "课程要求 / 大纲" },
+  { value: "reference", label: "参考资料 / 教材" },
+  { value: "style", label: "写作风格样例" },
+];
 
 export default function CreateCoursePage() {
   const router = useRouter();
@@ -16,6 +29,7 @@ export default function CreateCoursePage() {
   const [error, setError] = useState("");
   const [progress, setProgress] = useState(0);
   const [progressStage, setProgressStage] = useState("准备生成");
+  const [materials, setMaterials] = useState<PendingMaterial[]>([]);
 
   useEffect(() => {
     setHydrated(true);
@@ -55,20 +69,24 @@ export default function CreateCoursePage() {
     setProgress(3);
     setProgressStage("分析你的目标与基础");
     
-    const values = Object.fromEntries(new FormData(event.currentTarget));
-    const input = {
-      topic: String(values.topic),
-      goal: String(values.goal),
-      background: String(values.background),
-      preference: String(values.preference),
-      weeklyHours: Number(values.weeklyHours),
-      chapterLength: String(values.chapterLength || "medium"),
-    };
+    const values = new FormData(event.currentTarget);
+    const payload = new FormData();
+    payload.set("topic", String(values.get("topic") ?? ""));
+    payload.set("goal", String(values.get("goal") ?? ""));
+    payload.set("background", String(values.get("background") ?? ""));
+    payload.set("preference", String(values.get("preference") ?? ""));
+    payload.set("weeklyHours", String(values.get("weeklyHours") ?? "6"));
+    payload.set("chapterLength", String(values.get("chapterLength") || "medium"));
+
+    for (const material of materials) {
+      payload.append("materials", material.file);
+      payload.append("materialKinds", material.purpose);
+    }
 
     try {
       const response = await apiFetch("/api/courses", {
         method: "POST",
-        body: JSON.stringify(input),
+        body: payload,
       });
       
       if (!response.ok) {
@@ -92,6 +110,28 @@ export default function CreateCoursePage() {
       setError(publicSafeErrorMessage(error, "Course creation failed. Please try again."));
       setLoading(false);
     }
+  }
+
+  function addMaterials(event: ChangeEvent<HTMLInputElement>) {
+    const picked = Array.from(event.target.files ?? []);
+    if (!picked.length) return;
+    setMaterials((current) => [
+      ...current,
+      ...picked.map((file) => ({
+        id: createMaterialId(),
+        file,
+        purpose: "auto" as const,
+      })),
+    ]);
+    event.target.value = "";
+  }
+
+  function updateMaterialPurpose(id: string, purpose: CourseMaterialPurpose) {
+    setMaterials((current) => current.map((material) => (material.id === id ? { ...material, purpose } : material)));
+  }
+
+  function removeMaterial(id: string) {
+    setMaterials((current) => current.filter((material) => material.id !== id));
   }
 
   return (
@@ -192,6 +232,61 @@ export default function CreateCoursePage() {
                       ))}
                     </div>
                   </div>
+                  <div className="rounded-lg border border-border bg-card p-5 md:col-span-2">
+                    <div className="mb-3 flex items-center gap-2">
+                      <FileText size={16} className="text-foreground" />
+                      <h2 className="text-sm font-semibold text-foreground">输入资料</h2>
+                    </div>
+                    <label className="flex min-h-24 cursor-pointer flex-col items-center justify-center rounded-md border border-dashed border-border bg-background px-4 py-5 text-center transition-colors hover:border-foreground/60">
+                      <Upload size={20} className="mb-2 text-muted-foreground" />
+                      <span className="text-sm font-medium text-foreground">选择 PDF / Word / Markdown / TXT</span>
+                      <span className="mt-1 text-xs text-muted-foreground">单文件 8MB，最多 6 个</span>
+                      <input
+                        type="file"
+                        multiple
+                        accept=".txt,.md,.pdf,.docx,text/plain,text/markdown,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                        onChange={addMaterials}
+                        className="sr-only"
+                      />
+                    </label>
+                    {materials.length > 0 && (
+                      <div className="mt-4 space-y-2">
+                        {materials.map((material) => (
+                          <div key={material.id} className="grid gap-2 rounded-md border border-border bg-background p-3 sm:grid-cols-[minmax(0,1fr)_170px_32px] sm:items-center">
+                            <div className="min-w-0">
+                              <div className="flex min-w-0 items-center gap-2">
+                                <FileText size={14} className="shrink-0 text-muted-foreground" />
+                                <span className="truncate text-sm font-medium text-foreground" title={material.file.name}>
+                                  {material.file.name}
+                                </span>
+                              </div>
+                              <p className="mt-1 text-xs text-muted-foreground">{formatFileSize(material.file.size)}</p>
+                            </div>
+                            <select
+                              value={material.purpose}
+                              onChange={(event) => updateMaterialPurpose(material.id, event.target.value as CourseMaterialPurpose)}
+                              className="h-9 rounded-md border border-border bg-card px-2 text-xs text-foreground outline-none focus:border-foreground"
+                            >
+                              {materialPurposeOptions.map((option) => (
+                                <option key={option.value} value={option.value}>
+                                  {option.label}
+                                </option>
+                              ))}
+                            </select>
+                            <button
+                              type="button"
+                              onClick={() => removeMaterial(material.id)}
+                              className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-border text-muted-foreground hover:text-foreground"
+                              title="移除文件"
+                              aria-label="移除文件"
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 </div>
 
                 <button
@@ -238,4 +333,16 @@ export default function CreateCoursePage() {
       </div>
     </div>
   );
+}
+
+function createMaterialId() {
+  return typeof crypto !== "undefined" && "randomUUID" in crypto
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function formatFileSize(size: number) {
+  if (size < 1024) return `${size} B`;
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
+  return `${(size / 1024 / 1024).toFixed(1)} MB`;
 }

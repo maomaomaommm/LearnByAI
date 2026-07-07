@@ -98,11 +98,15 @@ async function createApiHeaders(init: RequestInit = {}) {
   if (token) headers.set("authorization", `Bearer ${token}`);
   if (modelConfig) headers.set(MODEL_CONFIG_HEADER, modelConfig);
 
-  if (init.body && !headers.has("content-type")) {
+  if (init.body && !isFormDataBody(init.body) && !headers.has("content-type")) {
     headers.set("content-type", "application/json");
   }
 
   return headers;
+}
+
+function isFormDataBody(body: BodyInit) {
+  return typeof FormData !== "undefined" && body instanceof FormData;
 }
 
 function parseSseJson(data: string) {

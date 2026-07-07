@@ -7,7 +7,8 @@ import { parseModelOverridesFromHeaders } from "@/lib/modelOverrides";
 import { publicGenerationJob } from "@/lib/publicGenerationJob";
 import { withQuotaConsumption } from "@/lib/quota";
 import { listServerCourses, saveServerCourse, saveServerGenerationJob } from "@/lib/serverStore";
-import { ChapterLength, Course } from "@/lib/types";
+import { extractCourseMaterials } from "@/lib/courseMaterials";
+import { ChapterLength, Course, CourseInputMaterial, CourseMaterialPurpose } from "@/lib/types";
 
 type CourseInput = {
   topic: string;
@@ -16,6 +17,10 @@ type CourseInput = {
   preference: string;
   weeklyHours: number;
   chapterLength?: ChapterLength;
+  courseRequirements?: string;
+  referenceMaterial?: string;
+  styleSample?: string;
+  inputMaterials?: CourseInputMaterial[];
 };
 
 export async function GET(request: Request) {
@@ -26,10 +31,10 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const input = (await request.json()) as CourseInput;
   const auth = await requireApiUser(request);
   if ("response" in auth) return auth.response;
 
+  const input = await parseCourseInput(request);
   const userId = auth.userId;
   const modelOverrides = parseModelOverridesFromHeaders(request.headers);
   const result = await withQuotaConsumption(userId, "create_course", async () => {
@@ -59,6 +64,43 @@ export async function POST(request: Request) {
   return NextResponse.json({ course: linkedCourse, job: publicGenerationJob(persistedJob) });
 }
 
+async function parseCourseInput(request: Request): Promise<CourseInput> {
+  const contentType = request.headers.get("content-type") ?? "";
+  if (!contentType.includes("multipart/form-data")) {
+    return (await request.json()) as CourseInput;
+  }
+
+  const form = await request.formData();
+  const materialEntries = readFiles(form, "materials");
+  const legacyFileEntries = materialEntries.length ? [] : readFiles(form, "files");
+  const files = materialEntries.length ? materialEntries : legacyFileEntries;
+  const purposes = form.getAll("materialKinds").map(String);
+  const materials = await extractCourseMaterials(
+    files.map((file, index) => ({
+      file,
+      purpose: purposes[index] as CourseMaterialPurpose | undefined,
+    })),
+  );
+
+  return {
+    topic: formString(form, "topic"),
+    goal: formString(form, "goal"),
+    background: formString(form, "background"),
+    preference: formString(form, "preference"),
+    weeklyHours: Number(formString(form, "weeklyHours") || 6),
+    chapterLength: normalizeChapterLength(formString(form, "chapterLength")),
+    ...materials,
+  };
+}
+
+function readFiles(form: FormData, key: string): File[] {
+  return form.getAll(key).filter((entry): entry is File => entry instanceof File && entry.size > 0);
+}
+
+function formString(form: FormData, key: string) {
+  return String(form.get(key) ?? "");
+}
+
 function scheduleCoursePlanning(request: Request, jobId: string) {
   const runnerRequest = new Request(request.url, {
     headers: new Headers(request.headers),
@@ -76,8 +118,16 @@ function createPendingCourse(input: CourseInput, userId: string): Course {
   return {
     id: crypto.randomUUID(),
     userId,
-    ...input,
+    topic: input.topic,
+    goal: input.goal,
+    background: input.background,
+    preference: input.preference,
+    weeklyHours: input.weeklyHours,
     chapterLength: normalizeChapterLength(input.chapterLength),
+    courseRequirements: input.courseRequirements,
+    referenceMaterial: input.referenceMaterial,
+    styleSample: input.styleSample,
+    inputMaterials: input.inputMaterials,
     profile: "课程规划队列中。",
     courseBible: {
       targetLearner: input.background,

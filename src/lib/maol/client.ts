@@ -29,6 +29,9 @@ export type CourseInput = {
   preference: string;
   weeklyHours: number;
   chapterLength?: "short" | "medium" | "long";
+  courseRequirements?: string;
+  referenceMaterial?: string;
+  styleSample?: string;
 };
 
 export type CourseGeneration = {
