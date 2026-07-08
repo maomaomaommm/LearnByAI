@@ -100,6 +100,7 @@ ${input.researchBrief ?? "未提供"}
 硬性要求：
 - ${chapterCountRule(input.chapterCount)}
 - ${DEPTH_RULE}
+- 最后一章必须是全书收尾「总结与展望」章，depth 取 "light"：回顾全书主线、串联各章脉络、指出前沿与后续学习方向，不引入新知识点；它占用目标章节数的最后一个名额，不额外增加章数。
 - 学习方式约束：${LEARNING_MODE_STRUCTURE_RULE[input.learningMode]}
 - 规划深浅与口吻须符合上述难度基调。
 - 每个字符串不超过 80 个中文字符。
@@ -157,6 +158,10 @@ ${JSON.stringify(skeleton.chapters)}
     "teachingStyle": "统一写作风格",
     "prerequisites": ["前置知识"],
     "globalNarrative": "全书递进逻辑",
+    "notation": [
+      {"symbol":"LaTeX 记号，如 v_\\\\pi(s)","meaning":"含义，如 状态价值函数"}
+    ],
+    "writingConventions": "全书统一约定：术语中文译名、小节编号方案、固定结尾块标题、图表编号策略",
     "terminology": [
       {"term":"术语","definition":"简短定义","introducedIn":"实际章节标题"}
     ],
@@ -168,7 +173,9 @@ ${JSON.stringify(skeleton.chapters)}
 
 硬性要求：
 - chapterDependencies 的标题只能使用既定章节标题。
-- 每个数组最多 4 项，每个字符串不超过 70 个中文字符。
+- notation 给出全书统一数学记号表：为每个核心量固定唯一写法（如状态价值统一 v_\\pi(s)、动作价值 q_\\pi(s,a)、最优值 v_*、随机变量大写 S_t/A_t/R_t、取值小写 s/a/r），供各章逐字沿用；数学/记号密集课程必产，纯文科课程给空数组 []。
+- writingConventions 钉死全书写作约定：①每个概念只用一个中文译名（如统一「马尔可夫」不写「马尔科夫」，「Bellman/贝尔曼」二选一）；②小节标题统一编号方案（如「N.M」）；③固定结尾块标题为「本章小结／练习／拓展阅读」；④图表编号与题注策略。
+- 除 notation（最多 12 项）外每个数组最多 4 项；每个字符串不超过 70 个中文字符，但 writingConventions 可放宽到约 200 字。
 - 联网摘要中的近期论文只放入 terminology 或 globalNarrative，不要展开逐章契约。
 - 预印本、录用和正式发表状态不得混淆，不得虚构来源。
 - 第一个字符必须是 {，最后一个字符必须是 }。`;

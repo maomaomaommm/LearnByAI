@@ -62,3 +62,24 @@ test("does not collapse distinct edges that merely share a line", () => {
 test("is a no-op on empty input", () => {
   assert.equal(normalizeMermaidCode(""), "");
 });
+
+test("strips LaTeX math left in node labels to readable plain text", () => {
+  const out = normalizeMermaidCode(
+    'flowchart LR\n  A["预训练策略 $\\pi_{\\text{ref}}$"] --> B["奖励模型 $r_{\\phi}$"]',
+  );
+  assert.match(out, /预训练策略 π_ref/u);
+  assert.match(out, /奖励模型 r_φ/u);
+  assert.doesNotMatch(out, /\$/u);
+  assert.doesNotMatch(out, /\\pi|\\text|\\phi/u);
+});
+
+test("flattens sub/superscript braces in edge labels", () => {
+  const out = normalizeMermaidCode('flowchart LR\n  A -->|"状态 S_{t+1}, 奖励 R_{t+1}"| B');
+  assert.match(out, /状态 S_t\+1, 奖励 R_t\+1/u);
+  assert.doesNotMatch(out, /\{|\}/u);
+});
+
+test("keeps bare underscores in node ids (they are not LaTeX)", () => {
+  const out = normalizeMermaidCode("flowchart TD\n  state_1 --> state_2");
+  assert.match(out, /state_1 --> state_2/u);
+});

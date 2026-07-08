@@ -61,6 +61,14 @@ export type CourseBible = {
   teachingStyle: string;
   prerequisites: string[];
   globalNarrative: string;
+  /** Canonical math notation the whole course must reuse verbatim (symbol → meaning),
+   *  so value functions / variables don't drift between independently-authored chapters.
+   *  Optional: only produced for notation-heavy courses; older courses omit it. */
+  notation?: { symbol: string; meaning: string }[];
+  /** Course-wide writing conventions the author must follow verbatim: one Chinese term
+   *  per concept, the section-heading numbering scheme, the fixed end-block titles, and
+   *  the figure/table numbering policy. Optional (older courses omit it). */
+  writingConventions?: string;
   terminology: {
     term: string;
     definition: string;

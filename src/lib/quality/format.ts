@@ -84,7 +84,26 @@ export function validateFormat(content: string): QualityIssue[] {
     });
   }
 
+  if (hasLatexInMermaidLabel(content)) {
+    issues.push({
+      check: "format.mermaid_latex",
+      severity: "warning",
+      message: "Mermaid 图内标签疑似含 LaTeX / 数学记号($、_{}、^{}、\\ 命令),图里会原样显示。",
+      suggestion: "图内标签改用纯文本(如 S(t)、pi_ref 或中文);渲染时系统会兜底清洗,但建议源头就写成纯文本。",
+    });
+  }
+
   return issues;
+}
+
+// Mermaid renders labels as plain text, so LaTeX left inside a ```mermaid block
+// shows up literally. `$`, `_{`, `^{` and greek commands never appear in
+// Mermaid's own syntax, so their presence inside a mermaid fence is a leak.
+function hasLatexInMermaidLabel(content: string) {
+  const blocks = content.match(/```mermaid[\s\S]*?```/gu) ?? [];
+  return blocks.some((block) =>
+    /\$|_\{|\^\{|\\(?:pi|gamma|theta|phi|lambda|sigma|mu|alpha|beta|text|frac|mathbb|mathbf|hat|bar)\b/u.test(block),
+  );
 }
 
 // Render every $$...$$ and $...$ with KaTeX; report ones that fail (the renderer
