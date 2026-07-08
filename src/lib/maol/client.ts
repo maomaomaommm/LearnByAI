@@ -227,20 +227,24 @@ export async function generateChapter(
     let formatted = draft;
     let review = "正文已生成；格式修复暂时不可用，已保留本地格式预修复版本。";
 
-    try {
-      if (shouldSkipRemoteFormatGuard(draft)) {
-        throw new Error("Long draft uses local format guard before targeted review repair.");
-      }
-      formatted = await runFormatGuard(draft, {
-        jobId: job.id,
-        overrides: options.overrides,
-        maxTokens: lengthGuide.maxTokens,
-        onJobUpdate: options.onJobUpdate,
-      });
-      review = "已通过格式修复，完成 Markdown、公式、代码块与标题格式检查。";
-    } catch (error) {
+    if (shouldSkipRemoteFormatGuard(draft)) {
+      // 长草稿有意跳过 LLM 排版模型、改用确定性本地格式修复——这是优化而非失败，
+      // 不该显示成"模型不可用"。只有真正的 POLISHER 调用失败才走下面的 catch。
       formatted = postRepairMarkdown(draft);
-      review = `格式修复模型暂时不可用，已使用本地格式修复保留草稿：${safeErrorMessage(error, "POLISHER failed.")}`;
+      review = "长草稿已使用本地格式修复（更快更稳），并在审查阶段做定向修复。";
+    } else {
+      try {
+        formatted = await runFormatGuard(draft, {
+          jobId: job.id,
+          overrides: options.overrides,
+          maxTokens: lengthGuide.maxTokens,
+          onJobUpdate: options.onJobUpdate,
+        });
+        review = "已通过格式修复，完成 Markdown、公式、代码块与标题格式检查。";
+      } catch (error) {
+        formatted = postRepairMarkdown(draft);
+        review = `格式修复模型暂时不可用，已使用本地格式修复保留草稿：${safeErrorMessage(error, "POLISHER failed.")}`;
+      }
     }
 
     await options.onStage?.({
@@ -417,20 +421,23 @@ export async function reviewExistingChapterDraft(
   let formatted = draft;
   let review = "正文已生成；格式修复暂时不可用，已保留本地格式预修复版本。";
 
-  try {
-    if (shouldSkipRemoteFormatGuard(draft)) {
-      throw new Error("Long draft uses local format guard before targeted review repair.");
-    }
-    formatted = await runFormatGuard(draft, {
-      jobId: job.id,
-      overrides: options.overrides,
-      maxTokens: lengthGuide.maxTokens,
-      onJobUpdate: options.onJobUpdate,
-    });
-    review = "已通过格式修复，完成 Markdown、公式、代码块与标题格式检查。";
-  } catch (error) {
+  if (shouldSkipRemoteFormatGuard(draft)) {
+    // 长草稿有意跳过 LLM 排版模型、改用确定性本地格式修复——这是优化而非失败。
     formatted = postRepairMarkdown(draft);
-    review = `格式修复模型暂时不可用，已使用本地格式修复保留草稿：${safeErrorMessage(error, "POLISHER failed.")}`;
+    review = "长草稿已使用本地格式修复（更快更稳），并在审查阶段做定向修复。";
+  } else {
+    try {
+      formatted = await runFormatGuard(draft, {
+        jobId: job.id,
+        overrides: options.overrides,
+        maxTokens: lengthGuide.maxTokens,
+        onJobUpdate: options.onJobUpdate,
+      });
+      review = "已通过格式修复，完成 Markdown、公式、代码块与标题格式检查。";
+    } catch (error) {
+      formatted = postRepairMarkdown(draft);
+      review = `格式修复模型暂时不可用，已使用本地格式修复保留草稿：${safeErrorMessage(error, "POLISHER failed.")}`;
+    }
   }
 
   await options.onStage?.({

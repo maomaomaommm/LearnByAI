@@ -168,3 +168,22 @@ test("validateFormat does not flag a valid formula", () => {
   const issues = validateFormat(String.raw`公式:$$\frac{\partial Q}{\partial Q_i} \geq 0$$ 和行内 $Q_{tot}$。`);
   assert.ok(!issues.some((i) => i.check === "format.unrenderable_math"), JSON.stringify(issues));
 });
+
+test("escapes | inside table-cell math to \\mid so the row does not split the formula", () => {
+  const input =
+    "| 类型 | 表达式 | 特点 |\n| --- | --- | --- |\n" +
+    "| 贝尔曼 | $v_\\pi(s) = \\sum_a \\pi(a|s) p(s',r|s,a)$ | 期望 |";
+  const out = postRepairMarkdown(input);
+  assert.match(out, /\\pi\(a\\mid s\)/u);
+  assert.match(out, /p\(s',r\\mid s,a\)/u);
+  const dataRow = out.split("\n").find((l) => l.includes("贝尔曼"))!;
+  // exactly the 4 real column separators remain (none left inside the formula)
+  assert.equal((dataRow.match(/(?<!\\)\|/gu) ?? []).length, 4);
+  assert.equal(postRepairMarkdown(out), out, "must stay idempotent");
+});
+
+test("does not rewrite | outside of tables (absolute value stays intact)", () => {
+  const out = postRepairMarkdown("绝对值 $|x|$ 在正文里应保持不变。");
+  assert.doesNotMatch(out, /\\mid/u);
+  assert.match(out, /\|x\|/u);
+});

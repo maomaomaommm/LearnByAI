@@ -2,7 +2,7 @@ import { normalizeMath } from "@/lib/markdownMath";
 import { sanitizeMathDelimiters } from "@/lib/sanitizeMath";
 
 export function preRepairMarkdown(content: string) {
-  return repairMarkdownFences(normalizeMath(content))
+  return escapePipesInTableMath(repairMarkdownFences(normalizeMath(content)))
     .replace(/(^|\n)\$\s*\n([\s\S]*?)\n\$\s*(?=\n|$)/gu, (_match, prefix = "", body = "") => {
       return `${prefix}$$\n${body.trim()}\n$$`;
     })
@@ -11,6 +11,27 @@ export function preRepairMarkdown(content: string) {
     // result is stable under a second pass (the renderer runs this again).
     .replace(/\n{3,}/g, "\n\n")
     .trim();
+}
+
+/**
+ * In a Markdown table, `|` is the column separator — but a `|` inside inline math
+ * ($...$) is a LaTeX operator (conditional probability `\pi(a|s)`, `p(s',r|s,a)`).
+ * Markdown splits the formula across cells and breaks the `$...$`, so the math
+ * renders as raw source and spills into the next column. Rewrite those pipes to
+ * `\mid ` (renders as the same vertical bar, but contains no literal `|` to break
+ * the row). Only touches `|` inside `$...$` on table rows — never absolute-value
+ * bars in display math or ordinary prose.
+ */
+function escapePipesInTableMath(content: string) {
+  return content
+    .split("\n")
+    .map((line) => {
+      if (!/^\s*\|.*\|/u.test(line)) return line; // not a table row
+      return line.replace(/\$(?!\$)([^$\n]+?)\$/gu, (whole, inner: string) =>
+        inner.includes("|") ? `$${inner.replace(/(?<!\\)\|/gu, "\\mid ")}$` : whole,
+      );
+    })
+    .join("\n");
 }
 
 export function postRepairMarkdown(content: string) {
