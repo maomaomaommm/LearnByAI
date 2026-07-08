@@ -28,6 +28,11 @@ export async function POST(request: Request) {
 
     const userId = auth.userId;
     const format = input.format === "tex" ? "tex" : "pdf";
+    // scope "chapter" exports a single chapter (PDF only); default is the whole course.
+    const chapterId =
+      input.scope === "chapter" && typeof input.chapterId === "string" && course.chapters.some((c) => c.id === input.chapterId)
+        ? input.chapterId
+        : undefined;
     const result = await withQuotaConsumption(userId, "export", async () => {
       const job = createGenerationJob({
         type: "export",
@@ -36,7 +41,7 @@ export async function POST(request: Request) {
         status: "running",
         message: `${format.toUpperCase()} export started.`,
       });
-      const exportJob = await saveServerExport(await createCourseExport(course, format, userId));
+      const exportJob = await saveServerExport(await createCourseExport(course, format, userId, { chapterId }));
       const completedJob = completeGenerationJob(job.id, exportJob.id) ?? job;
       await saveServerGenerationJob(completedJob, request);
       return { export: exportJob, job: completedJob };

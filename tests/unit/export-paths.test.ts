@@ -23,10 +23,11 @@ test("local export path rejects traversal and absolute input", () => {
   assert.throws(() => resolveLocalExportPath("user\\..\\secret.pdf", "fallback.pdf"), /Invalid export storage path/u);
 });
 
-test("PDF export uses a CJK-capable Type0 font instead of replacing non-ASCII text", () => {
+test("PDF export delegates to the headless renderer instead of stripping non-ASCII text", () => {
   const source = readFileSync("src/lib/exports.ts", "utf8");
-  assert.match(source, /\/Subtype \/Type0/u);
-  assert.match(source, /\/Encoding \/UniGB-UCS2-H/u);
-  assert.match(source, /Buffer\.from\(value, "utf16le"\)/u);
+  // PDF is now produced by a real headless browser (renderCoursePdf), which
+  // renders CJK via system fonts — no hand-rolled PDF, no non-ASCII replacement.
+  assert.match(source, /renderCoursePdf/u);
+  assert.doesNotMatch(source, /STSong-Light/u);
   assert.doesNotMatch(source, /replace\(\s*\/\[\^\\x20-\\x7E\]\/g,\s*"\?"/u);
 });

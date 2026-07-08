@@ -7,6 +7,10 @@ import { Navigation } from "./Navigation";
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const isAdmin = pathname === "/admin" || pathname?.startsWith("/admin/");
+  // The internal print route renders a bare, chrome-free document for PDF export.
+  const isBare = pathname?.startsWith("/internal/print");
+
+  if (isBare) return <>{children}</>;
 
   return (
     <>

@@ -1,0 +1,211 @@
+/* Print/PDF document styles. Loaded only on /internal/print/* routes.
+   Deliberately light + self-contained (does not use the app theme vars) so the
+   exported PDF is clean and ink-friendly regardless of the app's dark theme. */
+
+html,
+body {
+  background: #ffffff !important;
+  color: #1a1a1a;
+}
+
+.pdf-root {
+  background: #ffffff;
+  color: #1a1a1a;
+  font-family: "Noto Sans CJK SC", "Noto Sans SC", "Microsoft YaHei", -apple-system,
+    system-ui, "Segoe UI", sans-serif;
+  font-size: 12pt;
+  line-height: 1.7;
+  max-width: 100%;
+}
+
+/* ---- Cover ---- */
+.pdf-cover {
+  break-after: page;
+  padding-top: 28vh;
+  text-align: center;
+}
+.pdf-cover-kicker {
+  font-size: 11pt;
+  letter-spacing: 0.25em;
+  color: #6b7280;
+  margin-bottom: 20px;
+}
+.pdf-cover-title {
+  font-size: 30pt;
+  font-weight: 800;
+  line-height: 1.25;
+  margin: 0 auto 18px;
+  max-width: 80%;
+  color: #111827;
+}
+.pdf-cover-goal {
+  font-size: 13pt;
+  color: #4b5563;
+  max-width: 70%;
+  margin: 0 auto;
+}
+.pdf-cover-meta {
+  margin-top: 40px;
+  display: flex;
+  gap: 28px;
+  justify-content: center;
+  color: #9ca3af;
+  font-size: 11pt;
+}
+
+/* ---- Table of contents ---- */
+.pdf-toc {
+  break-after: page;
+  padding-top: 8px;
+}
+.pdf-toc-title {
+  font-size: 18pt;
+  font-weight: 700;
+  border-bottom: 2px solid #111827;
+  padding-bottom: 8px;
+  margin: 0 0 18px;
+}
+.pdf-toc ol {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.pdf-toc li {
+  display: flex;
+  gap: 12px;
+  padding: 7px 0;
+  border-bottom: 1px dotted #d1d5db;
+  font-size: 12.5pt;
+}
+.pdf-toc-num {
+  color: #2563eb;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+/* ---- Chapters ---- */
+.pdf-chapter {
+  break-before: page;
+}
+.pdf-chapter-title {
+  font-size: 20pt;
+  font-weight: 700;
+  color: #111827;
+  border-bottom: 2px solid #e5e7eb;
+  padding-bottom: 10px;
+  margin: 0 0 20px;
+  break-after: avoid;
+}
+.pdf-chapter-num {
+  color: #2563eb;
+  margin-right: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- Prose (rendered markdown) ---- */
+.pdf-prose h1 {
+  font-size: 16pt;
+  font-weight: 700;
+  margin: 22px 0 10px;
+  break-after: avoid;
+}
+.pdf-prose h2 {
+  font-size: 14pt;
+  font-weight: 700;
+  margin: 20px 0 8px;
+  break-after: avoid;
+}
+.pdf-prose h3 {
+  font-size: 12.5pt;
+  font-weight: 700;
+  margin: 16px 0 6px;
+  break-after: avoid;
+}
+.pdf-prose p {
+  margin: 0 0 11px;
+  orphans: 3;
+  widows: 3;
+}
+.pdf-prose ul,
+.pdf-prose ol {
+  margin: 0 0 11px;
+  padding-left: 24px;
+}
+.pdf-prose li {
+  margin: 3px 0;
+}
+.pdf-prose a {
+  color: #2563eb;
+  text-decoration: none;
+}
+.pdf-prose strong {
+  color: #111827;
+}
+.pdf-prose blockquote {
+  margin: 0 0 12px;
+  padding: 4px 0 4px 14px;
+  border-left: 3px solid #93c5fd;
+  color: #4b5563;
+  font-style: italic;
+}
+.pdf-prose :not(pre) > code {
+  background: #f3f4f6;
+  border: 1px solid #e5e7eb;
+  border-radius: 4px;
+  padding: 1px 5px;
+  font-size: 0.88em;
+  font-family: "JetBrains Mono", ui-monospace, "SFMono-Regular", Consolas, monospace;
+}
+.pdf-pre {
+  background: #f8fafc;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 12px 14px;
+  overflow-x: auto;
+  font-size: 9.5pt;
+  line-height: 1.55;
+  margin: 0 0 14px;
+  break-inside: avoid;
+  font-family: "JetBrains Mono", ui-monospace, "SFMono-Regular", Consolas, monospace;
+}
+.pdf-pre code {
+  background: none;
+  border: none;
+  padding: 0;
+}
+
+/* Tables */
+.pdf-prose table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0 0 14px;
+  font-size: 10.5pt;
+  break-inside: avoid;
+}
+.pdf-prose th,
+.pdf-prose td {
+  border: 1px solid #d1d5db;
+  padding: 6px 10px;
+  text-align: left;
+}
+.pdf-prose thead {
+  background: #f3f4f6;
+}
+
+/* Diagrams */
+.pdf-diagram {
+  display: flex;
+  justify-content: center;
+  margin: 14px 0;
+  break-inside: avoid;
+}
+.pdf-diagram svg {
+  max-width: 100%;
+  height: auto;
+}
+
+/* KaTeX display math shouldn't be split across pages */
+.pdf-prose .katex-display {
+  break-inside: avoid;
+  overflow-x: auto;
+}

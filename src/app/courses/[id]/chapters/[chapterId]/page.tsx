@@ -17,6 +17,7 @@ import { stageForEvent } from "@/components/generation-studio/helpers";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { ModelSettings } from "@/components/ModelSettings";
 import { ArrowLeft, Bot, ChevronLeft, ChevronRight, Clock, Download, Menu, PencilLine, X } from "lucide-react";
+import { toast } from "sonner";
 
 const DEFAULT_REVIEW = "已完成结构、术语与公式一致性检查。";
 const DRAFT_REVIEW = "草稿已保存，格式修复和质量检查仍在继续。";
@@ -104,6 +105,7 @@ export default function ReaderPage() {
   const [jobEvents, setJobEvents] = useState<Record<string, AgentEvent[]>>({});
   const [loading, setLoading] = useState(true);
   const [generationError, setGenerationError] = useState("");
+  const [exporting, setExporting] = useState(false);
 
   const [tocOpen, setTocOpen] = useState(true);
   const [panel, setPanel] = useState<Panel>(null);
@@ -118,6 +120,35 @@ export default function ReaderPage() {
   const chapterAwaitingQuality = Boolean(chapter && isChapterAwaitingQuality(chapter));
   const chapterGenerationJobId = chapter?.generationJobId;
   const chapterStatus = chapter?.status;
+
+  async function exportChapter() {
+    if (!chapter || exporting) return;
+    setExporting(true);
+    try {
+      const response = await apiFetch("/api/exports", {
+        method: "POST",
+        body: JSON.stringify({ courseId: id, format: "pdf", scope: "chapter", chapterId: chapter.id }),
+      });
+      const data = await response.json();
+      if (!response.ok || !data.export) throw new Error(data.error ?? "导出失败");
+      const download = await apiFetch(`/api/exports/${data.export.id}`);
+      if (!download.ok) throw new Error("导出下载失败");
+      const blob = await download.blob();
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(blob);
+      link.download = data.export.fileName ?? `${chapter.title}.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(link.href);
+      toast.success("PDF 已导出");
+    } catch (error) {
+      toast.error(publicSafeErrorMessage(error, "导出失败，请稍后重试。"));
+    } finally {
+      setExporting(false);
+    }
+  }
+
   const latestChapterEvent = chapterGenerationJobId ? jobEvents[chapterGenerationJobId]?.at(-1) : undefined;
   const waitMessage = chapterAwaitingQuality ? awaitingQualityMessage(latestChapterEvent) : "";
 
@@ -434,11 +465,11 @@ export default function ReaderPage() {
             </span>
             <div className="h-4 w-px bg-border" />
             <button
-              onClick={() => window.print()}
-              disabled={!canPrint}
+              onClick={exportChapter}
+              disabled={!canPrint || exporting}
               className="flex items-center gap-1.5 rounded-md border border-border bg-background px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
             >
-              <Download size={14} /> 导出 PDF
+              <Download size={14} /> {exporting ? "导出中…" : "导出 PDF"}
             </button>
             <div className="h-4 w-px bg-border" />
             <div className="flex items-center gap-1">

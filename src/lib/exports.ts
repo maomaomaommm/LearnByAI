@@ -5,23 +5,35 @@ import { dirname } from "node:path";
 import { getSupabaseExportsBucket, hasSupabaseServerConfig } from "./config";
 import { resolveLocalExportPath } from "./exportPaths";
 import { createSupabaseServiceClient } from "./supabase/server";
+import { renderCoursePdf } from "./pdf";
 import { Course, ExportJob } from "./types";
 
 const exportJobs = new Map<string, ExportJob>();
 const UNGENERATED_CHAPTER_TEXT = "This chapter has not been generated yet.";
 
-export async function createCourseExport(course: Course, format: ExportJob["format"], userId?: string) {
+export async function createCourseExport(
+  course: Course,
+  format: ExportJob["format"],
+  userId?: string,
+  options: { chapterId?: string } = {},
+) {
   const now = new Date().toISOString();
   const exportId = crypto.randomUUID();
-  const exportText = toPdfText(course);
-  const content = format === "tex" ? toTex(course) : createPdfBytes(exportText);
+  const chapter = options.chapterId
+    ? course.chapters.find((item) => item.id === options.chapterId)
+    : undefined;
+  const content =
+    format === "tex" ? toTex(course) : await renderCoursePdf(course.id, { chapterId: chapter?.id });
+  const baseName = chapter
+    ? `${sanitize(course.topic)}-${sanitize(chapter.title)}`
+    : sanitize(course.topic);
   const job: ExportJob = {
     id: exportId,
     userId,
     courseId: course.id,
     format,
     status: "succeeded",
-    fileName: `${sanitize(course.topic)}.${format}`,
+    fileName: `${baseName}.${format}`,
     storagePath: `${pathSegment(userId ?? "local-beta-user")}/${pathSegment(course.id)}/${exportId}.${format}`,
     contentType: format === "tex" ? "application/x-tex" : "application/pdf",
     encoding: format === "tex" ? "utf8" : "base64",
@@ -125,74 +137,6 @@ function toTex(course: Course) {
 ${chapters}
 \\end{document}
 `;
-}
-
-function toPdfText(course: Course) {
-  return [
-    `LearnByAI Export: ${course.topic}`,
-    course.goal,
-    ...course.chapters.map((chapter) => `\n# ${chapter.title}\n${chapter.content ?? UNGENERATED_CHAPTER_TEXT}`),
-  ].join("\n\n");
-}
-
-function createPdfBytes(text: string) {
-  const lines = text
-    .replace(/\r/g, "")
-    .split("\n")
-    .flatMap((line) => wrapLine(line, 42))
-    .slice(0, 120);
-  const stream = [
-    "BT",
-    "/F1 10 Tf",
-    "50 790 Td",
-    "14 TL",
-    ...lines.map((line, index) => `${index === 0 ? "" : "T* "}${pdfHexString(line)} Tj`),
-    "ET",
-  ].join("\n");
-
-  const objects = [
-    "<< /Type /Catalog /Pages 2 0 R >>",
-    "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R >> >> /Contents 7 0 R >>",
-    "<< /Type /Font /Subtype /Type0 /BaseFont /STSong-Light /Encoding /UniGB-UCS2-H /DescendantFonts [5 0 R] >>",
-    "<< /Type /Font /Subtype /CIDFontType0 /BaseFont /STSong-Light /CIDSystemInfo << /Registry (Adobe) /Ordering (GB1) /Supplement 2 >> /FontDescriptor 6 0 R >>",
-    "<< /Type /FontDescriptor /FontName /STSong-Light /Flags 6 /FontBBox [0 -200 1000 900] /ItalicAngle 0 /Ascent 880 /Descent -120 /CapHeight 880 /StemV 80 >>",
-    `<< /Length ${Buffer.byteLength(stream, "utf8")} >>\nstream\n${stream}\nendstream`,
-  ];
-
-  let pdf = "%PDF-1.4\n";
-  const offsets = [0];
-  objects.forEach((object, index) => {
-    offsets.push(Buffer.byteLength(pdf, "utf8"));
-    pdf += `${index + 1} 0 obj\n${object}\nendobj\n`;
-  });
-  const xrefOffset = Buffer.byteLength(pdf, "utf8");
-  pdf += `xref\n0 ${objects.length + 1}\n`;
-  pdf += "0000000000 65535 f \n";
-  offsets.slice(1).forEach((offset) => {
-    pdf += `${String(offset).padStart(10, "0")} 00000 n \n`;
-  });
-  pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF`;
-  return Buffer.from(pdf, "utf8");
-}
-
-function wrapLine(line: string, width: number) {
-  if (!line) return [""];
-  const chunks: string[] = [];
-  for (let index = 0; index < line.length; index += width) {
-    chunks.push(line.slice(index, index + width));
-  }
-  return chunks;
-}
-
-function pdfHexString(value: string) {
-  const utf16Le = Buffer.from(value, "utf16le");
-  const utf16Be = Buffer.alloc(utf16Le.length);
-  for (let index = 0; index < utf16Le.length; index += 2) {
-    utf16Be[index] = utf16Le[index + 1];
-    utf16Be[index + 1] = utf16Le[index];
-  }
-  return `<${utf16Be.toString("hex").toUpperCase()}>`;
 }
 
 function sanitize(value: string) {

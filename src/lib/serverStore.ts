@@ -167,6 +167,30 @@ export async function getServerCourse(id: string, request?: Request) {
   return visible ? normalizeCourse(hydratedCourse) : undefined;
 }
 
+/**
+ * Fetch a course by id WITHOUT the per-user ownership filter, for internal
+ * server-side rendering (the PDF export print route). Only ever reached behind
+ * the INTERNAL_WORKER_SECRET gate, after the export API has already verified
+ * ownership + charged quota — so skipping the user filter here is safe.
+ */
+export async function getServerCourseForRender(id: string) {
+  const supabase = createSupabaseServiceClient();
+  if (supabase) {
+    const { data, error } = await supabase
+      .from("courses")
+      .select("payload")
+      .eq("id", id)
+      .maybeSingle();
+
+    assertSupabaseNoError("Read course for render", error);
+    return data?.payload ? normalizeCourse(data.payload as Course) : undefined;
+  }
+
+  await hydrateLocalStore();
+  const local = localCourses.get(id);
+  return local ? normalizeCourse(local) : undefined;
+}
+
 export async function listServerCourses(request?: Request) {
   const userId = await resolveUserId(request);
   const supabase = createSupabaseServiceClient();
