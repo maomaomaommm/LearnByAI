@@ -156,6 +156,17 @@ export default function PrintableCourse({
       while (mermaidTracker.pending > 0 && Date.now() - start < 20000) {
         await new Promise((resolve) => setTimeout(resolve, 50));
       }
+      // Chapter illustrations must be loaded before page.pdf() snapshots.
+      await Promise.all(
+        Array.from(document.images)
+          .filter((image) => !image.complete)
+          .map(
+            (image) =>
+              new Promise((resolve) => {
+                image.onload = image.onerror = resolve;
+              }),
+          ),
+      );
       await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
       if (!cancelled) window.__printReady = true;
     };

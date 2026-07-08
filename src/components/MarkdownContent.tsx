@@ -247,6 +247,16 @@ export function MarkdownContent({
               {children}
             </blockquote>
           ),
+          img: ({ src, alt }) => (
+            // Chapter illustrations are white-background textbook figures; give
+            // them a card look on the dark reader.
+            <img
+              src={typeof src === "string" ? src : undefined}
+              alt={alt ?? ""}
+              loading="lazy"
+              className="mx-auto my-6 max-w-full rounded-lg bg-white p-2"
+            />
+          ),
           pre: ({ children }) => {
             const code = getCodeText(children);
             const child = Array.isArray(children) ? children[0] : children;

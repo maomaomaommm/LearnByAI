@@ -441,7 +441,12 @@ export async function deleteServerAnnotation(id: string, request?: Request) {
   return true;
 }
 
-export async function snapshotChapterBeforeRegen(course: Course, chapterId: string, request?: Request) {
+export async function snapshotChapterBeforeRegen(
+  course: Course,
+  chapterId: string,
+  request?: Request,
+  intent = "整章重新生成前的自动快照",
+) {
   const chapter = course.chapters.find((item) => item.id === chapterId);
   if (!chapter || !(chapter.content || chapter.sections?.length)) return undefined;
   const now = new Date().toISOString();
@@ -452,7 +457,7 @@ export async function snapshotChapterBeforeRegen(course: Course, chapterId: stri
     chapterId,
     mode: "rewrite",
     scope: "chapter",
-    intent: "整章重新生成前的自动快照",
+    intent,
     status: "applied",
     beforeChapter: chapter,
     createdAt: now,

@@ -192,6 +192,23 @@ body {
   background: #f3f4f6;
 }
 
+/* Chapter illustrations */
+.pdf-prose img {
+  display: block;
+  max-width: 82%;
+  height: auto;
+  margin: 14px auto;
+  break-inside: avoid;
+}
+/* The italic caption line right below a figure */
+.pdf-prose img + em,
+.pdf-prose p:has(> img) + p > em:only-child {
+  display: block;
+  text-align: center;
+  font-size: 9.5pt;
+  color: #6b7280;
+}
+
 /* Diagrams */
 .pdf-diagram {
   display: flex;
