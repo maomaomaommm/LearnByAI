@@ -258,13 +258,15 @@ export function MarkdownContent({
             </blockquote>
           ),
           img: ({ src, alt }) => (
-            // Chapter illustrations are white-background textbook figures; give
-            // them a card look on the dark reader.
+            // Chapter illustrations are white-background textbook figures — sized
+            // like a figure in a printed book (a fraction of the column), not a
+            // full-width hero image, and capped so a wide reading pane doesn't
+            // blow it up further.
             <img
               src={typeof src === "string" ? src : undefined}
               alt={alt ?? ""}
               loading="lazy"
-              className="mx-auto my-6 max-w-full rounded-lg bg-white p-2"
+              className="mx-auto my-6 block w-full max-w-[420px] rounded-lg bg-white p-3"
             />
           ),
           pre: ({ children }) => {

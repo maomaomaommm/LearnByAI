@@ -137,6 +137,16 @@
   font-size: 0.75rem;
 }
 
+/* Chapter illustration captions: the italic line right after a figure image —
+   center it under the (now much narrower) figure and de-emphasize it, so it
+   reads as a caption rather than a stray left-aligned paragraph. Mirrors the
+   equivalent rule in print.css for the PDF/print route. */
+.prose p:has(> img) + p:has(> em:only-child) {
+  margin-top: -0.75rem;
+  text-align: center;
+  font-size: 0.8em;
+}
+
 /* KaTeX adjustments */
 .katex {
   font-size: 1em;

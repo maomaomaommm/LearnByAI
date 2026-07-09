@@ -192,10 +192,11 @@ body {
   background: #f3f4f6;
 }
 
-/* Chapter illustrations */
+/* Chapter illustrations — sized like a figure in a printed textbook (a
+   fraction of the text column), not a full-bleed image. */
 .pdf-prose img {
   display: block;
-  max-width: 82%;
+  max-width: 52%;
   height: auto;
   margin: 14px auto;
   break-inside: avoid;
