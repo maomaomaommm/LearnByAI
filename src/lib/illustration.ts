@@ -121,7 +121,9 @@ export function insertIllustrationsIntoMarkdown(content: string, items: Illustra
 }
 
 export function buildIllustrationMarkdown(figureLabel: string, caption: string, url: string) {
-  const safeCaption = caption.replace(/[\[\]()\n]/gu, " ").replace(/\s+/gu, " ").trim();
+  // Only [ ] and newlines can break ![alt](url) syntax — parens in the alt
+  // text are safe (the URL is ours and contains none), so "TD(0)" stays intact.
+  const safeCaption = caption.replace(/[\[\]\n]/gu, " ").replace(/\s+/gu, " ").trim();
   return `![${figureLabel}　${safeCaption}](${url})\n\n*${figureLabel}　${safeCaption}*`;
 }
 

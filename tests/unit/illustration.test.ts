@@ -116,12 +116,12 @@ test("insertIllustrationsIntoMarkdown reports skips without touching content", (
 });
 
 test("buildIllustrationMarkdown sanitizes caption characters that break Markdown", () => {
-  const markdown = buildIllustrationMarkdown("图 2-1", "贝尔曼[备份]图（示意）", "/api/illustrations/a/b/c.png");
-  // ASCII brackets/parens would break ![alt](url) syntax and must be stripped;
-  // full-width （） are harmless and stay.
+  const markdown = buildIllustrationMarkdown("图 2-1", "贝尔曼[备份]图 TD(0)（示意）", "/api/illustrations/a/b/c.png");
+  // Square brackets would break ![alt](url) syntax and must be stripped;
+  // parens — ASCII and full-width — are safe in alt text and stay ("TD(0)").
   const alt = markdown.slice(2, markdown.indexOf("]("));
-  assert.ok(!/[\[\]()]/u.test(alt), markdown);
-  assert.match(markdown, /^!\[图 2-1　贝尔曼 备份 图（示意）\]\(\/api\/illustrations\/a\/b\/c\.png\)/u);
+  assert.ok(!/[\[\]]/u.test(alt), markdown);
+  assert.match(markdown, /^!\[图 2-1　贝尔曼 备份 图 TD\(0\)（示意）\]\(\/api\/illustrations\/a\/b\/c\.png\)/u);
 });
 
 test("postRepairMarkdown leaves illustration markdown intact", () => {
