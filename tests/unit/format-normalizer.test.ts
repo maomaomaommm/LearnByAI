@@ -203,3 +203,46 @@ test("does not rewrite | outside of tables (absolute value stays intact)", () =>
   assert.doesNotMatch(out, /\\mid/u);
   assert.match(out, /\|x\|/u);
 });
+
+
+// Regression: real RL-textbook failure — a whole display formula emitted with
+// NO delimiters, split across lines, first line starting with "(" so no
+// line-level heuristic fires. The paragraph-level KaTeX-judged wrapper must
+// wrap it as display math.
+test("wraps a fully bare multi-line formula paragraph (real ch02 case)", () => {
+  const input = [
+    "若今天状态为晴，则明天奖励的条件期望是",
+    "",
+    String.raw`(P r)(\text{晴})`,
+    "=",
+    String.raw`0.8\times 1+0.2\times (-1)`,
+    "=0.6.",
+    "",
+    "其中，$0.8$ 是今天晴、明天仍为晴的概率。",
+  ].join("\n");
+  const out = postRepairMarkdown(input);
+  assert.ok(out.includes("$$\n(P r)(" + String.raw`\text{晴})`), out);
+  assert.ok(out.includes("=0.6.\n$$"), out);
+  assert.equal(postRepairMarkdown(out), out, "must stay idempotent");
+});
+
+test("wraps a bare single-line formula starting with an absolute-value bar (real ch03 case)", () => {
+  const input = `则有\n\n${String.raw`|G_t| \leq (T-t)R_{\max}.`}\n\n其中 $T$ 表示回合终止时刻。`;
+  const out = postRepairMarkdown(input);
+  assert.ok(out.includes("$$\n" + String.raw`|G_t| \leq (T-t)R_{\max}.` + "\n$$"), out);
+  assert.equal(postRepairMarkdown(out), out);
+});
+
+test("does not wrap prose paragraphs, tables, or lists as math", () => {
+  const input = [
+    "这是一个提及公式概念的中文段落，但它不是公式。",
+    "",
+    "| 列A | 列B |",
+    "| --- | --- |",
+    "| 1 | 2 |",
+    "",
+    String.raw`- 列表项 \alpha 提及`,
+  ].join("\n");
+  const out = postRepairMarkdown(input);
+  assert.ok(!out.includes("$$"), out);
+});

@@ -62,6 +62,9 @@ function isActiveChapterJob(status?: JobStatus) {
 
 function canRegenerateChapter(chapter: Course["chapters"][number], currentJobStatus?: JobStatus) {
   if (isActiveChapterJob(currentJobStatus)) return false;
+  // A chapter can read "generating" while its job is already dead (e.g. the
+  // stale-job watchdog killed it) — the failed job is the truth: offer retry.
+  if (currentJobStatus === "failed") return true;
   if (chapter.status === "queued" || chapter.status === "generating") return false;
   return REGENERABLE_CHAPTER_STATUSES.has(effectiveChapterStatus(chapter));
 }

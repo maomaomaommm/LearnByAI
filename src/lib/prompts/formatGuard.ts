@@ -1,8 +1,9 @@
+import { canRenderMath } from "@/lib/katexValidate";
 import { normalizeMath } from "@/lib/markdownMath";
 import { sanitizeMathDelimiters } from "@/lib/sanitizeMath";
 
 export function preRepairMarkdown(content: string) {
-  return escapePipesInTableMath(repairMarkdownFences(normalizeMath(content)))
+  return escapePipesInTableMath(wrapBareMathParagraphs(repairMarkdownFences(normalizeMath(content))))
     .replace(/(^|\n)\$\s*\n([\s\S]*?)\n\$\s*(?=\n|$)/gu, (_match, prefix = "", body = "") => {
       return `${prefix}$$\n${body.trim()}\n$$`;
     })
@@ -36,6 +37,101 @@ function escapePipesInTableMath(content: string) {
 
 export function postRepairMarkdown(content: string) {
   return sanitizeMathDelimiters(preRepairMarkdown(stripOuterFence(content)));
+}
+
+/**
+ * Heal whole paragraphs of naked LaTeX that the line-level heuristics in
+ * markdownMath can't see. Long model outputs sometimes emit an entire display
+ * formula with NO delimiters at all, split across lines, e.g.
+ *
+ *   (P r)(\text{晴})
+ *   =
+ *   0.8\times 1+0.2\times (-1)
+ *   =0.6.
+ *
+ * The first line starts with "(" — no strong-command prefix — so per-line
+ * wrapping misses it and the whole block renders as broken plain text (the
+ * dominant "formula looks broken" failure in real long chapters). Instead of
+ * growing regex lists forever, this pass works at paragraph granularity with
+ * KaTeX itself as the judge: a paragraph outside any fence/$$ that contains a
+ * LaTeX command, has no prose (no CJK outside \text{}, no English sentences),
+ * no $ delimiters — and that KaTeX can render as a whole — is a bare display
+ * formula and gets wrapped in $$.
+ */
+function wrapBareMathParagraphs(content: string) {
+  const lines = content.split("\n");
+  const out: string[] = [];
+  let inFence = false;
+  let inMath = false;
+  let index = 0;
+
+  while (index < lines.length) {
+    const line = lines[index] ?? "";
+    const trimmed = line.trim();
+    if (/^(```|~~~)/u.test(trimmed)) {
+      inFence = !inFence;
+      out.push(line);
+      index += 1;
+      continue;
+    }
+    if (inFence || inMath || !trimmed) {
+      if (trimmed === "$$") inMath = !inMath;
+      out.push(line);
+      index += 1;
+      continue;
+    }
+    if (trimmed === "$$") {
+      inMath = true;
+      out.push(line);
+      index += 1;
+      continue;
+    }
+
+    const paragraph: string[] = [];
+    while (index < lines.length) {
+      const current = (lines[index] ?? "").trim();
+      if (!current || current === "$$" || /^(```|~~~)/u.test(current)) break;
+      paragraph.push(lines[index] ?? "");
+      index += 1;
+    }
+    out.push(...(tryWrapBareMathParagraph(paragraph) ?? paragraph));
+  }
+
+  return out.join("\n");
+}
+
+function tryWrapBareMathParagraph(paragraph: string[]): string[] | undefined {
+  const trimmedLines = paragraph.map((line) => line.trim());
+  // Never touch structured Markdown (headings, lists, quotes, tables, figure
+  // blocks). A leading "|" only means "table row" when the line also ends with
+  // one — |G_t| \leq ... is an absolute value, not a table.
+  if (trimmedLines.some((line) => /^(#{1,6}\s|[-*+]\s|\d+[.)]\s|>|:::)/u.test(line) || (line.startsWith("|") && line.endsWith("|")))) {
+    return undefined;
+  }
+  const joined = trimmedLines.join("\n");
+  if (joined.length < 4) return undefined;
+  if (/(?<!\\)\$/u.test(joined)) return undefined; // already delimited somewhere
+  if (joined.includes("![") || joined.includes("](") || joined.includes("<!--")) return undefined;
+  if (!/\\[A-Za-z]+/u.test(joined)) return undefined; // needs a real LaTeX command
+  if (hasProseCjkOutsideTextCommands(joined)) return undefined;
+  if (hasPlainProseWords(joined)) return undefined;
+  if (!canRenderMath(joined, true)) return undefined; // KaTeX has the final say
+  return ["$$", ...trimmedLines, "$$"];
+}
+
+function hasProseCjkOutsideTextCommands(value: string) {
+  const stripped = value.replace(
+    /\\(?:text|textbf|textit|textrm|textsf|texttt|mathrm|mathbf|mathsf|mathtt|operatorname)\s*\{[^{}]*\}/gu,
+    "",
+  );
+  return /[一-鿿]/u.test(stripped);
+}
+
+function hasPlainProseWords(value: string) {
+  const stripped = value
+    .replace(/\\(?:text|textbf|textit|textrm|textsf|texttt|mathrm|mathbf|operatorname)\s*\{[^{}]*\}/gu, "")
+    .replace(/\\[A-Za-z]+/gu, "");
+  return (stripped.match(/[A-Za-z]{3,}/gu) ?? []).length >= 3;
 }
 
 export function buildFormatGuardPrompt(content: string) {

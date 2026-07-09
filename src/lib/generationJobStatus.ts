@@ -1,7 +1,7 @@
 import "server-only";
 
 import { getGenerationJob, upsertGenerationJob } from "./jobs";
-import { getServerGenerationJob, saveServerGenerationJob } from "./serverStore";
+import { getServerCourse, getServerGenerationJob, saveServerGenerationJob, updateServerChapter } from "./serverStore";
 import { GenerationJob } from "./types";
 
 export async function getGenerationJobForRequest(jobId: string, request: Request) {
@@ -40,7 +40,33 @@ export async function markStaleJobFailed(job: GenerationJob | undefined, request
   };
   upsertGenerationJob(next);
   await saveServerGenerationJob(next, request);
+  await syncChapterAfterStaleFailure(next, request);
   return next;
+}
+
+/**
+ * A watchdog-failed chapter job must not leave the chapter stuck at
+ * "generating"/"queued" — the UI would show a dead spinner with no retry
+ * affordance. Flip the chapter to a terminal, retryable state: keep the draft
+ * readable when a body exists, otherwise mark it failed.
+ */
+async function syncChapterAfterStaleFailure(job: GenerationJob, request: Request) {
+  if (job.type !== "chapter" || !job.courseId || !job.chapterId) return;
+  try {
+    const course = await getServerCourse(job.courseId, request);
+    const chapter = course?.chapters.find((item) => item.id === job.chapterId);
+    if (!course || !chapter) return;
+    if (chapter.status !== "generating" && chapter.status !== "queued") return;
+    const hasBody = Boolean(chapter.content || chapter.sections?.length);
+    await updateServerChapter(
+      course,
+      job.chapterId,
+      { status: hasBody ? "draft_ready" : "failed", generationJobId: job.id },
+      request,
+    );
+  } catch (error) {
+    console.warn("Failed to sync chapter status after stale job failure:", error);
+  }
 }
 
 function readPositiveInteger(value: string | undefined, fallback: number) {

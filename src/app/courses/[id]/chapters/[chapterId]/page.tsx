@@ -105,6 +105,7 @@ export default function ReaderPage() {
   const [jobEvents, setJobEvents] = useState<Record<string, AgentEvent[]>>({});
   const [loading, setLoading] = useState(true);
   const [generationError, setGenerationError] = useState("");
+  const [requalitying, setRequalitying] = useState(false);
   const [exporting, setExporting] = useState(false);
 
   const [tocOpen, setTocOpen] = useState(true);
@@ -294,6 +295,35 @@ export default function ReaderPage() {
       ),
     });
   }, [chapter, course, ensureChapterContent]);
+
+  const requalityChapter = useCallback(async () => {
+    if (!course || !chapter || requalitying) return;
+    setRequalitying(true);
+    try {
+      const response = await apiFetch(`/api/chapters/${chapter.id}/requality`, {
+        method: "POST",
+        body: JSON.stringify({ courseId: course.id }),
+      });
+      const data = (await response.json().catch(() => ({}))) as {
+        course?: Course;
+        report?: { score: number; status: string };
+        error?: string;
+      };
+      if (!response.ok) throw new Error(data.error ?? "重新质检失败。");
+      if (data.course) applyCourseUpdate(data.course);
+      if (data.report) {
+        toast.success(
+          data.report.status === "failed"
+            ? `重新质检完成：${data.report.score} / 100，仍未通过，可尝试整章重新生成。`
+            : `重新质检通过：${data.report.score} / 100，本章已开放阅读。`,
+        );
+      }
+    } catch (error) {
+      toast.error(publicSafeErrorMessage(error, "重新质检失败，请稍后重试。"));
+    } finally {
+      setRequalitying(false);
+    }
+  }, [applyCourseUpdate, chapter, course, requalitying]);
 
   useEffect(() => {
     let cancelled = false;
@@ -560,9 +590,56 @@ export default function ReaderPage() {
             </div>
           </div>
 
-          {generationError && hasChapterBody(chapter) && (
+          {chapter && effectiveChapterStatus(chapter) === "quality_failed" && hasChapterBody(chapter) ? (
+            <div className="mb-8 rounded-lg border border-amber-500/30 bg-amber-500/5 px-4 py-4">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <p className="text-sm font-medium text-amber-700 dark:text-amber-300">
+                    本章质量检查未通过{chapter.qualityReport ? `（${chapter.qualityReport.score} / 100）` : ""}，正文展示的是当前最佳草稿。
+                  </p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    「重新质检与修复」会用最新的确定性修复规则治愈格式问题并重新评分（不消耗额度）；仍不达标时可整章重新生成。
+                  </p>
+                </div>
+                <div className="flex shrink-0 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => void requalityChapter()}
+                    disabled={requalitying}
+                    className="rounded-md border border-amber-500/40 bg-background px-3 py-1.5 text-xs font-medium text-amber-700 hover:bg-amber-500/10 disabled:opacity-50 dark:text-amber-300"
+                  >
+                    {requalitying ? "重新质检中…" : "重新质检与修复"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={regenerateCurrentChapter}
+                    className="rounded-md border border-border bg-background px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground"
+                  >
+                    重新生成本章
+                  </button>
+                </div>
+              </div>
+              {(chapter.qualityReport?.issues?.length ?? 0) > 0 && (
+                <ul className="mt-3 space-y-2 border-t border-amber-500/20 pt-3">
+                  {chapter.qualityReport!.issues.slice(0, 8).map((issue, issueIndex) => (
+                    <li key={issueIndex} className="text-xs leading-relaxed">
+                      <span className={`mr-2 rounded px-1.5 py-0.5 text-[10px] font-medium ${
+                        issue.severity === "error"
+                          ? "bg-destructive/10 text-destructive"
+                          : "bg-amber-500/10 text-amber-700 dark:text-amber-300"
+                      }`}>
+                        {issue.severity === "error" ? "错误" : issue.severity === "warning" ? "警告" : "提示"}
+                      </span>
+                      <span className="text-foreground">{issue.message}</span>
+                      {issue.suggestion && <span className="ml-1 text-muted-foreground">建议：{issue.suggestion}</span>}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          ) : generationError && hasChapterBody(chapter) ? (
             <div className="mb-8 rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">{generationError}</div>
-          )}
+          ) : null}
 
           {loading ? (
             <div className="rounded-lg border border-dashed border-border py-24 text-center">
