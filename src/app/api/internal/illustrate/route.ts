@@ -22,6 +22,7 @@ export async function POST(request: Request) {
     courseId?: string;
     chapterId?: string;
     force?: boolean;
+    plan?: unknown;
   };
   if (!input.courseId || !input.chapterId) {
     return NextResponse.json({ error: "courseId and chapterId are required." }, { status: 400 });
@@ -39,6 +40,7 @@ export async function POST(request: Request) {
       chapterId: input.chapterId,
       overrides,
       force: input.force === true,
+      plan: input.plan,
       request: requestForCourseOwner(request, course.userId),
     });
     return NextResponse.json(result);

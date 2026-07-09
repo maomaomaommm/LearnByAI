@@ -56,7 +56,11 @@ export type IllustrationPlanItem = { anchor: string; caption: string; prompt: st
 
 export function parseIllustrationPlan(raw: string, maxCount: number): IllustrationPlanItem[] {
   const parsed = parseJson<{ illustrations?: unknown }>(raw);
-  const list = Array.isArray(parsed.illustrations) ? parsed.illustrations : [];
+  return normalizeIllustrationPlanItems(parsed.illustrations, maxCount);
+}
+
+export function normalizeIllustrationPlanItems(list: unknown, maxCount: number): IllustrationPlanItem[] {
+  if (!Array.isArray(list)) return [];
   const items: IllustrationPlanItem[] = [];
   for (const entry of list) {
     if (!entry || typeof entry !== "object") continue;
@@ -229,6 +233,8 @@ export async function illustrateChapter(input: {
   overrides?: ModelOverrides;
   force?: boolean;
   request?: Request;
+  /** Internal/ops override: a pre-written plan skips the planning agent (e.g. when the owner's text model is unavailable). */
+  plan?: unknown;
 }): Promise<IllustrateChapterResult> {
   const config = getIllustrationConfig();
   if (!config.apiKey) throw new Error("Illustration API is not configured.");
@@ -242,24 +248,28 @@ export async function illustrateChapter(input: {
     return { status: "skipped", inserted: 0, illustrations: [], skipped: [] };
   }
 
-  // Plan on the owner's model config; the REVIEWER slot fits (read + judge, JSON out).
-  const planText = await dispatchAgentText({
-    agent: "REVIEWER",
-    prompt: buildIllustrationPlanPrompt({
-      course: input.course,
-      chapterTitle: chapter.title,
-      chapterNumber: chapterIndex + 1,
-      content,
-      maxCount: config.maxPerChapter,
-    }),
-    temperature: 0.2,
-    maxTokens: 4096,
-    responseFormat: "json_object",
-    overrides: input.overrides,
-    mock: () => JSON.stringify({ illustrations: [] }),
-  });
-
-  const planned = parseIllustrationPlan(planText, config.maxPerChapter);
+  let planned: IllustrationPlanItem[];
+  if (input.plan !== undefined) {
+    planned = normalizeIllustrationPlanItems(input.plan, config.maxPerChapter);
+  } else {
+    // Plan on the owner's model config; the REVIEWER slot fits (read + judge, JSON out).
+    const planText = await dispatchAgentText({
+      agent: "REVIEWER",
+      prompt: buildIllustrationPlanPrompt({
+        course: input.course,
+        chapterTitle: chapter.title,
+        chapterNumber: chapterIndex + 1,
+        content,
+        maxCount: config.maxPerChapter,
+      }),
+      temperature: 0.2,
+      maxTokens: 4096,
+      responseFormat: "json_object",
+      overrides: input.overrides,
+      mock: () => JSON.stringify({ illustrations: [] }),
+    });
+    planned = parseIllustrationPlan(planText, config.maxPerChapter);
+  }
   const skipped: IllustrationSkip[] = [];
 
   // Validate anchors before paying ~1 minute per image, and keep figures in

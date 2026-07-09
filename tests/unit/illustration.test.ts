@@ -4,6 +4,7 @@ import {
   buildIllustrationMarkdown,
   insertIllustrationsIntoMarkdown,
   isValidIllustrationPath,
+  normalizeIllustrationPlanItems,
   parseIllustrationPlan,
   resolveIllustrationAnchor,
 } from "../../src/lib/illustration";
@@ -40,6 +41,16 @@ test("parseIllustrationPlan keeps valid entries and caps at maxCount", () => {
   assert.equal(items.length, 2);
   assert.equal(items[0].caption, "交互循环");
   assert.equal(items[1].caption, "价值函数");
+});
+
+test("normalizeIllustrationPlanItems accepts a pre-written plan array and rejects non-arrays", () => {
+  const items = normalizeIllustrationPlanItems(
+    [{ anchor: "这个循环是强化学习的核心", caption: "闭环", prompt: "loop" }],
+    3,
+  );
+  assert.equal(items.length, 1);
+  assert.deepEqual(normalizeIllustrationPlanItems({ not: "an array" }, 3), []);
+  assert.deepEqual(normalizeIllustrationPlanItems(undefined, 3), []);
 });
 
 test("parseIllustrationPlan tolerates a fenced JSON reply", () => {
