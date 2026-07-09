@@ -22,7 +22,7 @@ export function Navigation() {
   const navLinks = [
     { label: "首页", href: "/" },
     { label: "课程", href: "/courses" },
-    { label: "创建", href: "/create" },
+    { label: "创建", href: "/create/mode" },
     { label: "关于", href: "/about" },
   ];
 

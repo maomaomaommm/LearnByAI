@@ -16,9 +16,13 @@ test("mock beta flow: create course, generate chapter, ask tutor, export", async
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "LearnByAI" })).toBeVisible();
 
-  await page.locator('a[href="/create"]').first().click();
-  await expect(page).toHaveURL(/\/create$/);
-  await expect(page.locator("form")).toBeVisible();
+  // Creating a course now goes through the mode chooser first. Generous
+  // timeouts: the dev-mode server compiles each route on first navigation.
+  await page.locator('a[href="/create/mode"]').first().click();
+  await expect(page).toHaveURL(/\/create\/mode$/, { timeout: 30_000 });
+  await page.locator('a[href="/create?mode=lecture"]').click();
+  await expect(page).toHaveURL(/\/create\?mode=lecture$/, { timeout: 30_000 });
+  await expect(page.locator("form")).toBeVisible({ timeout: 30_000 });
 
   await page.locator('input[name="topic"]').fill("Mock Beta Flow");
   await page.locator('textarea[name="goal"]').fill("Verify the browser flow uses server-backed course data.");

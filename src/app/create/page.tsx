@@ -1,17 +1,17 @@
 "use client";
 
-import { useRouter } from "next/navigation";
-import { FormEvent, useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { FormEvent, Suspense, useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { ArrowRight, BookOpen, Target, User, Clock, GraduationCap, Loader2, Route, Zap, FileCheck, ArrowLeft } from "lucide-react";
 import Link from "next/link";
 import { apiFetch } from "@/lib/clientApi";
 import { publicSafeErrorMessage } from "@/lib/publicSafeError";
-import { useUser } from "@/lib/hooks/useUser";
+import { isSupabaseAuthEnabled, useUser } from "@/lib/hooks/useUser";
 import { Course, CourseCreateResponse } from "@/lib/types";
+import type { ContentMode } from "@/lib/types";
 
 const DRAFT_KEY = "learnbyai_create_draft";
-const LOGIN_NEXT = `/login?next=${encodeURIComponent("/create")}`;
 
 type CreateDraft = {
   topic?: string;
@@ -27,7 +27,18 @@ type CreateDraft = {
 };
 
 export default function CreateCoursePage() {
+  return (
+    <Suspense fallback={<CenteredNote text="正在加载创建页..." />}>
+      <CreateCourseContent />
+    </Suspense>
+  );
+}
+
+function CreateCourseContent() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const contentMode: ContentMode = searchParams.get("mode") === "textbook" ? "textbook" : "lecture";
+  const loginNext = `/login?next=${encodeURIComponent(`/create?mode=${contentMode}`)}`;
   const user = useUser();
   const [hydrated, setHydrated] = useState(false);
   const [draft, setDraft] = useState<CreateDraft | null>(null);
@@ -49,10 +60,13 @@ export default function CreateCoursePage() {
     }
   }, []);
 
-  // Guide signed-out visitors to log in / register first, then bring them back here.
+  // Guide signed-out visitors to log in / register first, then bring them back
+  // here. In local fallback mode there is no auth system at all — never gate,
+  // or local users would be bounced to a login page that cannot work.
+  const authEnabled = isSupabaseAuthEnabled();
   useEffect(() => {
-    if (user === null) router.replace(LOGIN_NEXT);
-  }, [user, router]);
+    if (authEnabled && user === null) router.replace(loginNext);
+  }, [authEnabled, user, router, loginNext]);
 
   useEffect(() => {
     if (!loading) return;
@@ -97,6 +111,7 @@ export default function CreateCoursePage() {
       ? customCount
       : (Number.isFinite(presetCount) && presetCount > 0 ? presetCount : 8);
     const input = {
+      contentMode,
       topic: String(values.topic),
       goal: String(values.goal),
       background: String(values.background),
@@ -120,7 +135,7 @@ export default function CreateCoursePage() {
           persistDraft(values, styles);
           setError("登录已过期，正在前往登录，你的填写已保留...");
           setLoading(false);
-          router.push(LOGIN_NEXT);
+          router.push(loginNext);
           return;
         }
         const data = (await response.json().catch(() => undefined)) as { error?: string } | undefined;
@@ -130,19 +145,19 @@ export default function CreateCoursePage() {
       const course: Course = "course" in data ? data.course : data;
 
       setProgress(100);
-      setProgressStage("生成完成，正在打开课程");
+      setProgressStage(contentMode === "textbook" ? "大纲已创建，正在打开确认页" : "生成完成，正在打开课程");
 
-      router.push(`/courses/${course.id}`);
+      router.push(contentMode === "textbook" ? `/courses/${course.id}/outline` : `/courses/${course.id}`);
     } catch (error) {
       setError(publicSafeErrorMessage(error, "Course creation failed. Please try again."));
       setLoading(false);
     }
   }
 
-  if (user === undefined) {
+  if (authEnabled && user === undefined) {
     return <CenteredNote text="检查登录状态…" />;
   }
-  if (user === null) {
+  if (authEnabled && user === null) {
     return <CenteredNote text="创建课程需要登录，正在前往登录 / 注册…" />;
   }
 
@@ -166,8 +181,17 @@ export default function CreateCoursePage() {
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.6 }}
         >
-          <h1 className="mb-2 font-mono text-2xl font-bold text-foreground">定制你的专属课程</h1>
-          <p className="mb-8 text-sm text-muted-foreground">让多个 AI Agent 为你量身打造系统的学习内容</p>
+          <h1 className="mb-2 font-mono text-2xl font-bold text-foreground">
+            {contentMode === "textbook" ? "定制你的专属教材" : "定制你的专属课程"}
+          </h1>
+          <p className="mb-4 text-sm text-muted-foreground">
+            {contentMode === "textbook"
+              ? "教材模式会先生成全书大纲，确认后再分章生成正文。插图会根据你的生图模型配置自动选择模型生图或默认代码渲染。"
+              : "让多个 AI Agent 为你量身打造系统的学习内容"}
+          </p>
+          <div className="mb-8 inline-flex rounded-full border border-border bg-muted/40 px-3 py-1 text-xs text-muted-foreground">
+            {contentMode === "textbook" ? "教材模式 · 先确认大纲" : "讲义模式 · 快速生成"}
+          </div>
 
           {draft && !loading && (
             <p className="mb-6 rounded-md border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">

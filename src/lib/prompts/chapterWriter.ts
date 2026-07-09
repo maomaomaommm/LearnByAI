@@ -73,6 +73,25 @@ export function getChapterDepthGuide(weight: ChapterDepthWeight | undefined): Ch
   return DEPTH_GUIDE[weight ?? "normal"];
 }
 
+/**
+ * Textbook mode: the confirmed book outline (book title + this chapter's
+ * section outline) is authoritative context beyond the per-chapter contract.
+ */
+function textbookContext(course: Course, chapterIndex: number) {
+  if (course.contentMode !== "textbook" || !course.textbookMeta) return "";
+  const meta = course.textbookMeta;
+  const outlineChapter = meta.outline?.chapters?.[chapterIndex];
+  const sectionOutline = outlineChapter?.sections?.length
+    ? outlineChapter.sections.map((section) => `${chapterIndex + 1}.${section.order + 1} ${section.title}：${section.description}`).join("\n")
+    : "";
+  return `
+教材信息（本课程是正式教材，写作口吻与结构按已确认的全书大纲执行）：
+书名：${meta.title}${meta.subtitle ? `（${meta.subtitle}）` : ""}
+全书大纲：
+${meta.outline?.bookOutlineMarkdown ?? "未提供"}
+${sectionOutline ? `本章已确认的小节大纲（正文主题小节必须按此展开、编号一致）：\n${sectionOutline}\n` : ""}`;
+}
+
 export function buildChapterWriterPrompt(
   course: Course,
   chapter: Chapter,
@@ -118,14 +137,19 @@ ${depthGuide.scope.map((item) => `- ${item}`).join("\n")}
 - 公式必须规范：行内公式用 $...$；独立公式、推导、cases、aligned、矩阵必须用 $$...$$ 块公式。
 - 如果确实写代码，必须放在 fenced code block 中，并保留语言名；禁止写不确定注释、伪造变量名或“可能/需检查惯例”这类未清理草稿痕迹。
 - 代码块务必标注语言（如 python、bash）；纯文本示意图也要用 text 作为语言名的围栏代码块包裹。
-- 图示是默认能力（Mermaid，按需自动配图，平台会把 \`\`\`mermaid 围栏渲染成图）。判定与画法：
-  - 触发（何时考虑画）：当正文出现流程、状态/生命周期、交互时序、数据结构/类、数据模型/实体关系、概念关系或时间演进时，考虑配一张图。
-  - 场景→类型：流程→flowchart TD；交互/协议/调用时序→sequenceDiagram；状态/生命周期→stateDiagram-v2；数据结构/类关系→classDiagram；数据模型/实体关系→erDiagram；概念总览→mindmap；时间演进→timeline。
-  - 必要性闸门（每张图落笔前都要过）：这张图是否比纯文字或表格更能说清这段关系、是否承载了文字没完全表达的信息？只起装饰、复述文字、或可有可无的图一律不画——图必须为读者省下理解成本才配留下。
-  - 不设每章张数与上限：画几张由通过闸门的场景数自然决定；该画则画，没有合适场景就一张都不画，绝不为凑图而画。
-  - 每张图前后都必须有文字讲解，图只是佐证不是主体；节点文字保持简短，避免中文括号、引号、分号等特殊字符（必要时用英文别名加中文标签 A["标签"]），确保能被 Mermaid 正确解析。
-  - 图内标签只能用纯文本：禁止任何 LaTeX 与数学记号（$...$、下标 _{}、上标 ^{}、\\ 命令），它们在图里会原样显示；要表达 S_t、π_ref 之类，写成朴素文本（如 S(t)、pi_ref 或中文说明）。
-  - 连线/箭头只能用 Mermaid 的 ASCII 语法：flowchart 用 \`-->\`（带标签写 \`A -->|说明| B\`）、sequenceDiagram 用 \`->>\`、stateDiagram 用 \`-->\`。严禁使用 Unicode 箭头（→、⟶、⇒、⇨ 等），否则整张图会因语法错误无法渲染。
+- 图示是按需能力，但不要输出 Mermaid 或任何代码图围栏。需要插图时，输出统一占位块，平台会根据用户配置自动选择“模型生图”或“代码渲染图”：
+  - 触发：当正文出现流程、状态/生命周期、交互时序、数据结构/类、数据模型/实体关系、概念关系、算法步骤、公式依赖关系或时间演进时，考虑配一张图。
+  - 场景→类型参考：流程/依赖关系可写成 flowchart 意图；状态与生命周期可写成 stateDiagram-v2 意图；交互时序可写成 sequenceDiagram 意图。这里只用于 diagramSpec 表达结构，不要输出 Mermaid 代码。
+  - 必要性闸门：这张图是否比纯文字或表格更能说清关系、是否承载了文字没完全表达的信息？只起装饰、复述文字、或可有可无的图一律不画。
+  - 不设每章张数与上限：画几张由通过闸门的场景数自然决定；没有合适场景就一张都不画。
+  - 每张图前后都必须有文字讲解，图只是佐证不是主体；图内文字标签要短，优先使用 2 到 6 个字的中文标签，避免长句和复杂公式。
+  - 插图占位块格式必须严格如下，不要加代码围栏：
+:::learnbyai-figure
+caption: 用一句话写图题，不要写最终编号
+prompt: 给生图模型的完整画面说明，包含对象、关系、布局和风格
+diagramSpec: 给代码渲染兜底使用的结构说明，写清节点、箭头或层级
+textLabelsAllowed: true
+:::
 - LaTeX 文本命令内若含下划线（如节点名 __end__、变量名 node_name），必须转义为 \\_，例如写成 \\text{\\_\\_end\\_\\_}，否则公式会渲染失败。
 - 严禁把中文正文、习题标题、说明文字包进 $$...$$；$$ 只能包裹纯数学表达式。
 - 表格单元格里的公式：又长又复杂的公式不要塞进单元格（会溢出），改用 $$ 块公式，表格只放简短对照；单元格内行内公式若含竖线 |（如条件概率、范数），必须写成 \\mid（如 $\\pi(a \\mid s)$、$p(s',r \\mid s,a)$），不得用裸 |——否则会被 Markdown 当成表格列分隔符，把公式拆断、无法渲染。
@@ -145,7 +169,7 @@ ${depthGuide.scope.map((item) => `- ${item}`).join("\n")}
 学习目标：${course.goal}
 学习者基础：${course.background}
 ${buildTeachingGuidance(course.styles, course.learningMode, course.preference)}
-
+${textbookContext(course, chapterIndex)}
 Course Bible:
 ${JSON.stringify(course.courseBible, null, 2)}
 

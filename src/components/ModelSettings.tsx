@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Activity, Loader2, Settings2, Sparkles } from "lucide-react";
+import { Activity, Image as ImageIcon, Loader2, Settings2, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { Button } from "@/components/ui/button";
@@ -45,6 +45,7 @@ type ModelSettingsProps = {
 
 type ModelSettingsState = {
   default: ModelOverrideFields;
+  image: ModelOverrideFields;
   agents: Record<AgentName, ModelOverrideFields>;
 };
 
@@ -88,7 +89,6 @@ export function ModelSettings({ className, showLabel = false, size }: ModelSetti
   const [open, setOpen] = useState(false);
   const [status, setStatus] = useState("");
   const [settings, setSettings] = useState<ModelSettingsState>(() => emptySettings());
-  const [isLoading, setIsLoading] = useState(false);
   const [pendingSave, setPendingSave] = useState(false);
   const [confirmClose, setConfirmClose] = useState(false);
   const buttonSize = size ?? (showLabel ? "sm" : "icon-sm");
@@ -97,7 +97,6 @@ export function ModelSettings({ className, showLabel = false, size }: ModelSetti
     if (!open) return;
     setStatus("");
     setPendingSave(false);
-    setIsLoading(true);
     const local = readStoredSettings();
     setSettings(local);
 
@@ -121,8 +120,6 @@ export function ModelSettings({ className, showLabel = false, size }: ModelSetti
         }
       } catch {
         // silent — localStorage is the offline fallback
-      } finally {
-        if (!cancelled) setIsLoading(false);
       }
     }
     loadServerConfig();
@@ -136,6 +133,16 @@ export function ModelSettings({ className, showLabel = false, size }: ModelSetti
       ...current,
       default: {
         ...current.default,
+        [field]: value,
+      },
+    }));
+  }
+
+  function updateImage(field: keyof ModelOverrideFields, value: string) {
+    setSettings((current) => ({
+      ...current,
+      image: {
+        ...current.image,
         [field]: value,
       },
     }));
@@ -298,6 +305,25 @@ export function ModelSettings({ className, showLabel = false, size }: ModelSetti
             />
           </section>
 
+          <section className="relative mb-6 overflow-hidden rounded-xl border border-amber-500/20 bg-amber-500/5 p-5">
+            <div className="absolute left-0 top-0 h-full w-1 bg-amber-500/45" />
+            <h3 className="mb-2 flex items-center gap-2 text-sm font-semibold tracking-tight text-foreground">
+              <ImageIcon className="h-4 w-4 text-amber-600 dark:text-amber-400" />
+              生图模型
+            </h3>
+            <p className="mb-5 text-xs leading-relaxed text-muted-foreground">
+              不填写时，插图使用默认代码渲染：更稳定、更快、文字标签准确，但风格会更机械。填写后，讲义和教材的新插图会调用你的生图 API：更像正式教材插图，但更慢、消耗 API，图中文字可能需要重试。
+            </p>
+            <Fields
+              idPrefix="model-image"
+              values={settings.image}
+              onChange={updateImage}
+              testEndpoint="/api/test-image-model"
+              getTestPayload={() => ({ overrides: toOverrides(settings), fields: settings.image })}
+              onTestSuccess={() => setPendingSave(true)}
+            />
+          </section>
+
           <div className="mb-3 px-1">
             <h4 className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/70">
               智能体单独配置
@@ -385,12 +411,14 @@ function Fields({
   values,
   onChange,
   getTestPayload,
+  testEndpoint,
   onTestSuccess,
 }: {
   idPrefix: string;
   values: ModelOverrideFields;
   onChange: (field: keyof ModelOverrideFields, value: string) => void;
   getTestPayload: () => unknown;
+  testEndpoint?: string;
   onTestSuccess?: () => void;
 }) {
   const [isTesting, setIsTesting] = useState(false);
@@ -401,7 +429,7 @@ function Fields({
     setTestResult(null);
     try {
       const token = await getAccessToken();
-      const res = await fetch("/api/test-model", {
+      const res = await fetch(testEndpoint ?? "/api/test-model", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -550,6 +578,7 @@ async function getAccessToken(): Promise<string | undefined> {
 function overridesToState(overrides: ModelOverrides): ModelSettingsState {
   return {
     default: { ...EMPTY_FIELDS, ...overrides.default },
+    image: { ...EMPTY_FIELDS, ...overrides.image },
     agents: MODEL_AGENT_NAMES.reduce((agents, agent) => {
       agents[agent] = { ...EMPTY_FIELDS, ...overrides.agents?.[agent] };
       return agents;
@@ -567,6 +596,7 @@ function readStoredSettings(): ModelSettingsState {
 function emptySettings(): ModelSettingsState {
   return {
     default: { ...EMPTY_FIELDS },
+    image: { ...EMPTY_FIELDS },
     agents: MODEL_AGENT_NAMES.reduce((agents, agent) => {
       agents[agent] = { ...EMPTY_FIELDS };
       return agents;
@@ -578,6 +608,7 @@ function toOverrides(settings: ModelSettingsState): ModelOverrides {
   return {
     version: 1,
     default: cleanFields(settings.default),
+    image: cleanFields(settings.image),
     agents: MODEL_AGENT_NAMES.reduce((agents, agent) => {
       agents[agent] = cleanFields(settings.agents[agent]);
       return agents;

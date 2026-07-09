@@ -14,7 +14,7 @@ import {
   stageForEvent,
 } from "@/components/generation-studio/helpers";
 import { effectiveChapterStatus, hasChapterBody, isChapterReadable } from "@/lib/chapterReadiness";
-import { Target, Lightbulb, GraduationCap, ArrowLeft, FileText, ChevronRight, Clock, Download, Activity } from "lucide-react";
+import { Target, Lightbulb, GraduationCap, ArrowLeft, FileText, ChevronRight, Clock, Download, Activity, BookMarked, Map } from "lucide-react";
 import { apiFetch, subscribeToSse } from "@/lib/clientApi";
 import { publicSafeErrorMessage } from "@/lib/publicSafeError";
 
@@ -94,6 +94,8 @@ export default function CourseOverviewPage() {
   const [studioSettled, setStudioSettled] = useState(false);
   const [sawStudioActivity, setSawStudioActivity] = useState(false);
   const [studioExpanded, setStudioExpanded] = useState(false);
+  const [retryingMap, setRetryingMap] = useState(false);
+  const [mapRetryError, setMapRetryError] = useState("");
 
   useEffect(() => {
     let cancelled = false;
@@ -220,6 +222,25 @@ export default function CourseOverviewPage() {
     setBackgroundJob("");
   }
 
+  async function retryTextbookMap() {
+    if (!course || retryingMap) return;
+    setRetryingMap(true);
+    setMapRetryError("");
+    try {
+      const response = await apiFetch("/api/figures/retry", {
+        method: "POST",
+        body: JSON.stringify({ courseId: course.id, target: "book-map" }),
+      });
+      const data = (await response.json().catch(() => ({}))) as { course?: Course; error?: string };
+      if (!response.ok) throw new Error(data.error ?? "教材地图重新生成失败。");
+      if (data.course) setCourse(data.course);
+    } catch (error) {
+      setMapRetryError(publicSafeErrorMessage(error, "教材地图重新生成失败。"));
+    } finally {
+      setRetryingMap(false);
+    }
+  }
+
   async function exportCourse(format: ExportJob["format"]) {
     if (!course) return;
     setExporting(format);
@@ -283,6 +304,11 @@ export default function CourseOverviewPage() {
     );
   }
 
+  const isTextbook = course.contentMode === "textbook";
+  const textbookMeta = course.textbookMeta;
+  const needsOutlineConfirmation = isTextbook && textbookMeta?.outlineStatus !== "confirmed";
+  const textbookMap = textbookMeta?.textbookMap;
+
   return (
     <div className="min-h-screen bg-background">
       <div className="mx-auto max-w-6xl px-4 py-12">
@@ -297,6 +323,11 @@ export default function CourseOverviewPage() {
         <div className="mb-8 rounded-lg border border-border bg-card p-6 md:p-8">
           <div className="mb-4 flex items-center justify-between">
             <h1 className="font-mono text-2xl font-bold text-foreground md:text-3xl">{course.topic}</h1>
+            {isTextbook && (
+              <span className="inline-flex items-center gap-1 rounded-full border border-foreground/20 bg-foreground/5 px-3 py-1 text-xs font-medium text-foreground">
+                <BookMarked size={13} /> 教材模式
+              </span>
+            )}
             <span className="rounded-full bg-primary/10 px-3 py-1 text-xs font-medium text-primary">
               {backgroundJob ? "后台生成中" : course.generationJobId ? "MAOL 已规划" : "课程就绪"}
             </span>
@@ -328,6 +359,67 @@ export default function CourseOverviewPage() {
           </div>
           {exportError && <p className="mt-4 text-sm text-destructive">{exportError}</p>}
         </div>
+
+        {needsOutlineConfirmation && (
+          <section className="mb-8 rounded-lg border border-border bg-card p-5">
+            <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+              <div>
+                <div className="flex items-center gap-2 text-sm font-medium text-foreground">
+                  <BookMarked size={16} />
+                  教材大纲等待确认
+                </div>
+                <p className="mt-2 max-w-2xl text-sm leading-relaxed text-muted-foreground">
+                  教材模式会先确认全书结构，再开始生成章节正文。确认后会生成教材地图，并按章节队列写正文。
+                </p>
+              </div>
+              <Link
+                href={`/courses/${course.id}/outline`}
+                className="inline-flex shrink-0 items-center justify-center rounded-md bg-foreground px-4 py-2 text-sm text-background"
+              >
+                编辑并确认大纲
+              </Link>
+            </div>
+          </section>
+        )}
+
+        {isTextbook && textbookMap && (
+          <section className="mb-8 rounded-lg border border-border bg-card p-5">
+            <div className="mb-4 flex items-center justify-between gap-4">
+              <div className="flex items-center gap-2 text-sm font-medium text-foreground">
+                <Map size={16} />
+                教材地图
+              </div>
+              <span className="rounded-full border border-border bg-background px-2.5 py-1 text-xs text-muted-foreground">
+                {textbookMap.generationMode === "model" ? "模型生图" : "代码渲染"}
+              </span>
+            </div>
+            {textbookMap.status === "ready" && textbookMap.url ? (
+              <figure>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={textbookMap.url}
+                  alt={textbookMap.caption}
+                  className="w-full rounded-md border border-border bg-background object-contain"
+                />
+                <figcaption className="mt-2 text-center text-xs text-muted-foreground">{textbookMap.caption}</figcaption>
+              </figure>
+            ) : (
+              <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                <p className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-300">
+                  教材地图暂未生成成功：{textbookMap.error ?? "可稍后重试。"}
+                </p>
+                <button
+                  onClick={retryTextbookMap}
+                  disabled={retryingMap}
+                  className="inline-flex shrink-0 items-center justify-center rounded-md border border-border bg-background px-3 py-2 text-sm text-muted-foreground hover:text-foreground disabled:opacity-50"
+                >
+                  {retryingMap ? "重新生成中…" : "重新生成地图"}
+                </button>
+              </div>
+            )}
+            {mapRetryError && <p className="mt-3 text-sm text-destructive">{mapRetryError}</p>}
+          </section>
+        )}
 
         {showStudio ? (
           <GenerationStudio

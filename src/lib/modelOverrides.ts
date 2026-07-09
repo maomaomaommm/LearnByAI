@@ -23,6 +23,7 @@ export type ModelOverrides = {
   version: 1;
   default?: ModelOverrideFields;
   agents?: Partial<Record<AgentName, ModelOverrideFields>>;
+  image?: ModelOverrideFields;
 };
 
 export function parseModelOverrides(value: string | null | undefined): ModelOverrides | undefined {
@@ -44,18 +45,24 @@ export function normalizeModelOverrides(value: unknown): ModelOverrides | undefi
 
   const defaultFields = normalizeFields(value.default);
   const agents = normalizeAgents(value.agents);
+  const image = normalizeFields(value.image);
 
-  if (!defaultFields && !agents) return undefined;
+  if (!defaultFields && !agents && !image) return undefined;
 
   return {
     version: 1,
     ...(defaultFields ? { default: defaultFields } : {}),
     ...(agents ? { agents } : {}),
+    ...(image ? { image } : {}),
   };
 }
 
 export function hasModelOverrides(value: ModelOverrides | undefined) {
-  return Boolean(value?.default || value?.agents);
+  return Boolean(value?.default || value?.agents || value?.image);
+}
+
+export function hasImageModelConfig(value: ModelOverrides | undefined) {
+  return Boolean(value?.image?.apiKey && value.image.baseUrl && value.image.model);
 }
 
 function normalizeAgents(value: unknown): ModelOverrides["agents"] | undefined {

@@ -1,7 +1,8 @@
-import { Chapter, Course, ExplanationStyle, LearningMode } from "./types";
+import { Chapter, ContentMode, Course, ExplanationStyle, LearningMode } from "./types";
 
 const EXPLANATION_STYLES: readonly ExplanationStyle[] = ["intuition", "example", "rigor", "analogy", "code"];
 const LEARNING_MODES: readonly LearningMode[] = ["standard", "project", "exercise", "case"];
+const CONTENT_MODES: readonly ContentMode[] = ["lecture", "textbook"];
 
 /** 过滤为合法 ExplanationStyle 数组（去重 + 规范顺序），非数组/非法值丢弃。 */
 export function normalizeStyles(raw: unknown): ExplanationStyle[] {
@@ -20,6 +21,12 @@ export function normalizeLearningMode(raw: unknown): LearningMode {
   return typeof raw === "string" && (LEARNING_MODES as readonly string[]).includes(raw)
     ? (raw as LearningMode)
     : "standard";
+}
+
+export function normalizeContentMode(raw: unknown): ContentMode {
+  return typeof raw === "string" && (CONTENT_MODES as readonly string[]).includes(raw)
+    ? (raw as ContentMode)
+    : "lecture";
 }
 
 /**
@@ -41,6 +48,7 @@ export function normalizeCourse(raw: Course): Course {
 
   return {
     ...raw,
+    contentMode: normalizeContentMode(raw.contentMode),
     styles: normalizeStyles(raw.styles),
     learningMode: normalizeLearningMode(raw.learningMode),
     chapterCount: rawCount ?? (chapters.length || 8),

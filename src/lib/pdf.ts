@@ -53,3 +53,25 @@ export async function renderCoursePdf(
     await browser.close();
   }
 }
+
+/**
+ * Rasterize an SVG (code-rendered figures) to PNG so the TeX pipeline can
+ * \includegraphics it — LaTeX has no native SVG support. Uses the same headless
+ * Chromium that already backs the PDF export.
+ */
+export async function rasterizeSvg(svg: string, options: { scale?: number } = {}): Promise<Buffer> {
+  const browser = await chromium.launch({
+    args: ["--no-sandbox", "--disable-dev-shm-usage"],
+  });
+  try {
+    const page = await browser.newPage({
+      viewport: { width: 1400, height: 1000 },
+      deviceScaleFactor: options.scale ?? 2,
+    });
+    await page.setContent(`<!doctype html><body style="margin:0;background:#ffffff">${svg}</body>`);
+    const element = page.locator("svg").first();
+    return await element.screenshot({ type: "png" });
+  } finally {
+    await browser.close();
+  }
+}

@@ -21,7 +21,7 @@ import type { CourseBibleCore, CourseSkeleton } from "../prompts/coursePlanner";
 import { buildFormatGuardPrompt, postRepairMarkdown, preRepairMarkdown } from "../prompts/formatGuard";
 import { runChapterQualityPipelineWithRepair } from "../quality/pipeline";
 import { safeErrorMessage } from "../safeError";
-import { Chapter, ChapterContract, ChapterGenerateResponse, Course, CourseBible, CourseCreateResponse, CourseDifficulty, ExplanationStyle, GenerationJob, GenerationProfile, LearningMode, QualityIssue, QualityReport, RevisionMode, RevisionScope, Section } from "../types";
+import { Chapter, ChapterContract, ChapterGenerateResponse, ContentMode, Course, CourseBible, CourseCreateResponse, CourseDifficulty, ExplanationStyle, GenerationJob, GenerationProfile, LearningMode, QualityIssue, QualityReport, RevisionMode, RevisionScope, Section } from "../types";
 import { researchLatestCourseKnowledge } from "../webResearch";
 import { dispatchAgentText } from "./dispatcher";
 import { assertMockFallbackAllowed } from "./fallback";
@@ -36,6 +36,7 @@ export type CourseInput = {
   learningMode: LearningMode;
   chapterCount: number;
   difficulty: CourseDifficulty;
+  contentMode?: ContentMode;
   generationProfile?: GenerationProfile;
   includeRecentResearch?: boolean;
 };
@@ -1565,6 +1566,9 @@ function stripGeneratedChapterFields(chapter: Chapter): Omit<Chapter, "id" | "co
     purpose: chapter.purpose,
     connectionFromPrevious: chapter.connectionFromPrevious,
     setupForNext: chapter.setupForNext,
+    // The contract is planning output (textbook mode derives each chapter's
+    // section outline from contract.requiredTopics) — keep it.
+    contract: chapter.contract,
     time: chapter.time,
     depthWeight: chapter.depthWeight,
     sections: chapter.sections,

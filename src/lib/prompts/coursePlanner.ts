@@ -1,4 +1,4 @@
-import type { ChapterDepthWeight, CourseBible, CourseDifficulty, ExplanationStyle, LearningMode } from "@/lib/types";
+import type { ChapterDepthWeight, ContentMode, CourseBible, CourseDifficulty, ExplanationStyle, LearningMode } from "@/lib/types";
 import { buildTeachingGuidance, LEARNING_MODE_STRUCTURE_RULE } from "./styleGuidance";
 
 export type CoursePlannerInput = {
@@ -10,9 +10,23 @@ export type CoursePlannerInput = {
   learningMode: LearningMode;
   chapterCount: number;
   difficulty: CourseDifficulty;
+  contentMode?: ContentMode;
   researchBrief?: string;
   researchDate?: string;
 };
+
+/**
+ * Textbook-mode planning rules. The textbook flow turns each middle chapter's
+ * requiredTopics into its section outline, and pins 引言/总结与展望 as fixed
+ * first/last chapters — so the planner must produce them natively instead of
+ * having the pipeline overwrite chapter one after the fact.
+ */
+function textbookSkeletonRules(input: CoursePlannerInput) {
+  if (input.contentMode !== "textbook") return "";
+  return `
+- （教材模式）第一章标题必须是「引言」，depth 取 "light"：介绍背景与意义、研究近况、当前前沿与全书阅读路线，不讲授新知识点；它占用目标章节数的第一个名额。
+- （教材模式）中间每一章的 description 必须概括出 4 到 7 个可独立成小节的主题，purpose 写明本章在全书结构中的位置。`;
+}
 
 /** 讲解风格 + 学习方式 的组合引导（替换原先裸 preference 文本）。 */
 function teachingGuidance(input: CoursePlannerInput) {
@@ -100,7 +114,7 @@ ${input.researchBrief ?? "未提供"}
 硬性要求：
 - ${chapterCountRule(input.chapterCount)}
 - ${DEPTH_RULE}
-- 最后一章必须是全书收尾「总结与展望」章，depth 取 "light"：回顾全书主线、串联各章脉络、指出前沿与后续学习方向，不引入新知识点；它占用目标章节数的最后一个名额，不额外增加章数。
+- 最后一章必须是全书收尾「总结与展望」章，depth 取 "light"：回顾全书主线、串联各章脉络、指出前沿与后续学习方向，不引入新知识点；它占用目标章节数的最后一个名额，不额外增加章数。${textbookSkeletonRules(input)}
 - 学习方式约束：${LEARNING_MODE_STRUCTURE_RULE[input.learningMode]}
 - 规划深浅与口吻须符合上述难度基调。
 - 每个字符串不超过 80 个中文字符。
@@ -248,7 +262,9 @@ ${JSON.stringify(chapter)}
 
 硬性要求：
 - chapterTitle 必须逐字等于当前章节标题。
-- 每个数组最多 4 项，每个字符串不超过 70 个中文字符。
+- ${input.contentMode === "textbook"
+    ? "requiredTopics 是本章的小节大纲：4 到 7 项，每项是一个可独立成节的主题（如「策略迭代的收敛性」），按讲授顺序排列；其余数组最多 4 项。每个字符串不超过 70 个中文字符。"
+    : "每个数组最多 4 项，每个字符串不超过 70 个中文字符。"}
 - 联网摘要中与本章相关的近期论文必须进入 requiredTopics，并带年份。
 - 预印本、录用和正式发表状态不得混淆，不得虚构来源。
 - forbiddenEarlyTopics 只写后续章节才展开的主题。

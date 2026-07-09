@@ -149,6 +149,9 @@ test("concurrent course creation cannot bypass local beta quota", async ({ reque
 });
 
 test("export downloads are isolated by local beta user", async ({ request }) => {
+  // Two whole-course PDF exports launch a headless Chromium each against the
+  // dev-mode server (which compiles the print route on demand) — 60s is tight.
+  test.setTimeout(120_000);
   const userA = { "x-learnbyai-user-id": `export-a-${crypto.randomUUID()}@example.com` };
   const userB = { "x-learnbyai-user-id": `export-b-${crypto.randomUUID()}@example.com` };
   const create = await request.post("/api/courses", {

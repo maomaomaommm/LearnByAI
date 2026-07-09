@@ -16,7 +16,7 @@ import { effectiveChapterStatus, hasChapterBody, isChapterAwaitingQuality, isCha
 import { stageForEvent } from "@/components/generation-studio/helpers";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { ModelSettings } from "@/components/ModelSettings";
-import { ArrowLeft, Bot, ChevronLeft, ChevronRight, Clock, Download, Menu, PencilLine, X } from "lucide-react";
+import { ArrowLeft, Bot, ChevronDown, ChevronLeft, ChevronRight, Clock, Download, Menu, PencilLine, X } from "lucide-react";
 import { toast } from "sonner";
 
 const DEFAULT_REVIEW = "已完成结构、术语与公式一致性检查。";
@@ -108,6 +108,7 @@ export default function ReaderPage() {
   const [exporting, setExporting] = useState(false);
 
   const [tocOpen, setTocOpen] = useState(true);
+  const [expandedChapters, setExpandedChapters] = useState<Record<string, boolean>>({});
   const [panel, setPanel] = useState<Panel>(null);
   const [chooser, setChooser] = useState<{ text: string; sectionId?: string } | null>(null);
 
@@ -120,6 +121,32 @@ export default function ReaderPage() {
   const chapterAwaitingQuality = Boolean(chapter && isChapterAwaitingQuality(chapter));
   const chapterGenerationJobId = chapter?.generationJobId;
   const chapterStatus = chapter?.status;
+  const isTextbook = course?.contentMode === "textbook";
+
+  useEffect(() => {
+    setExpandedChapters((current) => current[chapterId] ? current : { ...current, [chapterId]: true });
+  }, [chapterId]);
+
+  useEffect(() => {
+    if (loading || typeof window === "undefined") return;
+    const hash = window.location.hash;
+    if (!hash.startsWith("#section-")) return;
+    window.setTimeout(() => {
+      document.querySelector(hash)?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 80);
+  }, [chapterId, loading, sections]);
+
+  function toggleChapterSections(targetChapterId: string) {
+    setExpandedChapters((current) => ({ ...current, [targetChapterId]: !current[targetChapterId] }));
+  }
+
+  function openSection(targetChapter: Chapter, sectionId: string) {
+    if (targetChapter.id !== chapterId) {
+      router.push(`/courses/${id}/chapters/${targetChapter.id}#section-${sectionId}`);
+      return;
+    }
+    document.querySelector(`#section-${sectionId}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
 
   async function exportChapter() {
     if (!chapter || exporting) return;
@@ -419,7 +446,10 @@ export default function ReaderPage() {
             {course.chapters.map((ch, idx) => {
               const isActive = ch.id === chapterId;
               const readable = isChapterReadable(ch);
+              const chapterSections = ch.sections ?? [];
+              const sectionsExpanded = expandedChapters[ch.id] ?? isActive;
               return (
+                <div key={ch.id}>
                 <button
                   key={ch.id}
                   onClick={() => {
@@ -436,6 +466,37 @@ export default function ReaderPage() {
                   </div>
                   <div className="mt-1 pl-6 text-[10px] font-mono text-muted-foreground uppercase">{chapterStatusLabel(ch)}</div>
                 </button>
+                {isTextbook && chapterSections.length > 0 && (
+                  <div className={`border-l-2 ${isActive ? "border-foreground bg-foreground/5" : "border-transparent"}`}>
+                    <button
+                      type="button"
+                      onClick={() => toggleChapterSections(ch.id)}
+                      className="ml-8 flex items-center gap-1 py-1 text-[10px] text-muted-foreground hover:text-foreground"
+                    >
+                      <ChevronDown size={12} className={`transition-transform ${sectionsExpanded ? "" : "-rotate-90"}`} />
+                      {sectionsExpanded ? "收起小节" : "展开小节"}
+                    </button>
+                    {sectionsExpanded && (
+                      <div className="pb-2 pl-9 pr-3">
+                        {chapterSections.map((section) => (
+                          <button
+                            key={section.id}
+                            type="button"
+                            onClick={() => {
+                              if (readable || isActive) openSection(ch, section.id);
+                            }}
+                            disabled={!readable && !isActive}
+                            className="block w-full rounded px-2 py-1.5 text-left text-[11px] leading-snug text-muted-foreground hover:bg-muted/40 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            <span className="mr-1 font-mono">{idx + 1}.{section.order + 1}</span>
+                            {section.title}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+                </div>
               );
             })}
           </div>
@@ -535,7 +596,7 @@ export default function ReaderPage() {
               {sections.length > 0 ? (
                 <div className="space-y-8">
                   {sections.map((section) => (
-                    <section key={section.id} data-section-id={section.id}>
+                    <section key={section.id} id={`section-${section.id}`} data-section-id={section.id}>
                       <MarkdownContent content={section.content} />
                     </section>
                   ))}

@@ -8,11 +8,12 @@ import { publicGenerationJob } from "@/lib/publicGenerationJob";
 import { withQuotaConsumption } from "@/lib/quota";
 import { listServerCourses, saveServerCourse, saveServerGenerationJob } from "@/lib/serverStore";
 import { resolveModelOverrides } from "@/lib/userModelConfig";
-import { normalizeLearningMode, normalizeStyles } from "@/lib/normalizeCourse";
+import { normalizeContentMode, normalizeLearningMode, normalizeStyles } from "@/lib/normalizeCourse";
 import { buildStyleGuidance } from "@/lib/prompts/styleGuidance";
-import { Course, CourseDifficulty, ExplanationStyle, GenerationProfile, LearningMode } from "@/lib/types";
+import { ContentMode, Course, CourseDifficulty, ExplanationStyle, GenerationProfile, LearningMode } from "@/lib/types";
 
 type CourseInput = {
+  contentMode?: ContentMode;
   topic: string;
   goal: string;
   background: string;
@@ -87,6 +88,7 @@ function createPendingCourse(input: CourseInput, userId: string): Course {
   return {
     id: crypto.randomUUID(),
     userId,
+    contentMode: normalizeContentMode(input.contentMode),
     topic: input.topic,
     goal: input.goal,
     background: input.background,
@@ -107,6 +109,25 @@ function createPendingCourse(input: CourseInput, userId: string): Course {
       terminology: [],
       chapterDependencies: [],
     },
+    ...(normalizeContentMode(input.contentMode) === "textbook"
+      ? {
+          textbookMeta: {
+            title: input.topic,
+            subtitle: input.goal,
+            language: "zh-CN" as const,
+            outlineStatus: "planning" as const,
+            numbering: {
+              figurePrefix: "图",
+              tablePrefix: "表",
+              definitionPrefix: "定义",
+              examplePrefix: "例",
+              theoremPrefix: "定理",
+              algorithmPrefix: "算法",
+              equationStyle: "chapter" as const,
+            },
+          },
+        }
+      : {}),
     chapters: [],
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),

@@ -75,12 +75,18 @@ export function mergeModelOverrides(
   if (!taskOverrides) return adminOverrides;
   if (!adminOverrides) return taskOverrides;
 
+  const image = {
+    ...adminOverrides.image,
+    ...taskOverrides.image,
+  };
+
   return {
     version: 1 as const,
     default: {
       ...adminOverrides.default,
       ...taskOverrides.default,
     },
+    ...(Object.keys(image).length ? { image } : {}),
     agents: MODEL_AGENT_NAMES.reduce((agents, agent) => {
       const fields = {
         ...adminOverrides.agents?.[agent],

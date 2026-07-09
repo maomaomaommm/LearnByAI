@@ -144,6 +144,6 @@ test("isValidIllustrationPath accepts the canonical shape and rejects traversal"
   assert.equal(isValidIllustrationPath("a/b/c.png"), false); // filename must be a uuid
   assert.equal(
     isValidIllustrationPath("a/b/0f0e0d0c-0b0a-4908-8706-050403020100.svg"),
-    false, // svg can script; only raster formats are served
+    true, // generated code-rendered figures are stored as SVG
   );
 });

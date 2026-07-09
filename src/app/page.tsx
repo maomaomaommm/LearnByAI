@@ -62,7 +62,7 @@ function HeroSection() {
 
           <div className="flex flex-wrap gap-3">
             <Link
-              href="/create"
+              href="/create/mode"
               className="inline-flex items-center gap-2 rounded-md bg-foreground px-5 py-2.5 text-sm font-medium text-background hover:opacity-90 transition-opacity"
             >
               创建课程
@@ -336,7 +336,7 @@ function CTASection() {
           输入你想学习的主题，让多个 AI Agent 为你打造专属课程
         </p>
         <Link
-          href="/create"
+          href="/create/mode"
           className="inline-flex items-center gap-2 rounded-md bg-foreground px-6 py-3 text-sm font-medium text-background hover:opacity-90 transition-opacity"
         >
           立即创建课程

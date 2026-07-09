@@ -1,0 +1,233 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import {
+  createFailedFigureMarkdownRe,
+  createFigureMarkdownRe,
+  parseFailedFigureMarker,
+  parseFigurePlaceholders,
+  renumberChapterFigures,
+} from "../../src/lib/figures";
+import { normalizeContentMode, normalizeCourse } from "../../src/lib/normalizeCourse";
+import { hasImageModelConfig, normalizeModelOverrides } from "../../src/lib/modelOverrides";
+import { getUserImageModelConfig } from "../../src/lib/illustration";
+import { markdownToTex } from "../../src/lib/exports";
+import { normalizeTextbookMeta, validateTextbookMeta } from "../../src/lib/textbookOutline";
+import type { Course, TextbookMeta, TextbookOutlineChapter } from "../../src/lib/types";
+
+// ---- contentMode compatibility -------------------------------------------
+
+test("normalizeContentMode falls back to lecture for legacy/invalid values", () => {
+  assert.equal(normalizeContentMode(undefined), "lecture");
+  assert.equal(normalizeContentMode("weird"), "lecture");
+  assert.equal(normalizeContentMode("textbook"), "textbook");
+});
+
+test("normalizeCourse stamps legacy courses as lecture", () => {
+  const legacy = {
+    id: "c1",
+    topic: "t",
+    goal: "g",
+    background: "b",
+    profile: "",
+    courseBible: { targetLearner: "", finalOutcomes: [], teachingStyle: "", prerequisites: [], globalNarrative: "", terminology: [], chapterDependencies: [] },
+    chapters: [],
+    createdAt: new Date().toISOString(),
+  } as unknown as Course;
+  assert.equal(normalizeCourse(legacy).contentMode, "lecture");
+});
+
+// ---- image model config ---------------------------------------------------
+
+test("normalizeModelOverrides keeps a standalone image config", () => {
+  const normalized = normalizeModelOverrides({ version: 1, image: { apiKey: "k", baseUrl: "https://x", model: "m" } });
+  assert.ok(normalized?.image?.apiKey === "k");
+  assert.equal(hasImageModelConfig(normalized), true);
+});
+
+test("image mode requires apiKey + baseUrl + model", () => {
+  assert.equal(hasImageModelConfig({ version: 1, image: { apiKey: "k" } }), false);
+  assert.equal(getUserImageModelConfig({ version: 1, image: { apiKey: "k", baseUrl: "https://x/", model: "m" } })?.baseUrl, "https://x");
+  assert.equal(getUserImageModelConfig({ version: 1, image: { apiKey: "k" } }), undefined);
+  assert.equal(getUserImageModelConfig(undefined), undefined);
+});
+
+// ---- figure placeholder protocol -------------------------------------------
+
+test("parseFigurePlaceholders reads key-value blocks", () => {
+  const content = [
+    "正文。",
+    "",
+    ":::learnbyai-figure",
+    "caption: 策略迭代循环",
+    "prompt: draw the GPI loop",
+    "diagramSpec: 评估 -> 改进 -> 收敛",
+    "textLabelsAllowed: true",
+    ":::",
+    "",
+    "后文。",
+  ].join("\n");
+  const blocks = parseFigurePlaceholders(content);
+  assert.equal(blocks.length, 1);
+  assert.equal(blocks[0].placeholder.caption, "策略迭代循环");
+  assert.equal(blocks[0].placeholder.textLabelsAllowed, true);
+  assert.ok(blocks[0].placeholder.diagramSpec?.includes("评估"));
+});
+
+test("parseFigurePlaceholders drops blocks missing caption or prompt", () => {
+  const content = ":::learnbyai-figure\ncaption: 只有图题\n:::";
+  assert.equal(parseFigurePlaceholders(content).length, 0);
+});
+
+// ---- figure markdown regex: dot + legacy dash labels ------------------------
+
+test("createFigureMarkdownRe matches both 图 N.M and legacy 图 N-M", () => {
+  const dot = "![图 2.1　贝尔曼备份图](/api/illustrations/a/b/c.png)\n\n*图 2.1　贝尔曼备份图*";
+  const dash = "![图 2-1　贝尔曼备份图](/api/illustrations/a/b/c.png)\n\n*图 2-1　贝尔曼备份图*";
+  assert.ok(createFigureMarkdownRe().test(dot));
+  assert.ok(createFigureMarkdownRe().test(dash));
+});
+
+test("renumberChapterFigures renumbers by document order and migrates dash labels", () => {
+  const content = [
+    "段落一。",
+    "![图 3-2　旧图乙](/api/illustrations/a/b/two.png)",
+    "",
+    "*图 3-2　旧图乙*",
+    "",
+    "段落二。",
+    "![图 3.9　新图丙](/api/illustrations/a/b/three.png)",
+    "",
+    "*图 3.9　新图丙*",
+  ].join("\n");
+  const renumbered = renumberChapterFigures(content, 3);
+  assert.ok(renumbered.includes("![图 3.1　旧图乙]"), renumbered);
+  assert.ok(renumbered.includes("*图 3.1　旧图乙*"), renumbered);
+  assert.ok(renumbered.includes("![图 3.2　新图丙]"), renumbered);
+  assert.ok(!renumbered.includes("图 3-2"), renumbered);
+  assert.ok(!renumbered.includes("图 3.9"), renumbered);
+});
+
+// ---- failed-figure marker ---------------------------------------------------
+
+test("failed-figure marker roundtrips caption/prompt for retry", () => {
+  const marker = [
+    "> 图示暂未生成（代码渲染）：策略迭代循环。provider timeout",
+    '<!--learnbyai-figure-failed {"caption":"策略迭代循环","prompt":"draw the GPI loop","diagramSpec":"评估 -> 改进","mode":"code"}-->',
+  ].join("\n");
+  const re = createFailedFigureMarkdownRe();
+  const match = re.exec(`前文。\n\n${marker}\n\n后文。`);
+  assert.ok(match, "marker should match");
+  const placeholder = parseFailedFigureMarker(match![1] ?? "");
+  assert.equal(placeholder?.caption, "策略迭代循环");
+  assert.equal(placeholder?.prompt, "draw the GPI loop");
+});
+
+// ---- markdown → TeX ---------------------------------------------------------
+
+test("markdownToTex drops the duplicate 第 N 章 heading", async () => {
+  const tex = await markdownToTex("# 第 3 章 动态规划\n\n正文段落。");
+  assert.ok(!tex.includes("第 3 章"), tex);
+  assert.ok(tex.includes("正文段落。"), tex);
+});
+
+test("markdownToTex strips writer numbering from section headings (TeX counters own numbers)", async () => {
+  const tex = await markdownToTex("## 3.2 策略迭代\n\n### 3.2.1 收敛性");
+  assert.ok(tex.includes("\\section{策略迭代}"), tex);
+  assert.ok(tex.includes("\\subsubsection{收敛性}"), tex);
+});
+
+test("markdownToTex converts pipe tables to booktabs longtable and keeps cell math", async () => {
+  const md = [
+    "| 类型 | 表达式 |",
+    "| --- | --- |",
+    "| 期望 | $\\pi(a \\mid s)$ |",
+    "| 极值_情形 | 100% |",
+  ].join("\n");
+  const tex = await markdownToTex(md);
+  assert.ok(tex.includes("\\begin{longtable}{ll}"), tex);
+  assert.ok(tex.includes("\\toprule") && tex.includes("\\bottomrule"), tex);
+  assert.ok(tex.includes("$\\pi(a \\mid s)$"), tex); // math cell untouched
+  assert.ok(tex.includes("极值\\_情形") && tex.includes("100\\%"), tex); // text cells escaped
+});
+
+test("markdownToTex converts fenced code to verbatim and lists to itemize/enumerate", async () => {
+  const md = [
+    "```python",
+    "V[s] = max(q)",
+    "```",
+    "",
+    "- 第一点 50%",
+    "- 第二点",
+    "",
+    "1. 甲",
+    "2. 乙",
+  ].join("\n");
+  const tex = await markdownToTex(md);
+  assert.ok(tex.includes("\\begin{verbatim}\nV[s] = max(q)\n\\end{verbatim}"), tex);
+  assert.ok(tex.includes("\\begin{itemize}") && tex.includes("\\item 第一点 50\\%"), tex);
+  assert.ok(tex.includes("\\begin{enumerate}") && tex.includes("\\item 甲"), tex);
+});
+
+test("markdownToTex drops HTML comments and renders figures via \\includegraphics fallback box", async () => {
+  const md = [
+    "![图 1.1　交互循环](/api/illustrations/a/b/c.png)",
+    "",
+    "*图 1.1　交互循环*",
+    "",
+    "<!--learnbyai-figure-failed {\"caption\":\"x\",\"prompt\":\"y\"}-->",
+  ].join("\n");
+  const tex = await markdownToTex(md);
+  assert.ok(tex.includes("\\begin{figure}[htbp]"), tex);
+  assert.ok(tex.includes("\\caption{交互循环}"), tex);
+  assert.ok(!tex.includes("learnbyai-figure-failed"), tex);
+});
+
+test("markdownToTex protects inline paren math like \\(f(x)\\)", async () => {
+  const tex = await markdownToTex("函数 \\(f(x)\\) 的值域为 50%。");
+  assert.ok(tex.includes("\\(f(x)\\)"), tex);
+  assert.ok(tex.includes("50\\%"), tex);
+});
+
+// ---- outline validation -----------------------------------------------------
+
+function outlineChapter(partial: Partial<TextbookOutlineChapter> & { title: string; order: number }): TextbookOutlineChapter {
+  return {
+    id: `ch-${partial.order}`,
+    description: "说明",
+    sections: [{ id: `s-${partial.order}`, title: "小节", description: "d", order: 0 }],
+    ...partial,
+  };
+}
+
+function validMeta(): TextbookMeta {
+  return normalizeTextbookMeta({
+    title: "测试教材",
+    language: "zh-CN",
+    outlineStatus: "ready",
+    outline: {
+      chapters: [
+        outlineChapter({ title: "引言", order: 0, fixedRole: "introduction", sections: [] }),
+        outlineChapter({ title: "主体", order: 1 }),
+        outlineChapter({ title: "总结与展望", order: 2, fixedRole: "conclusion", sections: [] }),
+      ],
+    },
+  });
+}
+
+test("validateTextbookMeta passes a canonical outline", () => {
+  assert.equal(validateTextbookMeta(validMeta()), "");
+});
+
+test("validateTextbookMeta rejects missing fixed roles / empty sections", () => {
+  const noIntro = validMeta();
+  delete noIntro.outline!.chapters[0]!.fixedRole;
+  assert.notEqual(validateTextbookMeta(noIntro), "");
+
+  const emptyMiddle = validMeta();
+  emptyMiddle.outline!.chapters[1]!.sections = [];
+  assert.notEqual(validateTextbookMeta(emptyMiddle), "");
+
+  const tooFew = validMeta();
+  tooFew.outline!.chapters = tooFew.outline!.chapters.slice(0, 2);
+  assert.notEqual(validateTextbookMeta(tooFew), "");
+});

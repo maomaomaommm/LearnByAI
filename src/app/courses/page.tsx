@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { BookOpen, ChevronRight, Plus, Trash2 } from "lucide-react";
+import { BookMarked, BookOpen, ChevronRight, FileText, Plus, Trash2 } from "lucide-react";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -16,8 +16,11 @@ import {
 import { apiFetch } from "@/lib/clientApi";
 import { Course } from "@/lib/types";
 
+type CourseFilter = "all" | "lecture" | "textbook";
+
 export default function CoursesPage() {
   const [courses, setCourses] = useState<Course[]>([]);
+  const [filter, setFilter] = useState<CourseFilter>("all");
   const [courseToDelete, setCourseToDelete] = useState<Course>();
   const [deletingId, setDeletingId] = useState("");
   const [deleteError, setDeleteError] = useState("");
@@ -80,6 +83,11 @@ export default function CoursesPage() {
     }
   }
 
+  const filteredCourses = courses.filter((course) => {
+    const mode = course.contentMode ?? "lecture";
+    return filter === "all" || mode === filter;
+  });
+
   return (
     <div className="min-h-screen bg-background px-4 py-12">
       <div className="mx-auto max-w-5xl">
@@ -91,11 +99,32 @@ export default function CoursesPage() {
             </p>
           </div>
           <Link
-            href="/create"
+            href="/create/mode"
             className="inline-flex items-center gap-2 rounded-md bg-foreground px-4 py-2 text-sm text-background"
           >
             <Plus size={16} /> 创建课程
           </Link>
+        </div>
+
+        <div className="mb-6 flex flex-wrap gap-2">
+          {([
+            ["all", "全部"],
+            ["lecture", "讲义"],
+            ["textbook", "教材"],
+          ] as const).map(([value, label]) => (
+            <button
+              key={value}
+              type="button"
+              onClick={() => setFilter(value)}
+              className={`rounded-md border px-3 py-1.5 text-sm transition-colors ${
+                filter === value
+                  ? "border-foreground bg-foreground text-background"
+                  : "border-border bg-background text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              {label}
+            </button>
+          ))}
         </div>
 
         {loading ? (
@@ -113,16 +142,49 @@ export default function CoursesPage() {
             <BookOpen size={32} className="mx-auto mb-4 text-muted-foreground" />
             <p className="text-sm text-muted-foreground">还没有课程。</p>
           </div>
+        ) : filteredCourses.length === 0 ? (
+          <div className="rounded-lg border border-dashed border-border py-20 text-center">
+            <BookOpen size={32} className="mx-auto mb-4 text-muted-foreground" />
+            <p className="text-sm text-muted-foreground">这个筛选下还没有课程。</p>
+          </div>
         ) : (
           <div className="grid gap-4 md:grid-cols-2">
-            {courses.map((course) => (
+            {filteredCourses.map((course) => {
+              const mode = course.contentMode ?? "lecture";
+              const isTextbook = mode === "textbook";
+              const outlineStatus = course.textbookMeta?.outlineStatus;
+              const href = isTextbook && outlineStatus !== "confirmed" ? `/courses/${course.id}/outline` : `/courses/${course.id}`;
+              return (
               <div
                 key={course.id}
-                className="group relative rounded-lg border border-border bg-card p-5 transition-colors hover:border-foreground/40"
+                className={`group relative rounded-lg border bg-card p-5 transition-colors hover:border-foreground/40 ${
+                  isTextbook ? "border-foreground/20" : "border-border"
+                }`}
               >
-                <Link href={`/courses/${course.id}`} className="block pr-10">
-                  <div className="mb-2 flex items-start justify-between gap-4">
-                    <h2 className="font-mono text-lg font-semibold text-foreground">{course.topic}</h2>
+                <Link href={href} className="block pr-10">
+                  <div className="mb-3 flex items-start justify-between gap-4">
+                    <div className="flex min-w-0 items-start gap-3">
+                      <span className="mt-0.5 inline-flex size-9 shrink-0 items-center justify-center rounded-md border border-border bg-background text-muted-foreground">
+                        {isTextbook ? <BookMarked size={17} /> : <FileText size={17} />}
+                      </span>
+                      <div className="min-w-0">
+                        <div className="mb-1 flex flex-wrap items-center gap-2">
+                          <h2 className="font-mono text-lg font-semibold text-foreground">{course.topic}</h2>
+                          <span className={`rounded-full border px-2 py-0.5 text-[10px] ${
+                            isTextbook
+                              ? "border-foreground/20 bg-foreground/5 text-foreground"
+                              : "border-border bg-background text-muted-foreground"
+                          }`}>
+                            {isTextbook ? "教材模式" : "讲义模式"}
+                          </span>
+                        </div>
+                        {isTextbook && (
+                          <p className="text-xs text-muted-foreground">
+                            大纲：{outlineStatus === "confirmed" ? "已确认" : outlineStatus === "ready" ? "待确认" : outlineStatus === "failed" ? "生成失败" : "生成中"}
+                          </p>
+                        )}
+                      </div>
+                    </div>
                     <ChevronRight size={18} className="mt-1 shrink-0 text-muted-foreground" />
                   </div>
                   <p className="line-clamp-2 text-sm text-muted-foreground">{course.goal}</p>
@@ -143,7 +205,8 @@ export default function CoursesPage() {
                   <Trash2 size={16} />
                 </button>
               </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>

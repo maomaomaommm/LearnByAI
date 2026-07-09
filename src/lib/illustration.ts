@@ -38,6 +38,12 @@ const STYLE_PREAMBLE =
 
 const localIllustrationStoreDir = resolvePath(process.cwd(), ".next", "local-beta-illustrations");
 
+type IllustrationImage = {
+  bytes: Buffer;
+  contentType: string;
+  ext: "png" | "jpg" | "webp" | "svg";
+};
+
 export function getIllustrationConfig() {
   return {
     apiKey: process.env.ILLUSTRATION_API_KEY ?? "",
@@ -50,6 +56,17 @@ export function getIllustrationConfig() {
 
 export function isIllustrationEnabled() {
   return Boolean(getIllustrationConfig().apiKey);
+}
+
+export function getUserImageModelConfig(overrides?: ModelOverrides) {
+  const image = overrides?.image;
+  if (!image?.apiKey || !image.baseUrl || !image.model) return undefined;
+  return {
+    apiKey: image.apiKey,
+    baseUrl: image.baseUrl.replace(/\/$/, ""),
+    model: image.model,
+    timeoutMs: readPositiveInteger(process.env.ILLUSTRATION_TIMEOUT_MS, 300_000),
+  };
 }
 
 export type IllustrationPlanItem = { anchor: string; caption: string; prompt: string };
@@ -127,8 +144,8 @@ export function buildIllustrationMarkdown(figureLabel: string, caption: string, 
   return `![${figureLabel}　${safeCaption}](${url})\n\n*${figureLabel}　${safeCaption}*`;
 }
 
-export async function generateIllustrationImage(prompt: string) {
-  const config = getIllustrationConfig();
+export async function generateIllustrationImage(prompt: string, overrides?: ModelOverrides): Promise<IllustrationImage> {
+  const config = getUserImageModelConfig(overrides) ?? getIllustrationConfig();
   if (!config.apiKey) throw new Error("Illustration API is not configured.");
 
   let lastError: unknown;
@@ -173,7 +190,7 @@ export async function saveIllustrationImage(input: {
   chapterId: string;
   bytes: Buffer;
   contentType: string;
-  ext: string;
+  ext: "png" | "jpg" | "webp" | "svg";
 }) {
   const storagePath = `${input.courseId}/${input.chapterId}/${randomUUID()}.${input.ext}`;
 
@@ -219,7 +236,7 @@ export async function readIllustrationImage(storagePath: string) {
 }
 
 export function isValidIllustrationPath(storagePath: string) {
-  return /^[0-9a-zA-Z-]{1,64}\/[0-9a-zA-Z-]{1,64}\/[0-9a-f-]{36}\.(png|jpg|webp)$/u.test(storagePath);
+  return /^[0-9a-zA-Z-]{1,64}\/[0-9a-zA-Z-]{1,64}\/[0-9a-f-]{36}\.(png|jpg|webp|svg)$/u.test(storagePath);
 }
 
 export type IllustrateChapterResult = {
@@ -295,7 +312,7 @@ export async function illustrateChapter(input: {
   const prepared: (IllustrationInsert & { caption: string; url: string })[] = [];
   for (const [index, target] of targets.entries()) {
     try {
-      const image = await generateIllustrationImage(target.prompt);
+      const image = await generateIllustrationImage(target.prompt, input.overrides);
       const stored = await saveIllustrationImage({
         courseId: input.course.id,
         chapterId: input.chapterId,
@@ -350,7 +367,7 @@ export async function illustrateChapter(input: {
   };
 }
 
-async function downloadIllustration(url: string, timeoutMs: number) {
+async function downloadIllustration(url: string, timeoutMs: number): Promise<IllustrationImage> {
   const response = await fetchWithTimeout(url, {}, timeoutMs);
   if (!response.ok) {
     throw new Error(`Illustration download failed with status ${response.status}.`);
@@ -388,7 +405,7 @@ async function ensureIllustrationsBucket(supabase: NonNullable<ReturnType<typeof
   const { error } = await supabase.storage.createBucket(ILLUSTRATIONS_BUCKET, {
     public: false,
     fileSizeLimit: 10 * 1024 * 1024,
-    allowedMimeTypes: ["image/png", "image/jpeg", "image/webp"],
+    allowedMimeTypes: ["image/png", "image/jpeg", "image/webp", "image/svg+xml"],
   });
   if (error && !/already exist|duplicate/iu.test(error.message ?? "")) {
     throw new Error(`Illustration bucket create failed: ${error.message}`);
@@ -404,6 +421,7 @@ function localIllustrationPath(storagePath: string) {
 }
 
 function contentTypeForPath(storagePath: string) {
+  if (storagePath.endsWith(".svg")) return "image/svg+xml";
   if (storagePath.endsWith(".jpg")) return "image/jpeg";
   if (storagePath.endsWith(".webp")) return "image/webp";
   return "image/png";

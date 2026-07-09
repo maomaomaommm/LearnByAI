@@ -44,43 +44,73 @@ export function createMockCourse(input: {
         },
       ],
     },
-    chapters: [
-      {
-        id: firstChapterId,
-        title: `${input.topic}：建立问题地图`,
-        description: "先明确这个领域解决什么问题、为什么重要，以及后续章节如何展开。",
-        purpose: "建立全局方向，避免后续学习变成术语堆砌。",
-        connectionFromPrevious: "这是课程起点。",
-        setupForNext: "下一章会补齐理解核心方法所需的前置知识。",
-        depthWeight: "core",
-        time: {
-          readingMinutes: 50,
-          exerciseMinutes: 30,
-          practiceMinutes: 45,
-          extensionMinutes: 45,
-        },
-        status: "ready",
-        review: "Mock 内容已通过结构检查。",
-        content: createMockChapter(input.topic, `${input.topic}：建立问题地图`, input.goal),
-      },
-      {
-        id: crypto.randomUUID(),
-        title: "必要前置知识",
-        description: "补齐后续推导、案例和实践需要的基础。",
-        purpose: "让学习者具备阅读后续章节的最低共同语言。",
-        connectionFromPrevious: "承接第一章的问题地图，解释哪些工具是必要的。",
-        setupForNext: "为核心原理章节准备符号、定义和基本直觉。",
-        depthWeight: "light",
-        time: {
-          readingMinutes: 60,
-          exerciseMinutes: 40,
-          practiceMinutes: 60,
-          extensionMinutes: 30,
-        },
-        status: "pending",
-      },
-    ],
+    chapters: createMockChapterPlan(input, firstChapterId),
   };
+}
+
+/**
+ * Mock chapter plan honoring the requested chapter count (min 3 so textbook
+ * outline validation — intro + ≥1 middle + conclusion — passes in mock mode).
+ * Every chapter carries a contract with requiredTopics: textbook mode derives
+ * section outlines from them.
+ */
+function createMockChapterPlan(
+  input: { topic: string; goal: string; chapterCount: number },
+  firstChapterId: string,
+): Course["chapters"] {
+  const count = Math.min(Math.max(input.chapterCount || 5, 3), 12);
+  const middleThemes = ["必要前置知识", "核心原理", "经典方法", "进阶方法", "工程实践", "案例分析", "评估与调优", "近期进展", "开放问题", "综合项目"];
+
+  return Array.from({ length: count }, (_, index) => {
+    const isFirst = index === 0;
+    const isLast = index === count - 1;
+    const title = isFirst
+      ? "引言"
+      : isLast
+        ? "总结与展望"
+        : `${middleThemes[(index - 1) % middleThemes.length]}`;
+    const requiredTopics = isFirst
+      ? ["背景与意义", "研究近况", "全书阅读路线"]
+      : isLast
+        ? ["全书回顾", "前沿展望", "后续学习建议"]
+        : [`${title}：核心概念`, `${title}：关键方法`, `${title}：典型例子`, `${title}：常见误区`];
+    return {
+      id: isFirst ? firstChapterId : crypto.randomUUID(),
+      title,
+      description: isFirst
+        ? `先明确「${input.topic}」解决什么问题、为什么重要，以及后续章节如何展开。`
+        : isLast
+          ? "回顾全书主线，给出未来方向与学习建议。"
+          : `围绕「${title}」系统展开讲解，服务于目标：${input.goal}。`,
+      purpose: isFirst ? "建立全局方向，避免后续学习变成术语堆砌。" : isLast ? "完成全书收束。" : `讲透「${title}」。`,
+      connectionFromPrevious: isFirst ? "这是课程起点。" : "承接上一章的核心概念。",
+      setupForNext: isLast ? "这是全书收束。" : "为下一章准备必要概念。",
+      depthWeight: isFirst || isLast ? ("light" as const) : ("normal" as const),
+      contract: {
+        chapterTitle: title,
+        requiredTopics,
+        bridgeFromPrevious: isFirst ? "这是全书起点。" : "从上一章自然过渡。",
+        bridgeToNext: isLast ? "这是全书收束。" : "为下一章留下明确问题。",
+        forbiddenEarlyTopics: [],
+        requiredExamples: isFirst || isLast ? [] : ["至少包含一个服务本章核心概念的例子。"],
+        requiredFormulas: [],
+        summaryForNext: isLast ? "全书收束。" : "本章概念将被下一章直接引用。",
+      },
+      time: {
+        readingMinutes: 50,
+        exerciseMinutes: 30,
+        practiceMinutes: 45,
+        extensionMinutes: 45,
+      },
+      status: isFirst ? ("ready" as const) : ("pending" as const),
+      ...(isFirst
+        ? {
+            review: "Mock 内容已通过结构检查。",
+            content: createMockChapter(input.topic, "引言", input.goal),
+          }
+        : {}),
+    };
+  });
 }
 
 export function createMockChapter(topic: string, title: string, goal: string) {

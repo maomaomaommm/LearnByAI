@@ -14,6 +14,12 @@ export type ChapterDepthWeight = "core" | "normal" | "light";
 
 export type GenerationProfile = "fast" | "deep";
 
+export type ContentMode = "lecture" | "textbook";
+
+export type ImageGenerationMode = "model" | "code";
+
+export type FigureStatus = "pending" | "ready" | "failed";
+
 export type ExplanationStyle = "intuition" | "example" | "rigor" | "analogy" | "code";
 
 export type LearningMode = "standard" | "project" | "exercise" | "case";
@@ -46,6 +52,74 @@ export type Section = {
   status: EntityStatus;
   order: number;
   qualityReport?: QualityReport;
+};
+
+export type FigureAsset = {
+  id: string;
+  courseId: string;
+  chapterId?: string;
+  sectionId?: string;
+  order: number;
+  label?: string;
+  caption: string;
+  prompt: string;
+  diagramSpec?: string;
+  textLabelsAllowed?: boolean;
+  generationMode: ImageGenerationMode;
+  status: FigureStatus;
+  url?: string;
+  storagePath?: string;
+  error?: string;
+  createdAt: string;
+  updatedAt?: string;
+};
+
+export type FigurePlaceholder = {
+  caption: string;
+  prompt: string;
+  diagramSpec?: string;
+  textLabelsAllowed?: boolean;
+};
+
+export type TextbookOutlineSection = {
+  id: string;
+  title: string;
+  description: string;
+  order: number;
+  outlineMarkdown?: string;
+};
+
+export type TextbookOutlineChapter = {
+  id: string;
+  title: string;
+  description: string;
+  order: number;
+  fixedRole?: "introduction" | "conclusion";
+  outlineMarkdown?: string;
+  sections: TextbookOutlineSection[];
+};
+
+export type TextbookOutline = {
+  bookOutlineMarkdown?: string;
+  chapters: TextbookOutlineChapter[];
+};
+
+export type TextbookMeta = {
+  title: string;
+  subtitle?: string;
+  language: "zh-CN";
+  outlineStatus: "none" | "planning" | "ready" | "confirmed" | "failed";
+  outline?: TextbookOutline;
+  textbookMap?: FigureAsset;
+  numbering?: {
+    figurePrefix: string;
+    tablePrefix: string;
+    definitionPrefix: string;
+    examplePrefix: string;
+    theoremPrefix: string;
+    algorithmPrefix: string;
+    equationStyle: "chapter";
+  };
 };
 
 export type StudyTime = {
@@ -97,6 +171,7 @@ export type ChapterContract = {
 export type Course = {
   id: string;
   userId?: string;
+  contentMode?: ContentMode;
   topic: string;
   goal: string;
   background: string;
@@ -109,6 +184,7 @@ export type Course = {
   includeRecentResearch?: boolean;
   profile: string;
   courseBible: CourseBible;
+  textbookMeta?: TextbookMeta;
   chapters: Chapter[];
   createdAt: string;
   updatedAt?: string;
@@ -148,7 +224,7 @@ export type GenerationJob = {
   userId?: string;
   courseId?: string;
   chapterId?: string;
-  type: "course" | "chapter" | "annotation" | "export";
+  type: "course" | "chapter" | "annotation" | "export" | "figure";
   mode?: "generate" | "review_draft";
   status: JobStatus;
   activeAgent?: AgentName;
