@@ -38,15 +38,17 @@ type FigureBlock = {
 };
 
 export function hasFigurePlaceholders(content: string) {
+  const normalized = normalizeFigurePlaceholderSyntax(content);
   FIGURE_BLOCK_RE.lastIndex = 0;
-  return FIGURE_BLOCK_RE.test(content);
+  return FIGURE_BLOCK_RE.test(normalized);
 }
 
 export function parseFigurePlaceholders(content: string): FigureBlock[] {
+  const normalized = normalizeFigurePlaceholderSyntax(content);
   const blocks: FigureBlock[] = [];
   FIGURE_BLOCK_RE.lastIndex = 0;
   let match: RegExpExecArray | null;
-  while ((match = FIGURE_BLOCK_RE.exec(content))) {
+  while ((match = FIGURE_BLOCK_RE.exec(normalized))) {
     const placeholder = parseFigureBlockBody(match[1] ?? "");
     if (placeholder) {
       blocks.push({
@@ -65,8 +67,9 @@ export async function processChapterFigures(input: {
   content: string;
   overrides?: ModelOverrides;
 }): Promise<FigureReplacementResult> {
-  const blocks = parseFigurePlaceholders(input.content);
-  if (blocks.length === 0) return { content: input.content, assets: [], skipped: [] };
+  const content = normalizeFigurePlaceholderSyntax(input.content);
+  const blocks = parseFigurePlaceholders(content);
+  if (blocks.length === 0) return { content, assets: [], skipped: [] };
 
   const mode: ImageGenerationMode = getUserImageModelConfig(input.overrides) ? "model" : "code";
   const chapterIndex = Math.max(0, input.course.chapters.findIndex((item) => item.id === input.chapter.id));
@@ -78,7 +81,7 @@ export async function processChapterFigures(input: {
   let figureNumber = 1;
 
   for (const block of blocks) {
-    next += input.content.slice(last, block.start);
+    next += content.slice(last, block.start);
     const placeholder = block.placeholder;
     const label = `图 ${chapterNumber}.${figureNumber}`;
     const now = new Date().toISOString();
@@ -119,8 +122,15 @@ export async function processChapterFigures(input: {
     last = block.end;
   }
 
-  next += input.content.slice(last);
+  next += content.slice(last);
   return { content: next, assets, skipped };
+}
+
+export function normalizeFigurePlaceholderSyntax(content: string) {
+  return content.replace(/:::learnbyai-figure\\n([\s\S]*?)\s*:::/gu, (_match, body: string) => {
+    const normalizedBody = body.replace(/\\n/gu, "\n").trim();
+    return `:::learnbyai-figure\n${normalizedBody}\n:::`;
+  });
 }
 
 export async function createTextbookMapFigure(course: Course, overrides?: ModelOverrides): Promise<FigureAsset> {

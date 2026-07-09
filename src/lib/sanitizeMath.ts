@@ -6,7 +6,10 @@ export function sanitizeMathDelimiters(content: string): string {
   const normalized = content.replace(/\r\n/g, "\n");
   const zones = splitZones(normalized);
 
-  const repairNormal = (text: string) => scanAndRepairSegment(unescapeRenderableDollarMath(text));
+  const repairNormal = (text: string) =>
+    splitInlineCodeSpans(text)
+      .map((chunk) => (chunk.code ? chunk.content : scanAndRepairSegment(unescapeRenderableDollarMath(chunk.content))))
+      .join("");
 
   if (zones.length === 1 && zones[0]!.type === "normal") {
     return repairNormal(zones[0]!.lines.join("\n"));
@@ -16,29 +19,48 @@ export function sanitizeMathDelimiters(content: string): string {
     .map((zone) =>
       zone.type === "normal"
         ? repairNormal(zone.lines.join("\n"))
-        : zone.lines.join("\n"),
+        : zone.type === "display_math"
+          ? repairDisplayMathZone(zone.lines)
+          : zone.lines.join("\n"),
     )
     .join("\n");
 }
 
-// A formula the model accidentally escaped as \$...\$ renders as a literal "$i$"
-// instead of math. Restore it to $...$ — but ONLY when the content looks like
-// math AND KaTeX can actually render it, so genuine literal dollars (currency
-// like "\$5") are left alone. KaTeX is the judge; the regex only finds candidates.
+function repairDisplayMathZone(lines: string[]): string {
+  if (lines.length < 2) return lines.join("\n");
+
+  const first = lines[0]!;
+  const last = lines[lines.length - 1]!;
+  if (first.trim() !== "$$" || last.trim() !== "$$") return lines.join("\n");
+
+  let body = lines.slice(1, -1);
+  const firstBody = body.findIndex((line) => line.trim());
+  const lastBodyFromEnd = [...body].reverse().findIndex((line) => line.trim());
+  const lastBody = lastBodyFromEnd >= 0 ? body.length - 1 - lastBodyFromEnd : -1;
+
+  // Common model error: wrapping display math in both $$...$$ and inner $...$.
+  if (firstBody >= 0 && lastBody >= firstBody && body[firstBody]!.trim() === "$" && body[lastBody]!.trim() === "$") {
+    body = body.filter((_line, index) => index !== firstBody && index !== lastBody);
+  }
+
+  body = body.map(cleanDisplayMathLine).filter((line) => line.trim() !== "$");
+
+  return [first.trim(), ...body, last.trim()].join("\n");
+}
+
+function cleanDisplayMathLine(line: string): string {
+  // Inside $$...$$, a Markdown dollar is almost always leaked delimiter noise.
+  return line.replace(/\\?\$/gu, "").trimEnd();
+}
+
 function unescapeRenderableDollarMath(text: string): string {
   return text.replace(/\\\$\s*([^\n$]{1,200}?)\s*\\\$/gu, (match, inner: string) => {
     const candidate = inner.trim();
-    if (candidate && looksLikeInlineMath(candidate) && canRenderMath(candidate)) {
+    if (isRenderableInlineMath(candidate)) {
       return `$${candidate}$`;
     }
     return match;
   });
-}
-
-function looksLikeInlineMath(value: string): boolean {
-  // Lightweight candidate gate: a LaTeX command, a sub/superscript or brace, or a
-  // single math variable. KaTeX makes the final ruling on whether it renders.
-  return /\\[a-zA-Z]+|[_^{}]|^[A-Za-z][')’]?$/u.test(value);
 }
 
 function splitZones(content: string): Zone[] {
@@ -46,7 +68,7 @@ function splitZones(content: string): Zone[] {
   const zones: Zone[] = [];
   let current: Zone = { type: "normal", lines: [] };
   let inFence = false;
-  let fenceMarker = "";
+  let fenceChar = "";
   let inDisplayMath = false;
 
   const flush = () => {
@@ -58,30 +80,23 @@ function splitZones(content: string): Zone[] {
     const trimmed = line.trim();
     const fenceMatch = line.match(/^(\s*)(`{3,}|~{3,})/u);
 
-    // Inside a fence: accumulate until closing fence
     if (inFence) {
       current.lines.push(line);
-      if (fenceMatch && fenceMatch[2]!.startsWith(fenceMarker)) {
-        // Closing fence — must have same marker and at least as many chars
-        const marker = fenceMatch[2]!;
-        if (marker[0] === fenceMarker && marker.length >= 3) {
-          inFence = false;
-          flush();
-        }
+      if (fenceMatch && fenceMatch[2]![0] === fenceChar && fenceMatch[2]!.length >= 3) {
+        inFence = false;
+        flush();
       }
       continue;
     }
 
-    // Start of a new fence
     if (fenceMatch) {
       flush();
       current = { type: "fenced", lines: [line] };
       inFence = true;
-      fenceMarker = fenceMatch[2]![0]!;
+      fenceChar = fenceMatch[2]![0]!;
       continue;
     }
 
-    // Inside display math: accumulate content lines (including the closing $$)
     if (inDisplayMath) {
       current.lines.push(line);
       if (trimmed === "$$") {
@@ -91,7 +106,6 @@ function splitZones(content: string): Zone[] {
       continue;
     }
 
-    // Opening display math
     if (trimmed === "$$") {
       flush();
       current = { type: "display_math", lines: [line] };
@@ -99,7 +113,6 @@ function splitZones(content: string): Zone[] {
       continue;
     }
 
-    // Normal text line
     if (current.type !== "normal") {
       current = { type: "normal", lines: [line] };
     } else {
@@ -112,89 +125,108 @@ function splitZones(content: string): Zone[] {
 }
 
 function scanAndRepairSegment(text: string): string {
-  const dollars = findAllUnescapedDollars(text);
-  if (dollars.length === 0) return text;
-
-  const escapePositions = new Set<number>();
-  // Inner whitespace positions to delete so "$ x $" becomes "$x$" (remark-math
-  // does not recognize a delimiter with adjacent inner whitespace, so the pair
-  // would otherwise leak as literal "$").
-  const deletePositions = new Set<number>();
-
-  // Phase 1: handle odd count — escape last unpaired $
-  let pairCount = dollars.length;
-  if (dollars.length % 2 !== 0) {
-    escapePositions.add(dollars[dollars.length - 1]!);
-    pairCount = dollars.length - 1;
-  }
-
-  // Phase 2: check each $...$ pair
-  for (let i = 0; i < pairCount; i += 2) {
-    const openIdx = dollars[i]!;
-    const closeIdx = dollars[i + 1]!;
-    if (openIdx + 1 >= closeIdx) {
-      // Empty pair like "$$" — skip (not our problem, empty inline math is valid)
-      continue;
-    }
-    const enclosed = text.slice(openIdx + 1, closeIdx);
-    if (isSuspiciousInlineMath(enclosed)) {
-      escapePositions.add(openIdx);
-      escapePositions.add(closeIdx);
-      continue;
-    }
-    // Valid inline math but padded with inner whitespace → tighten the delimiters.
-    if (enclosed !== enclosed.trim() && /^[ \t]|[ \t]$/.test(enclosed)) {
-      let j = openIdx + 1;
-      while (j < closeIdx && (text[j] === " " || text[j] === "\t")) {
-        deletePositions.add(j);
-        j += 1;
-      }
-      let k = closeIdx - 1;
-      while (k > openIdx && (text[k] === " " || text[k] === "\t")) {
-        deletePositions.add(k);
-        k -= 1;
-      }
-    }
-  }
-
-  if (escapePositions.size === 0 && deletePositions.size === 0) return text;
-
-  // Phase 3: build result character by character
   let result = "";
-  for (let i = 0; i < text.length; i++) {
-    if (deletePositions.has(i)) continue;
-    if (escapePositions.has(i)) {
-      result += "\\$";
-    } else {
+  for (let i = 0; i < text.length; i += 1) {
+    if (!isUnescapedSingleDollar(text, i)) {
       result += text[i]!;
+      continue;
     }
+
+    const closeIdx = findRenderableClosingDollar(text, i + 1);
+    if (closeIdx < 0) {
+      result += "\\$";
+      continue;
+    }
+
+    result += `$${text.slice(i + 1, closeIdx).trim()}$`;
+    i = closeIdx;
   }
   return result;
 }
 
-function findAllUnescapedDollars(text: string): number[] {
-  const positions: number[] = [];
-  for (let i = 0; i < text.length; i++) {
-    if (text[i] === "$" && (i === 0 || text[i - 1] !== "\\")) {
-      positions.push(i);
-    }
+function findRenderableClosingDollar(text: string, start: number): number {
+  for (let i = start; i < text.length; i += 1) {
+    if (!isUnescapedSingleDollar(text, i)) continue;
+    if (isRenderableInlineMath(text.slice(start, i))) return i;
   }
-  return positions;
+  return -1;
 }
 
-function isSuspiciousInlineMath(enclosed: string): boolean {
-  // Rule 1: Chinese punctuation inside $...$ is never valid inline math
-  if (/[。，；：？！、]/u.test(enclosed)) return true;
+function isUnescapedSingleDollar(text: string, index: number) {
+  return text[index] === "$" && text[index - 1] !== "\\" && text[index - 1] !== "$" && text[index + 1] !== "$";
+}
 
-  // Rule 2: newlines are not valid in inline math
-  if (enclosed.includes("\n")) return true;
+function isRenderableInlineMath(enclosed: string): boolean {
+  const candidate = enclosed.trim();
+  if (!candidate) return false;
+  if (candidate.includes("\n")) return false;
+  if (candidate.length > 200) return false;
+  if (hasUnescapedSingleDollar(candidate)) return false;
+  if (/[，。；：？！、]/u.test(candidate)) return false;
 
-  // Rule 3: inline math spans over 200 characters are almost certainly not math
-  if (enclosed.length > 200) return true;
+  const withoutTextCommands = stripLatexTextCommandBodies(candidate);
+  if (/[\u4e00-\u9fff]/u.test(withoutTextCommands)) return false;
+  if (!looksLikeInlineMath(candidate)) return false;
 
-  // Rule 4: no math tokens at all — pure natural language
-  // Check for backslash, operators, digits, or Latin letters
-  if (!/[\\=^_{}+*\/<>\-\[\]()]|\d|[a-zA-Z]/.test(enclosed)) return true;
+  return canRenderMath(candidate, false);
+}
 
+function looksLikeInlineMath(value: string): boolean {
+  const compact = value.trim();
+  const withoutTextCommands = stripLatexTextCommandBodies(compact);
+  const withoutCommands = withoutTextCommands.replace(/\\[a-zA-Z]+/gu, "");
+
+  if (/\\[a-zA-Z]+/u.test(compact)) return true;
+  if (/[_^{}=<>+\-*\/|()\[\]]/u.test(compact)) return true;
+  if (/^[A-Za-z](?:\s*,\s*[A-Za-z])+$/u.test(compact)) return true;
+
+  // Plain words and currency/unit tokens such as USD are text, not math.
+  if (/^[A-Za-z]{2,}$/u.test(withoutCommands)) return false;
+  if ((withoutCommands.match(/[A-Za-z]{2,}/gu) ?? []).length >= 1) return false;
+  if (/\d/u.test(compact) && /[A-Za-z]/u.test(compact)) return true;
+  if (/^[A-Za-z](?:['’])?$/u.test(compact)) return true;
+  if (/^[A-Za-z]\d+$/u.test(compact)) return true;
   return false;
+}
+
+function hasUnescapedSingleDollar(text: string) {
+  for (let i = 0; i < text.length; i += 1) {
+    if (isUnescapedSingleDollar(text, i)) return true;
+  }
+  return false;
+}
+
+function stripLatexTextCommandBodies(value: string) {
+  return value.replace(
+    /\\(?:text|textbf|textit|textrm|textsf|texttt|mathrm|mathbf|mathsf|mathtt|operatorname)\s*\{[^{}]*\}/gu,
+    "",
+  );
+}
+
+function splitInlineCodeSpans(text: string): { content: string; code: boolean }[] {
+  const chunks: { content: string; code: boolean }[] = [];
+  let index = 0;
+
+  while (index < text.length) {
+    const start = text.indexOf("`", index);
+    if (start < 0) {
+      chunks.push({ content: text.slice(index), code: false });
+      break;
+    }
+
+    let ticks = 1;
+    while (text[start + ticks] === "`") ticks += 1;
+    const marker = "`".repeat(ticks);
+    const end = text.indexOf(marker, start + ticks);
+    if (end < 0) {
+      chunks.push({ content: text.slice(index), code: false });
+      break;
+    }
+
+    if (start > index) chunks.push({ content: text.slice(index, start), code: false });
+    chunks.push({ content: text.slice(start, end + ticks), code: true });
+    index = end + ticks;
+  }
+
+  return chunks;
 }

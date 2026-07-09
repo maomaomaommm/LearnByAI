@@ -78,6 +78,16 @@ test("parseFigurePlaceholders drops blocks missing caption or prompt", () => {
   assert.equal(parseFigurePlaceholders(content).length, 0);
 });
 
+test("parseFigurePlaceholders reads escaped-newline blocks from model output", () => {
+  const content = String.raw`:::learnbyai-figure\ncaption: two-state weather chain\nprompt: draw a simple transition diagram\ndiagramSpec: nodes: sunny, rainy; arrows: sunny->sunny 0.8, sunny->rainy 0.2\ntextLabelsAllowed: true :::`;
+  const blocks = parseFigurePlaceholders(content);
+  assert.equal(blocks.length, 1);
+  assert.equal(blocks[0].placeholder.caption, "two-state weather chain");
+  assert.equal(blocks[0].placeholder.prompt, "draw a simple transition diagram");
+  assert.equal(blocks[0].placeholder.textLabelsAllowed, true);
+  assert.ok(blocks[0].placeholder.diagramSpec?.includes("sunny->rainy"));
+});
+
 // ---- figure markdown regex: dot + legacy dash labels ------------------------
 
 test("createFigureMarkdownRe matches both 图 N.M and legacy 图 N-M", () => {

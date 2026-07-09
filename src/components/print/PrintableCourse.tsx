@@ -10,7 +10,7 @@ import rehypeHighlight from "rehype-highlight";
 import "katex/dist/katex.min.css";
 import "highlight.js/styles/github.css";
 import { normalizeMermaidCode } from "@/lib/mermaid";
-import { postRepairMarkdown } from "@/lib/prompts/formatGuard";
+import { prepareMarkdownForRender } from "@/lib/renderMarkdown";
 
 /**
  * Print-only renderer for PDF export. Deliberately light-themed (white page,
@@ -124,7 +124,7 @@ function Markdown({ content }: { content: string }) {
         },
       }}
     >
-      {postRepairMarkdown(content)}
+      {prepareMarkdownForRender(content)}
     </ReactMarkdown>
   );
 }

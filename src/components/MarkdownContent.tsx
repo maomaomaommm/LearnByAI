@@ -10,8 +10,8 @@ import rehypeKatex from "rehype-katex";
 import rehypeHighlight from "rehype-highlight";
 import "katex/dist/katex.min.css";
 import "highlight.js/styles/github-dark.css";
-import { postRepairMarkdown } from "@/lib/prompts/formatGuard";
 import { normalizeMermaidCode } from "@/lib/mermaid";
+import { prepareMarkdownForRender } from "@/lib/renderMarkdown";
 
 interface MarkdownContentProps {
   content: string;
@@ -355,7 +355,7 @@ export function MarkdownContent({
           hr: () => <hr className="my-6 border-border" />,
         }}
       >
-        {postRepairMarkdown(content)}
+        {prepareMarkdownForRender(content)}
       </ReactMarkdown>
     </div>
   );

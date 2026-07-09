@@ -44,6 +44,22 @@ test("converts backslash-bracket block to $$...$$", () => {
   assert.ok(!out.includes("\\["), out);
 });
 
+test("removes nested single-dollar delimiters inside display math", () => {
+  const dirty = "$$\n$\n\\Omega=\\{s_0,s_1\\}\n$\n$$";
+  const out = postRepairMarkdown(dirty);
+  assert.equal(out, "$$\n\\Omega=\\{s_0,s_1\\}\n$$");
+  assert.equal(postRepairMarkdown(out), out);
+  assert.ok(!validateFormat(out).some((issue) => issue.check === "format.lonely_dollar"), JSON.stringify(validateFormat(out)));
+});
+
+test("removes leaked dollar delimiters from display math body", () => {
+  const dirty = "$$\n$\\Pr(A)$\n=\n0.8\n$$";
+  const out = postRepairMarkdown(dirty);
+  const body = out.match(/\$\$([\s\S]*?)\$\$/u)?.[1] ?? "";
+  assert.doesNotMatch(body, /\$/u, out);
+  assert.equal(postRepairMarkdown(out), out);
+});
+
 test("removes empty code fences entirely", () => {
   const out = postRepairMarkdown("正文一段。\n\n```\n```\n\n下一段。");
   assert.ok(!/```\s*```/.test(out), `empty fence must be gone: ${JSON.stringify(out)}`);

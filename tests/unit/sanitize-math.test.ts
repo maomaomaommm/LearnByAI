@@ -35,6 +35,20 @@ test("leaves already escaped \\$ alone", () => {
   assert.equal(sanitizeMathDelimiters("价格 \\$100"), "价格 \\$100");
 });
 
+test("does not let currency-like dollars swallow a later valid formula", () => {
+  const actual = sanitizeMathDelimiters("price is $100, formula is $x$.");
+  assert.equal(actual, "price is \\$100, formula is $x$.");
+});
+
+test("treats plain words inside dollars as text, not math", () => {
+  assert.equal(sanitizeMathDelimiters("token $USD$ and phrase $hello world$"), "token \\$USD\\$ and phrase \\$hello world\\$");
+});
+
+test("protects inline code spans before math scanning", () => {
+  const actual = sanitizeMathDelimiters("code `$var = 1` and math $Q_{tot}$");
+  assert.equal(actual, "code `$var = 1` and math $Q_{tot}$");
+});
+
 test("keeps $L(\\theta)$ between Chinese as valid math", () => {
   const input = "损失函数 $L(\\theta)$ 是";
   assert.equal(sanitizeMathDelimiters(input), input);
