@@ -322,7 +322,24 @@ export async function illustrateChapter(input: {
     // Snapshot first so the whole insertion is revertable via the existing
     // revision-revert endpoint, exactly like whole-chapter regeneration.
     await snapshotChapterBeforeRegen(input.course, input.chapterId, input.request, "插图插入前的自动快照");
-    await updateServerChapter(input.course, input.chapterId, { content: insertion.content }, input.request);
+    // The reader renders chapter.sections when present (content is the
+    // print/PDF source), so mirror each figure into the section that holds
+    // its anchor — anchors are unique chapter-wide, so at most one matches.
+    const sections = chapter.sections?.length
+      ? chapter.sections.map((section) => {
+          const hits = prepared.filter(
+            (item) => !("reason" in resolveIllustrationAnchor(section.content, item.anchor)),
+          );
+          if (hits.length === 0) return section;
+          return { ...section, content: insertIllustrationsIntoMarkdown(section.content, hits).content };
+        })
+      : chapter.sections;
+    await updateServerChapter(
+      input.course,
+      input.chapterId,
+      { content: insertion.content, ...(sections ? { sections } : {}) },
+      input.request,
+    );
   }
 
   return {
