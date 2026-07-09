@@ -104,6 +104,14 @@ function CodeCopyButton({ code }: { code: string }) {
   );
 }
 
+// Explicit font for diagrams — never "inherit". Mermaid measures labels in a
+// hidden node under <body> (where inherit = the site body font, Inter), but the
+// SVG is displayed inside the reader's font-mono wrapper (JetBrains Mono, much
+// wider). Rects get sized for the narrow font and the wide rendered text spills
+// past the node edge, where light-on-light makes it look truncated. One explicit
+// stack on both the config and the container keeps measurement == render.
+const MERMAID_FONT = '"Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", Arial, sans-serif';
+
 let mermaidLoader: Promise<typeof import("mermaid").default> | null = null;
 function loadMermaid() {
   if (!mermaidLoader) {
@@ -112,7 +120,7 @@ function loadMermaid() {
         startOnLoad: false,
         theme: "dark",
         securityLevel: "loose",
-        fontFamily: "inherit",
+        fontFamily: MERMAID_FONT,
         // htmlLabels:false renders labels as SVG <text> instead of HTML inside a
         // fixed-width <foreignObject> (which clips overflow). SVG text is never
         // clipped, so CJK / mixed-width labels always show in full even if width
@@ -179,8 +187,10 @@ function MermaidDiagram({ code }: { code: string }) {
   return (
     <div
       className="my-4 flex justify-center overflow-x-auto rounded-lg border border-border bg-muted/20 p-4 [&_svg]:h-auto [&_svg]:max-w-full"
+      style={{ fontFamily: MERMAID_FONT }}
       dangerouslySetInnerHTML={{ __html: svg }}
     />
+
   );
 }
 
