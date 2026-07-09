@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import type { User } from "@supabase/supabase-js";
-import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
+import { createSupabaseBrowserClient, isSupabaseBrowserConfigured } from "@/lib/supabase/browser";
 
 /**
  * Client-side auth state.
@@ -16,7 +16,7 @@ import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
  * implicit local-beta user from headers instead.
  */
 export function isSupabaseAuthEnabled() {
-  return Boolean(createSupabaseBrowserClient());
+  return isSupabaseBrowserConfigured();
 }
 
 export function useUser(): User | null | undefined {
