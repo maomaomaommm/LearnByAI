@@ -122,9 +122,13 @@ test("reader page keeps section anchoring and the selection chooser", () => {
 
 test("reader page chapter regeneration requests a real backend retry", () => {
   const pageSource = readFileSync("src/app/courses/[id]/chapters/[chapterId]/page.tsx", "utf8");
+  const routeSource = readFileSync("src/app/api/chapters/[id]/generate/route.ts", "utf8");
 
   assert.match(pageSource, /retry: options\.retry === true/u);
   assert.match(pageSource, /ensureChapterContent\(\{[\s\S]+?\}, \{ retry: true \}\)/u);
+  assert.match(pageSource, /if \(data\.retryBlocked\)/u);
+  assert.match(routeSource, /if \(input\.retry\) \{\s+return retryBlockedResponse/u);
+  assert.match(routeSource, /retryBlocked: true/u);
 });
 
 test("annotations route bounds tutor streaming requests with friendly SSE errors", () => {

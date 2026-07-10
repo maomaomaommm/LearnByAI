@@ -7,7 +7,7 @@ import { parseModelOverridesFromHeaders } from "@/lib/modelOverrides";
 import { publicGenerationJob } from "@/lib/publicGenerationJob";
 import { getActiveServerGenerationJobForChapter, getServerCourse, getServerGenerationJob, saveServerGenerationJob, snapshotChapterBeforeRegen, updateServerChapter } from "@/lib/serverStore";
 import { resolveModelOverrides } from "@/lib/userModelConfig";
-import { Chapter } from "@/lib/types";
+import { Chapter, Course, GenerationJob } from "@/lib/types";
 
 export async function POST(
   request: Request,
@@ -36,6 +36,9 @@ export async function POST(
   if (chapter.generationJobId) {
     const existingJob = await getServerGenerationJob(chapter.generationJobId, request);
     if (existingJob && isActiveJobStatus(existingJob.status)) {
+      if (input.retry) {
+        return retryBlockedResponse(course, existingJob);
+      }
       return NextResponse.json(
         {
           course,
@@ -49,6 +52,9 @@ export async function POST(
 
   const activeJob = await getActiveServerGenerationJobForChapter(chapter.id, request);
   if (activeJob) {
+    if (input.retry) {
+      return retryBlockedResponse(course, activeJob);
+    }
     const updatedCourse =
       chapter.generationJobId === activeJob.id
         ? course
@@ -132,6 +138,19 @@ function hasChapterBody(chapter: Chapter) {
 
 function isActiveJobStatus(status: string) {
   return ["pending", "queued", "retrying", "running"].includes(status);
+}
+
+function retryBlockedResponse(course: Course, job: GenerationJob) {
+  return NextResponse.json(
+    {
+      error: "当前章节已有后台生成或质检任务，请等待任务完成后再重新生成本章。",
+      course,
+      job: publicGenerationJob(job),
+      queued: true,
+      retryBlocked: true,
+    },
+    { status: 409 },
+  );
 }
 
 function scheduleChapterGeneration(request: Request, jobId: string) {

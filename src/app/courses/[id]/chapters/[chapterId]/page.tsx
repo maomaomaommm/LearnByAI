@@ -250,11 +250,16 @@ export default function ReaderPage() {
       body: JSON.stringify({ courseId: stored.id, retry: options.retry === true }),
     })
       .then(async (response) => {
-        const data = (await response.json()) as ChapterGenerateResponse & { course?: Course; queued?: boolean; error?: string };
-        if (!response.ok) throw new Error(data.error ?? "本章生成失败");
+        const data = (await response.json()) as ChapterGenerateResponse & { course?: Course; queued?: boolean; retryBlocked?: boolean; error?: string };
+        if (!response.ok && !data.retryBlocked) throw new Error(data.error ?? "本章生成失败");
         return data;
       })
-      .then((data: ChapterGenerateResponse & { course?: Course; queued?: boolean }) => {
+      .then((data: ChapterGenerateResponse & { course?: Course; queued?: boolean; retryBlocked?: boolean; error?: string }) => {
+        if (data.retryBlocked) {
+          if (data.course) applyCourseUpdate(data.course);
+          setGenerationError(data.error ?? "当前章节已有后台任务，请等待任务完成后再重新生成。");
+          return;
+        }
         if (data.queued) {
           if (data.course) {
             applyCourseUpdate(data.course);
