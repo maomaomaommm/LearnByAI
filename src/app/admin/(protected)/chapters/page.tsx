@@ -46,7 +46,7 @@ export default async function AdminChaptersPage({ searchParams }: { searchParams
             <div className="mt-4 flex flex-wrap items-center gap-2">
               <Link href={`/admin/courses/${chapter.courseId}`} className="rounded-md border border-border px-2.5 py-1 text-xs text-muted-foreground hover:text-foreground">在课程中编辑</Link>
               <AdminActionButton action="review_chapter" payload={{ courseId: chapter.courseId, chapterId: chapter.id }} label="重新质检" confirmText={`确认重新质检「${chapter.title}」？`} />
-              <AdminActionButton action="repair_chapter_status" payload={{ courseId: chapter.courseId, chapterId: chapter.id, status: chapter.chapter.content ? "draft_ready" : "pending" }} label="修复状态" />
+              <AdminActionButton action="repair_chapter_status" payload={{ courseId: chapter.courseId, chapterId: chapter.id, status: chapter.hasBody ? "draft_ready" : "pending" }} label="修复状态" />
               <RowMenu>
                 <AdminActionButton action="regenerate_chapter" payload={{ courseId: chapter.courseId, chapterId: chapter.id }} label="重新生成" confirmText={`确认重新生成「${chapter.title}」？`} variant="danger" />
                 <AdminActionButton action="delete_chapter" payload={{ courseId: chapter.courseId, chapterId: chapter.id }} label="删除章节" confirmText={`危险操作：确认删除「${chapter.title}」？`} variant="danger" />

@@ -42,7 +42,8 @@ export type AdminCourseRow = {
   readyCount: number;
   qualityFailedCount: number;
   activeJobCount: number;
-  course: Course;
+  /** Full course payload — only populated by getAdminCourse (detail view); list queries stay payload-free. */
+  course?: Course;
 };
 
 export type AdminChapterRow = {
@@ -58,7 +59,7 @@ export type AdminChapterRow = {
   qualityScore?: number;
   generationJobId?: string;
   updatedAt?: string;
-  chapter: Chapter;
+  hasBody: boolean;
 };
 
 export type AdminJobRow = {
@@ -454,16 +455,110 @@ export async function getAdminUser(id: string) {
   return { ...user, courses, jobs, usage };
 }
 
-export async function listAdminCourses(options: ListOptions = {}): Promise<AdminCourseRow[]> {
+// Course payloads embed the full textbook (every chapter's content and
+// sections). Admin lists must never select `payload` from `courses` /
+// `chapters` wholesale — only scalar columns plus tiny jsonb projections.
+type AdminCourseLite = {
+  id: string;
+  userId?: string;
+  topic: string;
+  goal: string;
+  background?: string;
+  preference?: string;
+  difficulty?: CourseDifficulty;
+  targetChapterCount?: number;
+  createdAt: string;
+  updatedAt?: string;
+};
+
+async function listAdminCourseLites(): Promise<AdminCourseLite[]> {
   const supabase = requireAdminSupabaseClient();
-  const [{ data: courseRows, error: coursesError }, users, jobs] = await Promise.all([
-    supabase.from("courses").select("id, user_id, topic, goal, payload, created_at, updated_at").order("updated_at", { ascending: false }),
+  const { data, error } = await supabase
+    .from("courses")
+    .select(
+      "id, user_id, topic, goal, created_at, updated_at, background:payload->>background, preference:payload->>preference, difficulty:payload->>difficulty, targetChapterCount:payload->chapterCount",
+    )
+    .order("updated_at", { ascending: false });
+  assertAdminNoError("读取课程", error);
+  return (data ?? []).map((row) => ({
+    id: row.id as string,
+    userId: (row.user_id as string) ?? undefined,
+    topic: (row.topic as string) ?? "",
+    goal: (row.goal as string) ?? "",
+    background: (row.background as string | null) ?? undefined,
+    preference: (row.preference as string | null) ?? undefined,
+    difficulty: (row.difficulty as CourseDifficulty | null) ?? undefined,
+    targetChapterCount: typeof row.targetChapterCount === "number" ? row.targetChapterCount : undefined,
+    createdAt: row.created_at as string,
+    updatedAt: (row.updated_at as string | null) ?? undefined,
+  }));
+}
+
+type AdminChapterLite = {
+  id: string;
+  courseId: string;
+  userId?: string;
+  title: string;
+  status: Chapter["status"];
+  orderIndex: number;
+  description: string;
+  qualityStatus?: QualityReport["status"];
+  qualityScore?: number;
+  generationJobId?: string;
+  updatedAt?: string;
+};
+
+async function listAdminChapterLites(): Promise<AdminChapterLite[]> {
+  const supabase = requireAdminSupabaseClient();
+  const { data, error } = await supabase
+    .from("chapters")
+    .select(
+      "id, course_id, user_id, title, status, order_index, updated_at, description:payload->>description, qualityStatus:payload->qualityReport->>status, qualityScore:payload->qualityReport->score, generationJobId:payload->>generationJobId",
+    )
+    .order("updated_at", { ascending: false });
+  assertAdminNoError("读取章节摘要", error);
+  return (data ?? []).map((row) => ({
+    id: row.id as string,
+    courseId: row.course_id as string,
+    userId: (row.user_id as string) ?? undefined,
+    title: (row.title as string) ?? "",
+    status: ((row.status as string) ?? "pending") as Chapter["status"],
+    orderIndex: (row.order_index as number) ?? 0,
+    description: (row.description as string | null) ?? "",
+    qualityStatus: (row.qualityStatus as QualityReport["status"] | null) ?? undefined,
+    qualityScore: typeof row.qualityScore === "number" ? row.qualityScore : undefined,
+    generationJobId: (row.generationJobId as string | null) ?? undefined,
+    updatedAt: (row.updated_at as string | null) ?? undefined,
+  }));
+}
+
+function getChapterLiteStats(chapters: AdminChapterLite[]) {
+  return chapters.reduce(
+    (stats, chapter) => {
+      stats.total += 1;
+      if (chapter.status === "ready" || chapter.qualityStatus === "passed" || chapter.qualityStatus === "warning") stats.ready += 1;
+      if (chapter.status === "quality_failed" || chapter.qualityStatus === "failed") stats.qualityFailed += 1;
+      return stats;
+    },
+    { total: 0, ready: 0, qualityFailed: 0 },
+  );
+}
+
+export async function listAdminCourses(options: ListOptions = {}): Promise<AdminCourseRow[]> {
+  const [courseLites, chapterLites, users, jobs] = await Promise.all([
+    listAdminCourseLites(),
+    listAdminChapterLites(),
     listAdminUsersLight(),
     listAdminJobs({ limit: 5000 }),
   ]);
-  assertAdminNoError("读取课程", coursesError);
 
   const usersById = new Map(users.map((user) => [user.id, user]));
+  const chaptersByCourse = new Map<string, AdminChapterLite[]>();
+  for (const chapter of chapterLites) {
+    const list = chaptersByCourse.get(chapter.courseId);
+    if (list) list.push(chapter);
+    else chaptersByCourse.set(chapter.courseId, [chapter]);
+  }
   const activeJobsByCourse = new Map<string, number>();
   for (const job of jobs) {
     if (!job.courseId || !ACTIVE_ADMIN_JOB_STATUSES.includes(job.status)) continue;
@@ -472,27 +567,16 @@ export async function listAdminCourses(options: ListOptions = {}): Promise<Admin
 
   const query = options.query?.trim().toLowerCase();
   return paginate(
-    (courseRows ?? [])
-      .map((row) => {
-        const course = normalizeCourse(row.payload as Course);
-        const chapterStats = getChapterStats(course.chapters ?? []);
+    courseLites
+      .map((lite) => {
+        const chapterStats = getChapterLiteStats(chaptersByCourse.get(lite.id) ?? []);
         return {
-          id: row.id,
-          userId: row.user_id,
-          userEmail: usersById.get(row.user_id)?.email,
-          topic: course.topic ?? row.topic,
-          goal: course.goal ?? row.goal,
-          background: course.background,
-          preference: course.preference,
-          difficulty: course.difficulty,
-          targetChapterCount: course.chapterCount,
-          createdAt: course.createdAt ?? row.created_at,
-          updatedAt: course.updatedAt ?? row.updated_at,
+          ...lite,
+          userEmail: lite.userId ? usersById.get(lite.userId)?.email : undefined,
           chapterCount: chapterStats.total,
           readyCount: chapterStats.ready,
           qualityFailedCount: chapterStats.qualityFailed,
-          activeJobCount: activeJobsByCourse.get(row.id) ?? 0,
-          course,
+          activeJobCount: activeJobsByCourse.get(lite.id) ?? 0,
         } satisfies AdminCourseRow;
       })
       .filter((row) => !options.userId || row.userId === options.userId)
@@ -509,34 +593,75 @@ export async function listAdminCourses(options: ListOptions = {}): Promise<Admin
 }
 
 export async function getAdminCourse(id: string) {
-  const courses = await listAdminCourses({ limit: 5000 });
-  const course = courses.find((item) => item.id === id);
-  if (!course) return undefined;
-  const jobs = await listAdminJobs({ courseId: id, limit: 200 });
-  return { ...course, jobs };
+  let course: Course;
+  try {
+    course = await readAdminCoursePayload(id);
+  } catch {
+    return undefined;
+  }
+  const [users, jobs] = await Promise.all([listAdminUsersLight(), listAdminJobs({ courseId: id, limit: 200 })]);
+  const chapterStats = getChapterStats(course.chapters ?? []);
+  return {
+    id: course.id,
+    userId: course.userId,
+    userEmail: course.userId ? users.find((user) => user.id === course.userId)?.email : undefined,
+    topic: course.topic,
+    goal: course.goal,
+    background: course.background,
+    preference: course.preference,
+    difficulty: course.difficulty,
+    targetChapterCount: course.chapterCount,
+    createdAt: course.createdAt,
+    updatedAt: course.updatedAt,
+    chapterCount: chapterStats.total,
+    readyCount: chapterStats.ready,
+    qualityFailedCount: chapterStats.qualityFailed,
+    activeJobCount: jobs.filter((job) => ACTIVE_ADMIN_JOB_STATUSES.includes(job.status)).length,
+    course,
+    jobs,
+  };
 }
 
 export async function listAdminChapters(options: ListOptions = {}): Promise<AdminChapterRow[]> {
-  const courses = await listAdminCourses({ query: options.query, userId: options.userId, limit: 5000 });
-  const rows = courses.flatMap((course) =>
-    (course.course.chapters ?? []).map((chapter) => ({
+  const supabase = requireAdminSupabaseClient();
+  const [chapterLites, courseLites, users, { data: sectionRows, error: sectionsError }] = await Promise.all([
+    listAdminChapterLites(),
+    listAdminCourseLites(),
+    listAdminUsersLight(),
+    supabase.from("sections").select("chapter_id"),
+  ]);
+  logAdminSoftError("读取小节索引", sectionsError);
+
+  const coursesById = new Map(courseLites.map((course) => [course.id, course]));
+  const usersById = new Map(users.map((user) => [user.id, user]));
+  const chaptersWithSections = new Set((sectionRows ?? []).map((row) => row.chapter_id as string));
+  const bodyStatuses = new Set<Chapter["status"]>(["draft_ready", "ready", "quality_failed"]);
+
+  const query = options.query?.trim().toLowerCase();
+  const rows = chapterLites.map((chapter) => {
+    const course = coursesById.get(chapter.courseId);
+    return {
       id: chapter.id,
-      courseId: course.id,
-      userId: course.userId,
-      userEmail: course.userEmail,
-      courseTopic: course.topic,
+      courseId: chapter.courseId,
+      userId: chapter.userId ?? course?.userId,
+      userEmail: (chapter.userId ?? course?.userId) ? usersById.get(chapter.userId ?? course?.userId ?? "")?.email : undefined,
+      courseTopic: course?.topic ?? "",
       title: chapter.title,
       description: chapter.description,
       status: chapter.status,
-      qualityStatus: chapter.qualityReport?.status,
-      qualityScore: chapter.qualityReport?.score,
+      qualityStatus: chapter.qualityStatus,
+      qualityScore: chapter.qualityScore,
       generationJobId: chapter.generationJobId,
-      updatedAt: course.updatedAt,
-      chapter,
-    })),
-  );
+      updatedAt: chapter.updatedAt ?? course?.updatedAt,
+      hasBody: chaptersWithSections.has(chapter.id) || bodyStatuses.has(chapter.status),
+    } satisfies AdminChapterRow;
+  });
+
   return paginate(
-    rows.filter((row) => !options.status || row.status === options.status || row.qualityStatus === options.status),
+    rows
+      .filter((row) => !options.userId || row.userId === options.userId)
+      .filter((row) => !query || `${row.title} ${row.courseTopic} ${row.userEmail ?? ""}`.toLowerCase().includes(query))
+      .filter((row) => !options.status || row.status === options.status || row.qualityStatus === options.status),
     options,
   );
 }
@@ -554,24 +679,25 @@ export async function listAdminJobs(options: ListOptions & { courseId?: string }
   if (options.courseId) query = query.eq("course_id", options.courseId);
   if (options.userId) query = query.eq("user_id", options.userId);
 
-  const [{ data: jobRows, error }, { data: courseRows, error: coursesError }, users] = await Promise.all([
+  const [{ data: jobRows, error }, { data: courseRows, error: coursesError }, { data: chapterRows, error: chaptersError }, users] = await Promise.all([
     query,
-    supabase.from("courses").select("id, user_id, topic, payload"),
+    supabase.from("courses").select("id, topic"),
+    supabase.from("chapters").select("id, title"),
     listAdminUsersLight(),
   ]);
   assertAdminNoError("读取生成任务", error);
   assertAdminNoError("读取任务关联课程", coursesError);
+  assertAdminNoError("读取任务关联章节", chaptersError);
 
   const usersById = new Map(users.map((user) => [user.id, user]));
-  const coursesById = new Map((courseRows ?? []).map((row) => [row.id, normalizeCourse(row.payload as Course)]));
+  const courseTopicById = new Map((courseRows ?? []).map((row) => [row.id as string, (row.topic as string) ?? ""]));
+  const chapterTitleById = new Map((chapterRows ?? []).map((row) => [row.id as string, (row.title as string) ?? ""]));
   const queryText = options.query?.trim().toLowerCase();
 
   return paginate(
     (jobRows ?? [])
       .map((row) => {
         const job = row.payload as GenerationJob;
-        const course = row.course_id ? coursesById.get(row.course_id) : undefined;
-        const chapter = row.chapter_id ? course?.chapters.find((item) => item.id === row.chapter_id) : undefined;
         return {
           id: row.id,
           type: job.type ?? row.type,
@@ -580,8 +706,8 @@ export async function listAdminJobs(options: ListOptions & { courseId?: string }
           activeAgent: job.activeAgent,
           courseId: job.courseId ?? row.course_id ?? undefined,
           chapterId: job.chapterId ?? row.chapter_id ?? undefined,
-          courseTopic: course?.topic,
-          chapterTitle: chapter?.title,
+          courseTopic: row.course_id ? courseTopicById.get(row.course_id) : undefined,
+          chapterTitle: row.chapter_id ? chapterTitleById.get(row.chapter_id) : undefined,
           userId: job.userId ?? row.user_id ?? undefined,
           userEmail: usersById.get(job.userId ?? row.user_id ?? "")?.email,
           error: job.error,
@@ -632,20 +758,24 @@ export async function listAdminQualityReports(options: ListOptions = {}): Promis
   if (options.userId) query = query.eq("user_id", options.userId);
   if (options.status) query = query.eq("status", options.status);
 
-  const [{ data, error }, courses, users] = await Promise.all([query, listAdminCourses({ limit: 5000 }), listAdminUsersLight()]);
+  const [{ data, error }, courseLites, chapterLites, { data: sectionRows, error: sectionsError }, users] = await Promise.all([
+    query,
+    listAdminCourseLites(),
+    listAdminChapterLites(),
+    supabase.from("sections").select("id, chapter_id"),
+    listAdminUsersLight(),
+  ]);
   assertAdminNoError("读取质检报告", error);
+  logAdminSoftError("读取小节索引", sectionsError);
 
   const usersById = new Map(users.map((user) => [user.id, user]));
-  const courseByTarget = new Map<string, AdminCourseRow>();
-  const chapterByTarget = new Map<string, { course: AdminCourseRow; chapter: Chapter }>();
-  for (const course of courses) {
-    courseByTarget.set(course.id, course);
-    for (const chapter of course.course.chapters ?? []) {
-      chapterByTarget.set(chapter.id, { course, chapter });
-      for (const section of chapter.sections ?? []) {
-        chapterByTarget.set(section.id, { course, chapter });
-      }
-    }
+  const courseByTarget = new Map(courseLites.map((course) => [course.id, course]));
+  const chapterById = new Map(chapterLites.map((chapter) => [chapter.id, chapter]));
+  const chapterByTarget = new Map<string, AdminChapterLite>();
+  for (const chapter of chapterLites) chapterByTarget.set(chapter.id, chapter);
+  for (const row of sectionRows ?? []) {
+    const chapter = chapterById.get(row.chapter_id as string);
+    if (chapter) chapterByTarget.set(row.id as string, chapter);
   }
 
   const mapped: AdminQualityRow[] = (data ?? []).map((row) => {
@@ -656,10 +786,10 @@ export async function listAdminQualityReports(options: ListOptions = {}): Promis
       id: row.id,
       userId: row.user_id,
       userEmail: usersById.get(row.user_id)?.email,
-      courseId: course?.id ?? chapterMatch?.course.id,
-      courseTopic: course?.topic ?? chapterMatch?.course.topic,
-      chapterId: chapterMatch?.chapter.id,
-      chapterTitle: chapterMatch?.chapter.title,
+      courseId: course?.id ?? chapterMatch?.courseId,
+      courseTopic: course?.topic ?? (chapterMatch ? courseByTarget.get(chapterMatch.courseId)?.topic : undefined),
+      chapterId: chapterMatch?.id,
+      chapterTitle: chapterMatch?.title,
       targetType: row.target_type as QualityReport["targetType"],
       targetId: row.target_id,
       score: row.score,
@@ -697,7 +827,7 @@ export async function listAdminExports(options: ListOptions = {}): Promise<Admin
   if (options.userId) query = query.eq("user_id", options.userId);
   if (options.status) query = query.eq("status", options.status);
 
-  const [{ data, error }, courses, users] = await Promise.all([query, listAdminCourses({ limit: 5000 }), listAdminUsersLight()]);
+  const [{ data, error }, courses, users] = await Promise.all([query, listAdminCourseLites(), listAdminUsersLight()]);
   assertAdminNoError("读取导出记录", error);
   const coursesById = new Map(courses.map((course) => [course.id, course]));
   const usersById = new Map(users.map((user) => [user.id, user]));

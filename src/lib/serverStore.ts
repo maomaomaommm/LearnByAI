@@ -73,6 +73,16 @@ export async function saveServerCourse(course: Course, request?: Request) {
     }),
   );
 
+  // Remove chapter rows that are no longer in the course payload so the
+  // chapters table stays an exact mirror (course summaries count from it).
+  const keptChapterIds = nextCourse.chapters.map((chapter) => chapter.id).filter(isUuid);
+  await requireSupabaseWrite(
+    "Prune stale chapters",
+    keptChapterIds.length
+      ? supabase.from("chapters").delete().eq("course_id", nextCourse.id).not("id", "in", `(${keptChapterIds.join(",")})`)
+      : supabase.from("chapters").delete().eq("course_id", nextCourse.id),
+  );
+
   await Promise.all(
     nextCourse.chapters
       .filter((chapter) => isUuid(chapter.id))
@@ -191,6 +201,71 @@ export async function getServerCourseForRender(id: string) {
   return local ? normalizeCourse(local) : undefined;
 }
 
+type CourseSummaryRow = {
+  id: string;
+  topic: string | null;
+  goal: string | null;
+  created_at: string;
+  updated_at: string | null;
+  contentMode: string | null;
+  learningMode: string | null;
+  generationJobId: string | null;
+  outlineStatus: string | null;
+  textbookTitle: string | null;
+  chapters: Array<{ id: string; title: string | null; status: string | null; order_index: number | null }> | null;
+};
+
+/**
+ * The course payload embeds the entire textbook (every chapter's content and
+ * sections), so listing must never pull payloads — only the summary fields the
+ * course list actually renders, plus lightweight chapter rows for counts and
+ * statuses.
+ */
+function courseSummaryFromRow(row: CourseSummaryRow, userId: string): Course {
+  const chapters = [...(row.chapters ?? [])]
+    .sort((a, b) => (a.order_index ?? 0) - (b.order_index ?? 0))
+    .map((chapter) => ({
+      id: chapter.id,
+      title: chapter.title ?? "",
+      description: "",
+      time: { readingMinutes: 0, exerciseMinutes: 0, practiceMinutes: 0, extensionMinutes: 0 },
+      status: (chapter.status ?? "pending") as Course["chapters"][number]["status"],
+    }));
+
+  return {
+    id: row.id,
+    userId,
+    topic: row.topic ?? "",
+    goal: row.goal ?? "",
+    background: "",
+    profile: "",
+    contentMode: row.contentMode === "textbook" ? "textbook" : "lecture",
+    ...(row.learningMode ? { learningMode: row.learningMode } : {}),
+    ...(row.generationJobId ? { generationJobId: row.generationJobId } : {}),
+    courseBible: {
+      targetLearner: "",
+      finalOutcomes: [],
+      teachingStyle: "",
+      prerequisites: [],
+      globalNarrative: "",
+      terminology: [],
+      chapterDependencies: [],
+    },
+    ...(row.outlineStatus
+      ? {
+          textbookMeta: {
+            title: row.textbookTitle ?? row.topic ?? "",
+            language: "zh-CN",
+            outlineStatus: row.outlineStatus,
+          },
+        }
+      : {}),
+    chapters,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at ?? row.created_at,
+  } as unknown as Course;
+}
+
 export async function listServerCourses(request?: Request) {
   const userId = await resolveUserId(request);
   const supabase = createSupabaseServiceClient();
@@ -198,12 +273,14 @@ export async function listServerCourses(request?: Request) {
   if (supabase && isUuid(userId)) {
     const { data, error } = await supabase
       .from("courses")
-      .select("payload, created_at")
+      .select(
+        "id, topic, goal, created_at, updated_at, contentMode:payload->>contentMode, learningMode:payload->>learningMode, generationJobId:payload->>generationJobId, outlineStatus:payload->textbookMeta->>outlineStatus, textbookTitle:payload->textbookMeta->>title, chapters(id, title, status, order_index)",
+      )
       .eq("user_id", userId)
       .order("created_at", { ascending: false });
 
     assertSupabaseNoError("List courses", error);
-    return (data ?? []).map((row) => normalizeCourse(row.payload as Course));
+    return (data ?? []).map((row) => courseSummaryFromRow(row as unknown as CourseSummaryRow, userId));
   }
 
   await hydrateLocalStore();
@@ -215,20 +292,25 @@ export async function listServerCourses(request?: Request) {
 
 export async function deleteServerCourse(id: string, request?: Request) {
   const userId = await resolveUserId(request);
-  const course = await getServerCourse(id, request);
-  if (!course) return false;
+  const supabase = createSupabaseServiceClient();
 
   // Always delete from Supabase first if available. RLS or user_id mismatch will
   // cause an error that propagates to the caller.
-  const supabase = createSupabaseServiceClient();
   if (supabase && isUuid(userId) && isUuid(id)) {
-    const qualityTargetIds = [
-      course.id,
-      ...course.chapters.flatMap((chapter) => [
-        chapter.id,
-        ...(chapter.sections ?? []).map((section) => section.id),
-      ]),
-    ].filter(isUuid);
+    // Ownership check + id harvest without loading the multi-megabyte course
+    // payload: chapter/section ids come from their own tables.
+    const [{ data: owned, error: ownError }, { data: chapterRows, error: chapterError }, { data: sectionRows, error: sectionError }] = await Promise.all([
+      supabase.from("courses").select("id").eq("id", id).eq("user_id", userId).maybeSingle(),
+      supabase.from("chapters").select("id").eq("course_id", id),
+      supabase.from("sections").select("id").eq("course_id", id),
+    ]);
+    assertSupabaseNoError("Read course", ownError);
+    if (!owned) return false;
+    assertSupabaseNoError("Read course chapters", chapterError);
+    assertSupabaseNoError("Read course sections", sectionError);
+
+    const chapterIds = (chapterRows ?? []).map((row) => row.id as string);
+    const qualityTargetIds = [id, ...chapterIds, ...(sectionRows ?? []).map((row) => row.id as string)].filter(isUuid);
 
     if (qualityTargetIds.length) {
       await requireSupabaseWrite(
@@ -245,9 +327,18 @@ export async function deleteServerCourse(id: string, request?: Request) {
       "Delete course",
       supabase.from("courses").delete().eq("id", id).eq("user_id", userId),
     );
+
+    // Clean up local fallback cache after Supabase succeeds.
+    await hydrateLocalStore();
+    const localCopy = localCourses.get(id);
+    await clearLocalCourseData(
+      localCopy ?? ({ id, chapters: chapterIds.map((chapterId) => ({ id: chapterId })) } as unknown as Course),
+    );
+    return true;
   }
 
-  // Clean up local fallback cache after Supabase succeeds.
+  const course = await getServerCourse(id, request);
+  if (!course) return false;
   await clearLocalCourseData(course);
   return true;
 }
