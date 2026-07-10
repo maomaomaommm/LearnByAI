@@ -201,8 +201,22 @@ test("markdownToTex wraps wide tables and tightens typography for four columns",
   assert.ok(Math.abs(widths.reduce((sum, width) => sum + width, 0) - 1) < 0.001, tex);
   assert.ok(tex.includes("\\footnotesize"), tex);
   assert.ok(tex.includes("\\renewcommand{\\arraystretch}{1.28}"), tex);
+  assert.ok(!tex.includes("\\begin{landscape}"), tex);
   assert.ok(!tex.includes("\\textbf{状态表示}"), tex);
   assert.ok(!tex.includes("\\textbf{动作空间}"), tex);
+});
+
+test("markdownToTex rotates six-column comparison tables for readable textbook export", async () => {
+  const md = [
+    "| 方法 | 学习对象 | 是否需模型 | 更新目标 | 主要优点 | 主要风险 |",
+    "| --- | --- | --- | --- | --- | --- |",
+    "| Q-learning | $q_*$ | 否 | $R_{t+1}+\\gamma\\max_{a'}q(S_{t+1},a')$ | 可用探索数据学习 | 最大化偏差 |",
+  ].join("\n");
+  const tex = await markdownToTex(md);
+  assert.ok(tex.includes("\\begin{landscape}"), tex);
+  assert.ok(tex.includes("\\begin{longtable}"), tex);
+  assert.ok(tex.includes("\\small"), tex);
+  assert.ok(tex.includes("\\end{landscape}"), tex);
 });
 
 test("markdownToTex drops HTML comments and renders figures via \\includegraphics fallback box", async () => {
@@ -295,6 +309,7 @@ test("toTex emits textbook front matter, map page, and chapter-level counters", 
 
   assert.ok(tex.includes("\\documentclass[UTF8,openany,oneside,12pt]{ctexbook}"), tex);
   assert.ok(tex.includes("\\usepackage{listings,upquote}"), tex);
+  assert.ok(tex.includes("\\usepackage{pdflscape}"), tex);
   assert.ok(tex.includes("\\lstdefinestyle{learnbyai}"), tex);
   assert.ok(tex.includes("\\newcolumntype{L}[1]"), tex);
   assert.ok(tex.includes("\\chapter*{前言}"), tex);

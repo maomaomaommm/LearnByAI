@@ -199,6 +199,7 @@ async function toTextbookTex(course: Course, options: TexOptions = {}) {
 \\usepackage{xcolor}
 \\usepackage{listings,upquote}
 \\usepackage{needspace}
+\\usepackage{pdflscape}
 \\usepackage[hidelinks]{hyperref}
 \\makeatletter
 \\providecommand{\\cmrsideswitch}{}
@@ -541,10 +542,10 @@ function tableToTex(tableLines: string[]) {
       const content = escapeMarkdownText(cells[i] ?? "");
       return bold && content ? `\\textbf{${content}}` : content;
     }).join(" & ") + " \\\\";
-  const fontSize = columnCount >= 5 ? "\\scriptsize" : columnCount >= 4 ? "\\footnotesize" : "\\small";
+  const fontSize = columnCount >= 6 ? "\\small" : columnCount >= 5 ? "\\scriptsize" : columnCount >= 4 ? "\\footnotesize" : "\\small";
   const headerRow = renderRow(header, true);
 
-  return [
+  const table = [
     "\\begingroup",
     fontSize,
     "\\setlength{\\tabcolsep}{4pt}",
@@ -567,6 +568,7 @@ function tableToTex(tableLines: string[]) {
     "\\end{longtable}",
     "\\endgroup",
   ].join("\n");
+  return columnCount >= 6 ? `\\begin{landscape}\n${table}\n\\end{landscape}` : table;
 }
 
 function codeBlockToTex(body: string, language: string) {
