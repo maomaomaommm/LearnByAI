@@ -4,7 +4,7 @@ import { canRenderMath } from "../katexValidate";
 export function validateFormat(content: string): QualityIssue[] {
   const issues: QualityIssue[] = [];
 
-  if (/\\\[|\\\]/u.test(content)) {
+  if (/(?<!\\)\\\[|(?<!\\)\\\]/u.test(content)) {
     issues.push({
       check: "format.math_delimiters",
       severity: "warning",

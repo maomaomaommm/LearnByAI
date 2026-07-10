@@ -245,6 +245,7 @@ test("keeps cases row spacing commands inside display math", () => {
   ].join("\n");
   const out = postRepairMarkdown(input);
   assert.equal(out, input);
+  assert.ok(!validateFormat(out).some((issue) => issue.check === "format.math_delimiters"), JSON.stringify(validateFormat(out)));
   assert.equal(postRepairMarkdown(out), out);
 });
 
@@ -267,6 +268,31 @@ test("heals cases split by a mistaken \\\\[6pt] delimiter conversion", () => {
   assert.doesNotMatch(out, /^\s*6pt\]\s*$/mu);
   assert.equal((out.match(/\$\$/gu) ?? []).length, 2);
   assert.ok(!validateFormat(out).some((issue) => issue.check === "format.unrenderable_math"), JSON.stringify(validateFormat(out)));
+  assert.equal(postRepairMarkdown(out), out);
+});
+
+test("heals cases split where the next row body is trapped between display delimiters", () => {
+  const input = [
+    "$$",
+    String.raw`\frac{\pi(A_t\mid S_t)}`,
+    String.raw`{b(A_t\mid S_t)}`,
+    "=",
+    String.raw`\begin{cases}`,
+    String.raw`\dfrac{1}{b(A_t\mid S_t)},`,
+    "& A_t=\\pi(S_t),\\",
+    "$$",
+    "6pt]",
+    "0,",
+    "",
+    "$$",
+    String.raw`& A_t\ne\pi(S_t).`,
+    String.raw`\end{cases}`,
+    "$$",
+  ].join("\n");
+  const out = postRepairMarkdown(input);
+  assert.match(out, /A_t=\\pi\(S_t\),\\\\\[6pt\]\n0,/u);
+  assert.equal((out.match(/\$\$/gu) ?? []).length, 2);
+  assert.ok(!validateFormat(out).some((issue) => issue.check.startsWith("format.")), JSON.stringify(validateFormat(out)));
   assert.equal(postRepairMarkdown(out), out);
 });
 

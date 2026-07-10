@@ -117,8 +117,11 @@ function normalizeMathText(content: string) {
 
 function repairSplitLineSpacingArtifacts(content: string) {
   return content.replace(
-    /\\{1,2}[ \t]*\n\$\$[ \t]*\n[ \t]*(\d+(?:\.\d+)?(?:pt|em|ex|mm|cm))\][ \t]*\n(?:[ \t]*\n)*\$\$[ \t]*\n/gu,
-    (_match, spacing: string) => `\\\\[${spacing}]\n`,
+    /\\{1,2}[ \t]*\n\$\$[ \t]*\n[ \t]*(\d+(?:\.\d+)?(?:pt|em|ex|mm|cm))\][ \t]*\n([\s\S]*?)[ \t]*\n\$\$[ \t]*(?:\n|$)/gu,
+    (_match, spacing: string, body: string) => {
+      const remainder = body.replace(/^\n+|\n+$/gu, "");
+      return `\\\\[${spacing}]\n${remainder ? `${remainder}\n` : ""}`;
+    },
   );
 }
 
