@@ -206,17 +206,38 @@ test("markdownToTex wraps wide tables and tightens typography for four columns",
   assert.ok(!tex.includes("\\textbf{动作空间}"), tex);
 });
 
-test("markdownToTex rotates six-column comparison tables for readable textbook export", async () => {
+test("markdownToTex keeps compact six-column comparison tables in portrait", async () => {
   const md = [
-    "| 方法 | 学习对象 | 是否需模型 | 更新目标 | 主要优点 | 主要风险 |",
+    "| 方法 | 主要目标 | 备份形式 | 是否显式维护策略 | 适用场景 | 主要代价 |",
     "| --- | --- | --- | --- | --- | --- |",
-    "| Q-learning | $q_*$ | 否 | $R_{t+1}+\\gamma\\max_{a'}q(S_{t+1},a')$ | 可用探索数据学习 | 最大化偏差 |",
+    "| 迭代策略评估 | 计算 $v_\\pi$ | 对动作按 $\\pi(a\\mid s)$ 求期望 | 是，策略固定 | 已有策略、需要评价 | 多轮全状态扫描 |",
+    "| 精确策略迭代 | 求最优策略 | 评估后对动作取贪心 | 是 | 小型 MDP | 每轮评估可能昂贵 |",
+    "| 值迭代 | 求 $v_*$ 并提取策略 | 直接对动作取最大 | 否 | 小型到中型 MDP | 可能需要许多扫描 |",
+  ].join("\n");
+  const tex = await markdownToTex(md);
+  assert.ok(!tex.includes("\\begin{landscape}"), tex);
+  assert.ok(tex.includes("\\begin{longtable}"), tex);
+  assert.ok(tex.includes("\\footnotesize"), tex);
+  assert.ok(tex.includes("\\setlength{\\tabcolsep}{2.5pt}"), tex);
+});
+
+test("markdownToTex reserves landscape pages for dense seven-column algorithm matrices", async () => {
+  const md = [
+    "| 方法 | 学习对象 | 是否需模型 | 更新目标 | 策略关系 | 主要优点 | 主要风险 |",
+    "| --- | --- | --- | --- | --- | --- | --- |",
+    "| DP 策略评估 | $v_\\pi$ 或 $q_\\pi$ | 是 | 期望 Bellman 备份 | 给定策略 | 无采样噪声 | 需要完整模型 |",
+    "| MC 预测 | $v_\\pi$ 或 $q_\\pi$ | 否 | 完整回报 $G_t$ | 通常同策略 | 目标无偏 | 必须等回合结束 |",
+    "| TD(0) 预测 | $v_\\pi$ | 否 | $R_{t+1}+\\gamma v(S_{t+1})$ | 给定策略 | 在线、低方差 | 自举引入偏差 |",
+    "| Sarsa | $q_\\pi$ | 否 | $R_{t+1}+\\gamma q(S_{t+1},A_{t+1})$ | 同策略 | 计入探索后果 | 学到探索策略价值 |",
+    "| Q-learning | $q_*$ | 否 | $R_{t+1}+\\gamma\\max_{a'}q(S_{t+1},a')$ | 离策略 | 可复用探索数据 | 最大化偏差 |",
   ].join("\n");
   const tex = await markdownToTex(md);
   assert.ok(tex.includes("\\begin{landscape}"), tex);
-  assert.ok(tex.includes("\\begin{longtable}"), tex);
+  assert.ok(tex.includes("\\pagestyle{empty}"), tex);
+  assert.ok(tex.includes("\\vspace*{\\fill}"), tex);
   assert.ok(tex.includes("\\small"), tex);
   assert.ok(tex.includes("\\end{landscape}"), tex);
+  assert.ok(tex.includes("\\pagestyle{fancy}"), tex);
 });
 
 test("markdownToTex drops HTML comments and renders figures via \\includegraphics fallback box", async () => {

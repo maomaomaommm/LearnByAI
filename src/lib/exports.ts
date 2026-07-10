@@ -536,19 +536,27 @@ function tableToTex(tableLines: string[]) {
   const bodyRows = rows.slice(1).filter((cells) => !isSeparator(cells));
   const columnCount = Math.max(header.length, ...bodyRows.map((cells) => cells.length), 1);
   const widths = tableColumnWidths(header, bodyRows, columnCount);
+  const landscape = tableNeedsLandscape(header, bodyRows, widths);
   const spec = `@{}${widths.map((width) => `L{${width.toFixed(4)}}`).join("")}@{}`;
   const renderRow = (cells: string[], bold = false) =>
     Array.from({ length: columnCount }, (_, i) => {
       const content = escapeMarkdownText(cells[i] ?? "");
       return bold && content ? `\\textbf{${content}}` : content;
     }).join(" & ") + " \\\\";
-  const fontSize = columnCount >= 6 ? "\\small" : columnCount >= 5 ? "\\scriptsize" : columnCount >= 4 ? "\\footnotesize" : "\\small";
+  const fontSize = landscape
+    ? "\\small"
+    : columnCount >= 7
+      ? "\\scriptsize"
+      : columnCount >= 4
+        ? "\\footnotesize"
+        : "\\small";
+  const tabColumnSeparation = landscape ? "4pt" : columnCount >= 6 ? "2.5pt" : columnCount >= 4 ? "3.5pt" : "4pt";
   const headerRow = renderRow(header, true);
 
   const table = [
     "\\begingroup",
     fontSize,
-    "\\setlength{\\tabcolsep}{4pt}",
+    `\\setlength{\\tabcolsep}{${tabColumnSeparation}}`,
     "\\renewcommand{\\arraystretch}{1.28}",
     "\\setlength{\\LTleft}{0pt}",
     "\\setlength{\\LTright}{0pt}",
@@ -568,7 +576,10 @@ function tableToTex(tableLines: string[]) {
     "\\end{longtable}",
     "\\endgroup",
   ].join("\n");
-  return columnCount >= 6 ? `\\begin{landscape}\n${table}\n\\end{landscape}` : table;
+  const landscapeSpacing = bodyRows.length <= 12 ? "\\vspace*{\\fill}\n" : "";
+  return landscape
+    ? `\\clearpage\n\\begin{landscape}\n\\pagestyle{empty}\n${landscapeSpacing}${table}\n${landscapeSpacing}\\end{landscape}\n\\pagestyle{fancy}\n\\clearpage`
+    : table;
 }
 
 function codeBlockToTex(body: string, language: string) {
@@ -633,6 +644,36 @@ function tableColumnWidths(header: string[], bodyRows: string[][], columnCount: 
   return distributeColumnWidths(scores, minWidth, maxWidth);
 }
 
+function tableNeedsLandscape(header: string[], bodyRows: string[][], widths: number[]) {
+  const columnCount = widths.length;
+  if (columnCount <= 5) return false;
+  if (columnCount >= 8) return true;
+
+  const rows = [header, ...bodyRows];
+  const unbreakableScores = widths.map((_width, columnIndex) =>
+    Math.max(...rows.map((row) => tableCellUnbreakableWidthScore(row[columnIndex] ?? "")), 1));
+  const portraitCapacity = 92;
+  const overflowRatios = unbreakableScores.map((score, index) =>
+    score / Math.max((widths[index] ?? 0) * portraitCapacity, 1));
+  const worstOverflow = Math.max(...overflowRatios);
+  const requiredWidth = unbreakableScores.reduce(
+    (sum, score) => sum + Math.max(0.075, Math.min(0.42, (score + 2) / portraitCapacity)),
+    0,
+  );
+
+  // Six-column comparison tables are common in textbooks. Keep them in the
+  // normal reading flow unless several rows contain formulas or identifiers
+  // that genuinely cannot wrap cleanly in portrait.
+  if (columnCount === 6) {
+    return bodyRows.length >= 5 && worstOverflow > 1.75 && requiredWidth > 1.2;
+  }
+
+  // Seven-column tables may still fit in portrait when their cells are short.
+  // Dense algorithm matrices with long formulas use a dedicated landscape page.
+  return bodyRows.length >= 5
+    || (bodyRows.length >= 4 && (worstOverflow > 1.25 || requiredWidth > 1.08));
+}
+
 function tableCellWidthScore(value: string) {
   const plain = value
     .replace(/\$\$?([\s\S]*?)\$\$?/gu, "$1")
@@ -640,6 +681,13 @@ function tableCellWidthScore(value: string) {
     .replace(/\\[A-Za-z]+/gu, "x")
     .replace(/[*_`{}]/gu, "");
   return Array.from(plain).reduce((width, char) => width + (/[\u2e80-\u9fff]/u.test(char) ? 2 : 1), 0);
+}
+
+function tableCellUnbreakableWidthScore(value: string) {
+  const tokens = value.match(
+    /\$\$?[\s\S]*?\$\$?|\\\([\s\S]*?\\\)|`[^`]*`|[A-Za-z0-9][A-Za-z0-9_.:+/'-]*/gu,
+  ) ?? [];
+  return Math.max(2, ...tokens.map((token) => tableCellWidthScore(token)));
 }
 
 function distributeColumnWidths(scores: number[], minWidth: number, maxWidth: number) {
