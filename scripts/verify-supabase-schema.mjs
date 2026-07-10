@@ -81,7 +81,7 @@ const requiredSnippets = [
   "insert into storage.buckets",
   "'learnbyai-exports'",
   "public, file_size_limit, allowed_mime_types",
-  "false, 10485760",
+  "false, 52428800",
   "application/pdf",
   "application/x-tex",
   "text/plain",

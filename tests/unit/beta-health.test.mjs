@@ -187,7 +187,7 @@ function healthyRuntime() {
     exportStorage: {
       bucketExists: true,
       private: true,
-      fileSizeLimit: 10485760,
+      fileSizeLimit: 52428800,
       missingMimeTypes: [],
     },
   };

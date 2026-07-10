@@ -94,8 +94,8 @@ async function assertBucketExists() {
   if (data.public) {
     throw new Error(`Supabase Storage bucket ${bucket} must be private.`);
   }
-  if (Number(data.file_size_limit) !== 10_485_760) {
-    throw new Error(`Supabase Storage bucket ${bucket} must keep a 10 MiB file size limit.`);
+  if (Number(data.file_size_limit) !== 52_428_800) {
+    throw new Error(`Supabase Storage bucket ${bucket} must keep a 50 MiB file size limit.`);
   }
   const allowedMimes = Array.isArray(data.allowed_mime_types) ? data.allowed_mime_types : [];
   const missingMimes = expectedExportMimes.filter((mime) => !allowedMimes.includes(mime));

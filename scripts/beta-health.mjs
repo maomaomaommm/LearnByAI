@@ -101,7 +101,7 @@ function assertRuntimeHealth(runtime, { expectedExportsBucket }) {
   }
   if (storage?.bucketExists !== true) failures.push("export Storage bucket is missing");
   if (storage?.private !== true) failures.push("export Storage bucket is not private");
-  if (storage?.fileSizeLimit !== 10_485_760) {
+  if (storage?.fileSizeLimit !== 52_428_800) {
     failures.push(`export Storage file size limit is ${String(storage?.fileSizeLimit ?? "missing")}`);
   }
   if (Array.isArray(storage?.missingMimeTypes) && storage.missingMimeTypes.length > 0) {

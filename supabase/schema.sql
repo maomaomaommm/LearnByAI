@@ -471,7 +471,7 @@ values (
   'learnbyai-exports',
   'learnbyai-exports',
   false,
-  10485760,
+  52428800,
   array['application/pdf', 'application/x-tex', 'text/plain', 'application/octet-stream']
 )
 on conflict (id) do update set
