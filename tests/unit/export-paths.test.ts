@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { isAbsolute, relative } from "node:path";
 import { test } from "node:test";
-import { getLocalExportStoreDir, resolveLocalExportPath } from "../../src/lib/exportPaths";
+import { getLocalExportStoreDir, getTexProjectStoreDir, resolveLocalExportPath } from "../../src/lib/exportPaths";
 
 test("local export paths stay inside the configured export directory", () => {
   const root = getLocalExportStoreDir();
@@ -21,6 +21,17 @@ test("local export path rejects traversal and absolute input", () => {
   assert.throws(() => resolveLocalExportPath("/tmp/secret.pdf", "fallback.pdf"), /Invalid export storage path/u);
   assert.throws(() => resolveLocalExportPath("C:/tmp/secret.pdf", "fallback.pdf"), /Invalid export storage path/u);
   assert.throws(() => resolveLocalExportPath("user\\..\\secret.pdf", "fallback.pdf"), /Invalid export storage path/u);
+});
+
+test("TeX project exports use a writable export work directory instead of .next", () => {
+  const root = getLocalExportStoreDir();
+  const texRoot = getTexProjectStoreDir();
+  const relativePath = relative(root, texRoot);
+
+  assert.ok(relativePath);
+  assert.equal(isAbsolute(relativePath), false);
+  assert.equal(relativePath.startsWith(".."), false);
+  assert.doesNotMatch(texRoot.replace(/\\/gu, "/"), /\/\.next(?:\/|$)/u);
 });
 
 test("PDF export delegates to the headless renderer instead of stripping non-ASCII text", () => {

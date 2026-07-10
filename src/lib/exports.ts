@@ -3,7 +3,7 @@ import "server-only";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { getSupabaseExportsBucket, hasSupabaseServerConfig } from "./config";
-import { resolveLocalExportPath } from "./exportPaths";
+import { getTexProjectStoreDir, resolveLocalExportPath } from "./exportPaths";
 import { createFigureMarkdownRe } from "./figures";
 import { ILLUSTRATION_URL_PREFIX, readIllustrationImage } from "./illustration";
 import { createSupabaseServiceClient } from "./supabase/server";
@@ -132,8 +132,11 @@ function localExportPath(job: ExportJob) {
   return resolveLocalExportPath(job.storagePath, `${job.id}.${job.format}`);
 }
 
+type TexOptions = { assetDir?: string };
+type ImageTexOptions = { width?: string; height?: string; keepAspectRatio?: boolean };
+
 async function renderTextbookPdf(course: Course, exportId: string) {
-  const projectDir = join(process.cwd(), ".next", "tex-exports", exportId);
+  const projectDir = join(getTexProjectStoreDir(), exportId);
   const assetDir = join(projectDir, "assets");
   await mkdir(assetDir, { recursive: true });
   const tex = await toTex(course, { assetDir });
@@ -157,7 +160,7 @@ async function renderTextbookPdf(course: Course, exportId: string) {
   }
 }
 
-async function toTex(course: Course, options: { assetDir?: string } = {}) {
+export async function toTex(course: Course, options: TexOptions = {}) {
   if (course.contentMode === "textbook") return toTextbookTex(course, options);
 
   const chapters = course.chapters
@@ -173,78 +176,161 @@ ${chapters}
 `;
 }
 
-async function toTextbookTex(course: Course, options: { assetDir?: string } = {}) {
+async function toTextbookTex(course: Course, options: TexOptions = {}) {
   const meta = course.textbookMeta;
   const title = meta?.title || course.topic;
   const subtitle = meta?.subtitle || course.goal;
+  const createdDate = formatCourseDate(course.createdAt);
   const map = meta?.textbookMap;
   const chapters = course.chapters.map(async (chapter) => [
       `\\chapter{${escapeTex(chapter.title)}}`,
-      chapter.description ? `\\begin{quote}\\small ${escapeTex(chapter.description)}\\end{quote}` : "",
+      chapter.description ? `\\begin{quote}\\small\\itshape ${escapeMarkdownText(chapter.description)}\\end{quote}` : "",
       await markdownToTex(chapter.content ?? chapter.sections?.map((section) => section.content).join("\n\n") ?? UNGENERATED_CHAPTER_TEXT, options),
     ].filter(Boolean).join("\n\n"));
   const chapterTex = (await Promise.all(chapters)).join("\n\n");
 
-  return `\\documentclass[UTF8,oneside]{ctexbook}
-\\usepackage[a4paper,margin=2.6cm]{geometry}
-\\usepackage{amsmath,amssymb,amsthm}
-\\usepackage{booktabs,longtable,graphicx}
+  return `\\documentclass[UTF8,openany,oneside,12pt]{ctexbook}
+\\usepackage[a4paper,top=2.8cm,bottom=2.8cm,left=3.0cm,right=2.6cm,headheight=15pt]{geometry}
+\\usepackage{amsmath,amssymb,amsthm,mathtools}
+\\usepackage{booktabs,longtable,graphicx,float}
+\\usepackage{caption}
+\\usepackage{enumitem}
+\\usepackage{fancyhdr}
+\\usepackage{xcolor}
 \\usepackage[hidelinks]{hyperref}
+\\hypersetup{pdftitle={${escapeTex(title)}},pdfauthor={LearnByAI}}
+\\setcounter{tocdepth}{3}
+\\setcounter{secnumdepth}{3}
+\\linespread{1.16}
+\\setlength{\\parindent}{2em}
+\\setlength{\\parskip}{0pt}
+\\setlist[itemize]{leftmargin=2.2em,itemsep=0.25em,topsep=0.35em}
+\\setlist[enumerate]{leftmargin=2.2em,itemsep=0.25em,topsep=0.35em}
+\\captionsetup{font=small,labelfont=bf,labelsep=quad}
+\\renewcommand{\\figurename}{图}
+\\renewcommand{\\tablename}{表}
 \\numberwithin{figure}{chapter}
 \\numberwithin{table}{chapter}
+\\numberwithin{equation}{chapter}
 \\newtheorem{definition}{定义}[chapter]
 \\newtheorem{example}{例}[chapter]
 \\newtheorem{theorem}{定理}[chapter]
 \\newtheorem{algorithm}{算法}[chapter]
-\\title{${escapeTex(title)}}
-\\author{LearnByAI}
-\\date{${escapeTex(new Date(course.createdAt).toLocaleDateString("zh-CN"))}}
+\\pagestyle{fancy}
+\\fancyhf{}
+\\fancyhead[C]{\\small\\nouppercase{\\leftmark}}
+\\fancyfoot[C]{\\thepage}
+\\renewcommand{\\headrulewidth}{0.4pt}
+\\fancypagestyle{plain}{\\fancyhf{}\\fancyfoot[C]{\\thepage}\\renewcommand{\\headrulewidth}{0pt}}
+\\emergencystretch=2em
+\\sloppy
 \\begin{document}
 \\frontmatter
+\\pagenumbering{roman}
 \\begin{titlepage}
+\\thispagestyle{empty}
 \\centering
 \\vspace*{0.28\\textheight}
-{\\Huge\\bfseries ${escapeTex(title)}\\par}
+{\\Huge\\bfseries\\begin{minipage}{0.84\\textwidth}\\centering\\linespread{1.12}\\selectfont ${escapeTex(title)}\\end{minipage}\\par}
 \\vspace{1.2em}
-{\\Large ${escapeTex(subtitle)}\\par}
+{\\Large\\begin{minipage}{0.72\\textwidth}\\centering ${escapeTex(subtitle)}\\end{minipage}\\par}
 \\vfill
-{\\small LearnByAI · 个性化学习教材\\par}
+{\\normalsize LearnByAI\\par}
 \\vspace{0.8em}
-{\\small ${course.chapters.length} 章 · ${escapeTex(new Date(course.createdAt).toLocaleDateString("zh-CN"))}\\par}
+{\\small 个性化学习教材 · ${course.chapters.length} 章 · ${escapeTex(createdDate)}\\par}
 \\end{titlepage}
+\\cleardoublepage
+${prefaceTex(course, title, createdDate)}
+\\cleardoublepage
 \\tableofcontents
+\\cleardoublepage
 ${map ? await textbookMapTex(map.caption, map.url, options) : ""}
 \\mainmatter
 ${chapterTex}
 \\backmatter
 \\chapter*{术语与符号}
+\\markboth{术语与符号}{术语与符号}
+\\addcontentsline{toc}{chapter}{术语与符号}
 ${terminologyTex(course)}
 \\end{document}
 `;
 }
 
-async function textbookMapTex(caption: string, url?: string, options: { assetDir?: string } = {}) {
-  const image = url ? await imageTex(url, caption, options) : `\\fbox{\\parbox{0.82\\textwidth}{\\centering ${escapeTex(caption)}}}`;
-  return `\\chapter*{教材地图}
-\\addcontentsline{toc}{chapter}{教材地图}
-\\begin{figure}[htbp]
-\\centering
+async function textbookMapTex(caption: string, url?: string, options: TexOptions = {}) {
+  const image = url
+    ? await imageTex(url, caption, options, { width: "0.96\\textwidth", height: "0.58\\textheight" })
+    : `\\fbox{\\parbox{0.9\\textwidth}{\\centering ${escapeTex(caption)}}}`;
+  return `\\chapter*{全书结构地图}
+\\markboth{全书结构地图}{全书结构地图}
+\\addcontentsline{toc}{chapter}{全书结构地图}
+\\begin{center}
 ${image}
-\\caption*{${escapeTex(caption)}}
-\\end{figure}
+\\par\\vspace{0.6em}
+{\\small\\bfseries ${escapeTex(caption)}}
+\\end{center}
+\\vspace{1em}
+${textbookMapOverviewTex(caption)}
+\\par\\smallskip
+{\\small\\itshape 注：本页为全书导读地图，不占用正文图编号；章节内插图仍按“图 N.M”连续编号。}
+\\cleardoublepage
 `;
+}
+
+function prefaceTex(course: Course, title: string, createdDate: string) {
+  const bible = course.courseBible;
+  const outcomes = (bible.finalOutcomes ?? []).slice(0, 5);
+  const prerequisites = (bible.prerequisites ?? []).slice(0, 5);
+  const outcomeItems = outcomes.map((item) => `\\item ${escapeMarkdownText(item)}`).join("\n");
+  const prerequisiteItems = prerequisites.map((item) => `\\item ${escapeMarkdownText(item)}`).join("\n");
+  const audience = bible.targetLearner || course.profile || "希望系统学习该主题的读者";
+
+  return `\\chapter*{前言}
+\\markboth{前言}{前言}
+\\addcontentsline{toc}{chapter}{前言}
+${escapeMarkdownText(title)} 是一本由 LearnByAI 生成并排版的个性化教材。本教材围绕读者的学习目标组织内容，力求在概念、数学表达、例子和实践线索之间建立连续的学习路径。
+
+\\medskip
+\\noindent\\textbf{读者对象。} ${escapeMarkdownText(audience)}
+
+${course.goal ? `\\medskip\n\\noindent\\textbf{学习目标。} ${escapeMarkdownText(course.goal)}` : ""}
+
+${outcomeItems ? `\\medskip\n\\noindent\\textbf{完成本教材后，读者应能：}\n\\begin{itemize}\n${outcomeItems}\n\\end{itemize}` : ""}
+
+${prerequisiteItems ? `\\medskip\n\\noindent\\textbf{建议预备知识：}\n\\begin{itemize}\n${prerequisiteItems}\n\\end{itemize}` : ""}
+
+本教材的正文按章节推进，前后章节会尽量保持概念承接和问题延续。读者可以先通读“全书结构地图”把握整体路线，再进入各章细读。
+
+\\begin{flushright}
+LearnByAI\\\\
+${escapeTex(createdDate)}
+\\end{flushright}
+`;
+}
+
+function textbookMapOverviewTex(caption: string) {
+  return [
+    "上图概览了本教材的章节结构和学习路径。它适合在开始阅读前快速建立全局感，也适合在学习中途回看自己所处的位置。",
+    `地图标题为“${escapeMarkdownText(caption)}”。读者可以先沿主线阅读，再根据自己的目标回到相关章节补充概念、例子或方法细节。`,
+  ].join("\n\n");
 }
 
 function terminologyTex(course: Course) {
   const terms = course.courseBible.terminology ?? [];
   const notation = course.courseBible.notation ?? [];
   if (terms.length === 0 && notation.length === 0) return "本教材暂未生成独立术语表。";
-  const termLines = terms.map((item) => `\\item[${escapeTex(item.term)}] ${escapeTex(item.definition)}`).join("\n");
-  const notationLines = notation.map((item) => `\\item[${item.symbol}] ${escapeTex(item.meaning)}`).join("\n");
+  const termLines = terms.map((item) => `\\item[${escapeMarkdownText(item.term)}] ${escapeMarkdownText(item.definition)}`).join("\n");
+  const notationLines = notation.map((item) => `\\item[${notationSymbolTex(item.symbol)}] ${escapeMarkdownText(item.meaning)}`).join("\n");
   return [
     termLines ? `\\section*{术语}\\begin{description}\n${termLines}\n\\end{description}` : "",
     notationLines ? `\\section*{符号}\\begin{description}\n${notationLines}\n\\end{description}` : "",
   ].filter(Boolean).join("\n\n");
+}
+
+function notationSymbolTex(symbol: string) {
+  const trimmed = symbol.trim();
+  if (!trimmed) return "";
+  if (/^(?:\$[\s\S]*\$|\\\([\s\S]*\\\)|\\\[[\s\S]*\\\])$/u.test(trimmed)) return trimmed;
+  return `$${trimmed.replace(/\$/gu, "")}$`;
 }
 
 /**
@@ -255,7 +341,7 @@ function terminologyTex(course: Course) {
  * figures via the shared figure regex. HTML comments (failed-figure markers)
  * are dropped.
  */
-export async function markdownToTex(markdown: string, options: { assetDir?: string } = {}) {
+export async function markdownToTex(markdown: string, options: TexOptions = {}) {
   const rawBlocks: string[] = [];
   const figureProtected = await replaceFiguresWithRawBlocks(markdown, rawBlocks, options);
   const lines = figureProtected.split(/\r?\n/u);
@@ -424,7 +510,7 @@ function tableToTex(tableLines: string[]) {
   ].join("\n");
 }
 
-async function replaceFiguresWithRawBlocks(markdown: string, rawBlocks: string[], options: { assetDir?: string }) {
+async function replaceFiguresWithRawBlocks(markdown: string, rawBlocks: string[], options: TexOptions) {
   const figureRe = createFigureMarkdownRe();
   let output = "";
   let last = 0;
@@ -448,9 +534,15 @@ async function replaceFiguresWithRawBlocks(markdown: string, rawBlocks: string[]
   return output;
 }
 
-async function imageTex(url: string, caption: string, options: { assetDir?: string } = {}) {
+async function imageTex(url: string, caption: string, options: TexOptions = {}, imageOptions: ImageTexOptions = {}) {
   const asset = await copyIllustrationAsset(url, options.assetDir);
-  if (asset) return `\\includegraphics[width=0.82\\textwidth]{${asset}}`;
+  const width = imageOptions.width ?? "0.82\\textwidth";
+  const graphicOptions = [
+    `width=${width}`,
+    imageOptions.height ? `height=${imageOptions.height}` : "",
+    imageOptions.keepAspectRatio === false ? "" : "keepaspectratio",
+  ].filter(Boolean).join(",");
+  if (asset) return `\\includegraphics[${graphicOptions}]{${asset}}`;
   return `\\fbox{\\parbox{0.78\\textwidth}{\\centering ${escapeTex(caption)}\\\\\\small\\url{${escapeUrlTex(url)}}}}`;
 }
 
@@ -489,6 +581,12 @@ function lastInterestingLogLines(log: string) {
 
 function sanitize(value: string) {
   return value.replace(/[^\w\u4e00-\u9fa5-]+/gu, "-").replace(/-+/gu, "-");
+}
+
+function formatCourseDate(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return new Date().toLocaleDateString("zh-CN");
+  return date.toLocaleDateString("zh-CN");
 }
 
 function pathSegment(value: string) {

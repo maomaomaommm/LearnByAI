@@ -10,7 +10,7 @@ import {
 import { normalizeContentMode, normalizeCourse } from "../../src/lib/normalizeCourse";
 import { hasImageModelConfig, normalizeModelOverrides } from "../../src/lib/modelOverrides";
 import { getUserImageModelConfig } from "../../src/lib/illustration";
-import { markdownToTex } from "../../src/lib/exports";
+import { markdownToTex, toTex } from "../../src/lib/exports";
 import { normalizeTextbookMeta, validateTextbookMeta } from "../../src/lib/textbookOutline";
 import type { Course, TextbookMeta, TextbookOutlineChapter } from "../../src/lib/types";
 
@@ -196,6 +196,76 @@ test("markdownToTex protects inline paren math like \\(f(x)\\)", async () => {
   const tex = await markdownToTex("函数 \\(f(x)\\) 的值域为 50%。");
   assert.ok(tex.includes("\\(f(x)\\)"), tex);
   assert.ok(tex.includes("50\\%"), tex);
+});
+
+test("toTex emits textbook front matter, map page, and chapter-level counters", async () => {
+  const now = "2026-07-10T00:00:00.000Z";
+  const course = {
+    id: "course-1",
+    contentMode: "textbook",
+    topic: "强化学习",
+    goal: "系统掌握强化学习的基本概念与数学原理。",
+    background: "数学与编程基础",
+    styles: ["rigor"],
+    learningMode: "standard",
+    chapterCount: 2,
+    difficulty: "intermediate",
+    profile: "进阶初学者",
+    createdAt: now,
+    courseBible: {
+      targetLearner: "希望系统学习强化学习的读者",
+      finalOutcomes: ["理解马尔可夫决策过程", "能够阅读基础论文"],
+      teachingStyle: "教材式",
+      prerequisites: ["线性代数", "概率论"],
+      globalNarrative: "从基础概念到算法。",
+      terminology: [{ term: "策略", definition: "状态到动作的映射。", introducedIn: "第 1 章" }],
+      notation: [{ symbol: "G_t", meaning: "时刻 \\(t\\) 的回报。" }],
+      chapterDependencies: [],
+    },
+    textbookMeta: {
+      title: "强化学习",
+      subtitle: "数学基础与算法导论",
+      language: "zh-CN",
+      outlineStatus: "confirmed",
+      textbookMap: {
+        id: "map-1",
+        courseId: "course-1",
+        order: 0,
+        label: "教材地图",
+        caption: "全书结构地图",
+        prompt: "draw a map",
+        generationMode: "code",
+        status: "ready",
+        createdAt: now,
+      },
+    },
+    chapters: [
+      {
+        id: "ch-1",
+        title: "引言",
+        description: "背景与学习路线。",
+        time: { readingMinutes: 10, exerciseMinutes: 0, practiceMinutes: 0, extensionMinutes: 0 },
+        content: "# 第一章 引言\n\n## 1.1 背景\n\n正文。",
+      },
+      {
+        id: "ch-2",
+        title: "总结与展望",
+        description: "回顾与未来方向。",
+        time: { readingMinutes: 10, exerciseMinutes: 0, practiceMinutes: 0, extensionMinutes: 0 },
+        content: "# 第二章 总结与展望\n\n正文。",
+      },
+    ],
+  } as unknown as Course;
+
+  const tex = await toTex(course);
+
+  assert.ok(tex.includes("\\documentclass[UTF8,openany,oneside,12pt]{ctexbook}"), tex);
+  assert.ok(tex.includes("\\chapter*{前言}"), tex);
+  assert.ok(tex.includes("\\tableofcontents"), tex);
+  assert.ok(tex.includes("\\chapter*{全书结构地图}"), tex);
+  assert.ok(tex.includes("不占用正文图编号"), tex);
+  assert.ok(tex.includes("\\numberwithin{equation}{chapter}"), tex);
+  assert.ok(tex.includes("\\item[$G_t$] 时刻 \\(t\\) 的回报。"), tex);
 });
 
 // ---- outline validation -----------------------------------------------------

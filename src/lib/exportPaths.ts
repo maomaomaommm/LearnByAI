@@ -1,9 +1,19 @@
-import { isAbsolute, relative, resolve } from "node:path";
+import { tmpdir } from "node:os";
+import { isAbsolute, join, relative, resolve } from "node:path";
 
-const localExportStoreDir = resolve(process.cwd(), ".next", "local-beta-exports");
+const localExportStoreDir = resolve(
+  process.env.LEARNBYAI_EXPORT_DIR ??
+    process.env.LEARNBYAI_LOCAL_EXPORT_DIR ??
+    join(tmpdir(), "learnbyai-exports"),
+);
+const texProjectStoreDir = resolve(process.env.LEARNBYAI_TEX_EXPORT_DIR ?? join(localExportStoreDir, "tex-projects"));
 
 export function getLocalExportStoreDir() {
   return localExportStoreDir;
+}
+
+export function getTexProjectStoreDir() {
+  return texProjectStoreDir;
 }
 
 export function resolveLocalExportPath(storagePath: string | undefined, fallbackName: string) {
