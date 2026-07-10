@@ -225,7 +225,7 @@ export default function ReaderPage() {
   const tutor = useTutor(course, chapterId);
   const revise = useRevise(course, chapterId, applyCourseUpdate);
 
-  const ensureChapterContent = useCallback(async (stored: Course) => {
+  const ensureChapterContent = useCallback(async (stored: Course, options: { retry?: boolean } = {}) => {
     const current = stored.chapters.find((item) => item.id === chapterId);
     if (!current) {
       setLoading(false);
@@ -247,7 +247,7 @@ export default function ReaderPage() {
 
     apiFetch(`/api/chapters/${current.id}/generate`, {
       method: "POST",
-      body: JSON.stringify({ courseId: stored.id }),
+      body: JSON.stringify({ courseId: stored.id, retry: options.retry === true }),
     })
       .then(async (response) => {
         const data = (await response.json()) as ChapterGenerateResponse & { course?: Course; queued?: boolean; error?: string };
@@ -293,7 +293,7 @@ export default function ReaderPage() {
           ? { ...item, status: undefined, generationJobId: undefined, content: undefined, sections: undefined, review: undefined, qualityReport: undefined }
           : item,
       ),
-    });
+    }, { retry: true });
   }, [chapter, course, ensureChapterContent]);
 
   const requalityChapter = useCallback(async () => {

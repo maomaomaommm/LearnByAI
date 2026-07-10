@@ -44,6 +44,11 @@ test("treats plain words inside dollars as text, not math", () => {
   assert.equal(sanitizeMathDelimiters("token $USD$ and phrase $hello world$"), "token \\$USD\\$ and phrase \\$hello world\\$");
 });
 
+test("preserves pure numeric inline math", () => {
+  const input = "steps $3$ and $4$, probability $0.8$, delta $-1.5$, rate $50\\%$";
+  assert.equal(sanitizeMathDelimiters(input), input);
+});
+
 test("protects inline code spans before math scanning", () => {
   const actual = sanitizeMathDelimiters("code `$var = 1` and math $Q_{tot}$");
   assert.equal(actual, "code `$var = 1` and math $Q_{tot}$");

@@ -179,6 +179,7 @@ function looksLikeInlineMath(value: string): boolean {
   if (/\\[a-zA-Z]+/u.test(compact)) return true;
   if (/[_^{}=<>+\-*\/|()\[\]]/u.test(compact)) return true;
   if (/^[A-Za-z](?:\s*,\s*[A-Za-z])+$/u.test(compact)) return true;
+  if (isNumericMathLiteral(compact)) return true;
 
   // Plain words and currency/unit tokens such as USD are text, not math.
   if (/^[A-Za-z]{2,}$/u.test(withoutCommands)) return false;
@@ -187,6 +188,10 @@ function looksLikeInlineMath(value: string): boolean {
   if (/^[A-Za-z](?:['’])?$/u.test(compact)) return true;
   if (/^[A-Za-z]\d+$/u.test(compact)) return true;
   return false;
+}
+
+function isNumericMathLiteral(value: string) {
+  return /^[+-]?(?:(?:\d+(?:\.\d+)?)|(?:\.\d+))(?:e[+-]?\d+)?(?:\\%|%)?$/iu.test(value);
 }
 
 function hasUnescapedSingleDollar(text: string) {
