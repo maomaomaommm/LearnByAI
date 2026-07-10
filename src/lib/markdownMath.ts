@@ -1,3 +1,5 @@
+import { canRenderMath } from "./katexValidate";
+
 export function normalizeMath(content: string) {
   return splitMarkdownFences(content.replace(/\r\n/g, "\n"))
     .map((chunk) => (chunk.fenced ? chunk.content : normalizeMathText(chunk.content)))
@@ -5,11 +7,12 @@ export function normalizeMath(content: string) {
 }
 
 function normalizeMathText(content: string) {
-  const normalizedDelimiters = normalizeDisplayEnvironments(content)
-    .replace(/\\\[/g, () => "\n$$\n")
-    .replace(/\\\]/g, () => "\n$$\n")
-    .replace(/\\\(/g, "$")
-    .replace(/\\\)/g, "$");
+  const repairedArtifacts = mergeBareRelationPrefixIntoDisplay(repairSplitLineSpacingArtifacts(content));
+  const normalizedDelimiters = normalizeDisplayEnvironments(repairedArtifacts)
+    .replace(/(?<!\\)\\\[/g, () => "\n$$\n")
+    .replace(/(?<!\\)\\\]/g, () => "\n$$\n")
+    .replace(/(?<!\\)\\\(/g, "$")
+    .replace(/(?<!\\)\\\)/g, "$");
 
   const lines = normalizeDisplayMathDelimiters(normalizedDelimiters).split("\n");
   const repaired: string[] = [];
@@ -110,6 +113,77 @@ function normalizeMathText(content: string) {
   if (inDisplayMath || inSingleDollarBlock) repaired.push("$$");
 
   return escapeTextModeUnderscores(normalizeKatexTags(repaired.join("\n").replace(/\n{3,}/g, "\n\n")));
+}
+
+function repairSplitLineSpacingArtifacts(content: string) {
+  return content.replace(
+    /\\{1,2}[ \t]*\n\$\$[ \t]*\n[ \t]*(\d+(?:\.\d+)?(?:pt|em|ex|mm|cm))\][ \t]*\n(?:[ \t]*\n)*\$\$[ \t]*\n/gu,
+    (_match, spacing: string) => `\\\\[${spacing}]\n`,
+  );
+}
+
+function mergeBareRelationPrefixIntoDisplay(content: string) {
+  const lines = content.split("\n");
+
+  for (let openIndex = 0; openIndex < lines.length; openIndex += 1) {
+    if (lines[openIndex]?.trim() !== "$$") continue;
+
+    let closeIndex = openIndex + 1;
+    while (closeIndex < lines.length && lines[closeIndex]?.trim() !== "$$") closeIndex += 1;
+    if (closeIndex >= lines.length) break;
+
+    let relationIndex = openIndex - 1;
+    while (relationIndex >= 0 && !lines[relationIndex]?.trim()) relationIndex -= 1;
+    if (relationIndex < 0) {
+      openIndex = closeIndex;
+      continue;
+    }
+
+    const relationLine = lines[relationIndex]!.trim();
+    const relationOnly = /^&?\s*\\(?:le|leq|ge|geq|lt|gt|ne|neq|approx|sim)\s*$/u.test(relationLine);
+    const relationAtEnd = /\\(?:le|leq|ge|geq|lt|gt|ne|neq|approx|sim)\s*$/u.test(relationLine);
+    const prefixLines = relationOnly
+      ? findBareRelationLeftHandSide(lines, relationIndex).map((line) => line.trim())
+      : relationAtEnd
+        ? [relationLine]
+        : [];
+    if (prefixLines.length === 0 || !isLikelyBareRelationPrefix(prefixLines.join("\n"))) {
+      openIndex = closeIndex;
+      continue;
+    }
+
+    const body = lines.slice(openIndex + 1, closeIndex).map((line) => line.trim());
+    const candidate = [...prefixLines, ...body].join("\n").trim();
+    if (!canRenderMath(candidate, true)) {
+      openIndex = closeIndex;
+      continue;
+    }
+
+    const startIndex = relationOnly ? previousNonEmptyLineIndex(lines, relationIndex - 1) : relationIndex;
+    lines.splice(startIndex, closeIndex - startIndex + 1, "$$", ...prefixLines, ...body, "$$");
+    openIndex = startIndex + prefixLines.length + body.length + 1;
+  }
+
+  return lines.join("\n");
+}
+
+function findBareRelationLeftHandSide(lines: string[], relationIndex: number) {
+  const leftIndex = previousNonEmptyLineIndex(lines, relationIndex - 1);
+  if (leftIndex < 0) return [];
+  return [lines[leftIndex]!, lines[relationIndex]!];
+}
+
+function previousNonEmptyLineIndex(lines: string[], startIndex: number) {
+  for (let index = startIndex; index >= 0; index -= 1) {
+    if (lines[index]?.trim()) return index;
+  }
+  return -1;
+}
+
+function isLikelyBareRelationPrefix(value: string) {
+  if (!value || /[$\u4e00-\u9fff]/u.test(value)) return false;
+  if (hasPlainTextWords(value)) return false;
+  return /[A-Za-z0-9]/u.test(value) && /[_^{}|()[\]\\]/u.test(value);
 }
 
 function splitMarkdownFences(content: string) {
@@ -329,7 +403,7 @@ function isLikelyMathLine(trimmed: string) {
 
 function hasStrongMathSyntax(trimmed: string) {
   return (
-    /\\(operatorname|mathrm|mathbf|mathcal|mathbb|frac|dfrac|tfrac|sum|prod|int|lim|Pr|P|E|Var|Cov|hat|bar|tilde|sqrt|vec|sin|cos|tan|left|right|theta|lambda|alpha|beta|gamma|delta|epsilon|varepsilon|sigma|mu|tau|phi|psi|omega|ldots|cdots|mapsto|to|Rightarrow|Leftarrow|leftrightarrow|infty)\b/u.test(
+    /\\(operatorname|mathrm|mathbf|mathcal|mathbb|frac|dfrac|tfrac|sum|prod|int|lim|Pr|P|E|Var|Cov|hat|bar|tilde|sqrt|vec|sin|cos|tan|left|right|le|leq|ge|geq|ne|neq|approx|sim|theta|lambda|alpha|beta|gamma|delta|epsilon|varepsilon|sigma|mu|tau|phi|psi|omega|ldots|cdots|mapsto|to|Rightarrow|Leftarrow|leftrightarrow|infty)\b/u.test(
       trimmed,
     ) ||
     (/[=<>]/u.test(trimmed) && /[A-Za-z0-9)}\]]\s*[_^]\s*\{?[\w\\]/u.test(trimmed))
@@ -339,6 +413,9 @@ function hasStrongMathSyntax(trimmed: string) {
 function isMarkdownTableLine(trimmed: string) {
   if (!trimmed.startsWith("|")) return false;
   if (/^\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?$/u.test(trimmed)) return true;
+  if (/^\|[^|\n]+\|$/u.test(trimmed) && /[_^{}\\A-Za-z0-9]/u.test(trimmed) && canRenderMath(trimmed, true)) {
+    return false;
+  }
   if (hasStrongMathSyntax(trimmed)) return false;
   return (trimmed.match(/\|/gu) ?? []).length >= 2;
 }

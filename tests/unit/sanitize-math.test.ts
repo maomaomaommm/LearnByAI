@@ -49,6 +49,16 @@ test("preserves pure numeric inline math", () => {
   assert.equal(sanitizeMathDelimiters(input), input);
 });
 
+test("preserves numeric sequences and differential identifiers", () => {
+  const input = "samples $2,2,2,2$ and $0,4,3,5$, increment $dn$ and $dt$, variables $dr$, $Pf$, $nm$";
+  assert.equal(sanitizeMathDelimiters(input), input);
+});
+
+test("does not preserve plain short English words or currency-like tokens", () => {
+  const input = "words $is$ and $the$ stay text, currency $USD$ stays text";
+  assert.equal(sanitizeMathDelimiters(input), "words \\$is\\$ and \\$the\\$ stay text, currency \\$USD\\$ stays text");
+});
+
 test("protects inline code spans before math scanning", () => {
   const actual = sanitizeMathDelimiters("code `$var = 1` and math $Q_{tot}$");
   assert.equal(actual, "code `$var = 1` and math $Q_{tot}$");

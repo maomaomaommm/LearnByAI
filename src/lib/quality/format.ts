@@ -133,7 +133,7 @@ function hasBareLatexCommand(content: string) {
     .replace(/```[\s\S]*?```/gu, "")
     .replace(/\$\$[\s\S]*?\$\$/gu, "")
     .replace(/(?<!\\)\$[^\n$]+?(?<!\\)\$/gu, "");
-  return /\\(?:max|min|arg|sup|inf|quad|qquad|mathbf|mathbb|mathcal|mathrm|operatorname|frac|dfrac|tfrac|sum|prod|int|begin|partial|nabla|cdot|times|leq|geq|sqrt|hat|bar|vec|alpha|beta|gamma|theta|lambda|sigma|mu|pi|infty)\b/u.test(stripped);
+  return /\\(?:max|min|arg|sup|inf|quad|qquad|mathbf|mathbb|mathcal|mathrm|operatorname|frac|dfrac|tfrac|sum|prod|int|begin|partial|nabla|cdot|times|le|leq|ge|geq|ne|neq|sqrt|hat|bar|vec|alpha|beta|gamma|theta|lambda|sigma|mu|pi|infty)\b/u.test(stripped);
 }
 
 function hasEmptyFencePair(content: string) {

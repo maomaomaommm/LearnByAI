@@ -233,6 +233,64 @@ test("wraps a bare single-line formula starting with an absolute-value bar (real
   assert.equal(postRepairMarkdown(out), out);
 });
 
+test("keeps cases row spacing commands inside display math", () => {
+  const input = [
+    "$$",
+    String.raw`\pi(a\mid s)=`,
+    String.raw`\begin{cases}`,
+    String.raw`1-\varepsilon, & a=a^*,\\[6pt]`,
+    String.raw`\varepsilon, & a\ne a^*.`,
+    String.raw`\end{cases}`,
+    "$$",
+  ].join("\n");
+  const out = postRepairMarkdown(input);
+  assert.equal(out, input);
+  assert.equal(postRepairMarkdown(out), out);
+});
+
+test("heals cases split by a mistaken \\\\[6pt] delimiter conversion", () => {
+  const input = [
+    "$$",
+    String.raw`\pi(a\mid s)=`,
+    String.raw`\begin{cases}`,
+    "1-\\varepsilon, & a=a^*,\\",
+    "$$",
+    "6pt]",
+    "",
+    "$$",
+    String.raw`\varepsilon, & a\ne a^*.`,
+    String.raw`\end{cases}`,
+    "$$",
+  ].join("\n");
+  const out = postRepairMarkdown(input);
+  assert.match(out, /a=a\^\*,\\\\\[6pt\]/u);
+  assert.doesNotMatch(out, /^\s*6pt\]\s*$/mu);
+  assert.equal((out.match(/\$\$/gu) ?? []).length, 2);
+  assert.ok(!validateFormat(out).some((issue) => issue.check === "format.unrenderable_math"), JSON.stringify(validateFormat(out)));
+  assert.equal(postRepairMarkdown(out), out);
+});
+
+test("merges a bare relation prefix into the following display formula", () => {
+  const input = [
+    "若奖励有界，则",
+    "",
+    String.raw`|G_t|`,
+    String.raw`\le`,
+    "",
+    "$$",
+    String.raw`\sum_{k=0}^{\infty}\gamma^kR_{\max}`,
+    String.raw`=\frac{R_{\max}}{1-\gamma}.`,
+    "$$",
+    "",
+    "因此回报有界。",
+  ].join("\n");
+  const out = postRepairMarkdown(input);
+  assert.ok(out.includes("$$\n" + String.raw`|G_t|` + "\n" + String.raw`\le`), out);
+  assert.equal((out.match(/\$\$/gu) ?? []).length, 2);
+  assert.ok(!validateFormat(out).some((issue) => issue.check === "format.bare_latex"), JSON.stringify(validateFormat(out)));
+  assert.equal(postRepairMarkdown(out), out);
+});
+
 test("does not wrap prose paragraphs, tables, or lists as math", () => {
   const input = [
     "这是一个提及公式概念的中文段落，但它不是公式。",

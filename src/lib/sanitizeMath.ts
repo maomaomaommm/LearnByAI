@@ -2,6 +2,38 @@ import { canRenderMath } from "./katexValidate";
 
 type Zone = { type: "normal" | "fenced" | "display_math"; lines: string[] };
 
+const SHORT_MATH_IDENTIFIER_STOP_WORDS = new Set([
+  "an",
+  "and",
+  "are",
+  "as",
+  "at",
+  "be",
+  "by",
+  "do",
+  "for",
+  "go",
+  "he",
+  "if",
+  "in",
+  "is",
+  "it",
+  "me",
+  "my",
+  "no",
+  "not",
+  "of",
+  "on",
+  "or",
+  "so",
+  "the",
+  "to",
+  "up",
+  "us",
+  "we",
+  "you",
+]);
+
 export function sanitizeMathDelimiters(content: string): string {
   const normalized = content.replace(/\r\n/g, "\n");
   const zones = splitZones(normalized);
@@ -180,6 +212,8 @@ function looksLikeInlineMath(value: string): boolean {
   if (/[_^{}=<>+\-*\/|()\[\]]/u.test(compact)) return true;
   if (/^[A-Za-z](?:\s*,\s*[A-Za-z])+$/u.test(compact)) return true;
   if (isNumericMathLiteral(compact)) return true;
+  if (isNumericMathSequence(compact)) return true;
+  if (isShortMathIdentifier(compact)) return true;
 
   // Plain words and currency/unit tokens such as USD are text, not math.
   if (/^[A-Za-z]{2,}$/u.test(withoutCommands)) return false;
@@ -192,6 +226,16 @@ function looksLikeInlineMath(value: string): boolean {
 
 function isNumericMathLiteral(value: string) {
   return /^[+-]?(?:(?:\d+(?:\.\d+)?)|(?:\.\d+))(?:e[+-]?\d+)?(?:\\%|%)?$/iu.test(value);
+}
+
+function isNumericMathSequence(value: string) {
+  return /^[+-]?(?:(?:\d+(?:\.\d+)?)|(?:\.\d+))(?:e[+-]?\d+)?(?:\s*[,;]\s*[+-]?(?:(?:\d+(?:\.\d+)?)|(?:\.\d+))(?:e[+-]?\d+)?)+$/iu.test(value);
+}
+
+function isShortMathIdentifier(value: string) {
+  if (!/^[A-Za-z]{2,3}$/u.test(value)) return false;
+  if (/^[A-Z]{2,3}$/u.test(value)) return false;
+  return !SHORT_MATH_IDENTIFIER_STOP_WORDS.has(value.toLowerCase());
 }
 
 function hasUnescapedSingleDollar(text: string) {
