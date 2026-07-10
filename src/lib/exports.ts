@@ -192,11 +192,13 @@ async function toTextbookTex(course: Course, options: TexOptions = {}) {
   return `\\documentclass[UTF8,openany,oneside,12pt]{ctexbook}
 \\usepackage[a4paper,top=2.8cm,bottom=2.8cm,left=3.0cm,right=2.6cm,headheight=15pt]{geometry}
 \\usepackage{amsmath,amssymb,amsthm,mathtools}
-\\usepackage{booktabs,longtable,graphicx,float}
+\\usepackage{booktabs,longtable,array,ragged2e,colortbl,graphicx,float}
 \\usepackage{caption}
 \\usepackage{enumitem}
 \\usepackage{fancyhdr}
 \\usepackage{xcolor}
+\\usepackage{listings,upquote}
+\\usepackage{needspace}
 \\usepackage[hidelinks]{hyperref}
 \\makeatletter
 \\providecommand{\\cmrsideswitch}{}
@@ -210,6 +212,39 @@ async function toTextbookTex(course: Course, options: TexOptions = {}) {
 \\setlist[itemize]{leftmargin=2.2em,itemsep=0.25em,topsep=0.35em}
 \\setlist[enumerate]{leftmargin=2.2em,itemsep=0.25em,topsep=0.35em}
 \\captionsetup{font=small,labelfont=bf,labelsep=quad}
+\\definecolor{LearnByAITableHeader}{HTML}{F1F3F5}
+\\definecolor{LearnByAICodeBackground}{HTML}{F5F7FA}
+\\definecolor{LearnByAICodeBorder}{HTML}{B9C1CC}
+\\definecolor{LearnByAICodeKeyword}{HTML}{9B3328}
+\\definecolor{LearnByAICodeComment}{HTML}{55705A}
+\\definecolor{LearnByAICodeString}{HTML}{285D86}
+\\definecolor{LearnByAICodeMeta}{HTML}{5F6977}
+\\newcolumntype{L}[1]{>{\\RaggedRight\\arraybackslash}p{\\dimexpr#1\\linewidth-2\\tabcolsep\\relax}}
+\\lstdefinestyle{learnbyai}{
+  backgroundcolor=\\color{LearnByAICodeBackground},
+  basicstyle=\\small\\ttfamily,
+  keywordstyle=\\bfseries\\color{LearnByAICodeKeyword},
+  commentstyle=\\itshape\\color{LearnByAICodeComment},
+  stringstyle=\\color{LearnByAICodeString},
+  frame=single,
+  framerule=0.5pt,
+  rulecolor=\\color{LearnByAICodeBorder},
+  framesep=8pt,
+  xleftmargin=0.4em,
+  xrightmargin=0.4em,
+  framexleftmargin=0.4em,
+  framexrightmargin=0.4em,
+  breaklines=true,
+  breakatwhitespace=false,
+  columns=fullflexible,
+  keepspaces=true,
+  showstringspaces=false,
+  upquote=true,
+  tabsize=4,
+  aboveskip=1em,
+  belowskip=1em,
+  captionpos=t
+}
 \\renewcommand{\\figurename}{图}
 \\renewcommand{\\tablename}{表}
 \\numberwithin{figure}{chapter}
@@ -361,10 +396,11 @@ export async function markdownToTex(markdown: string, options: TexOptions = {}) 
       continue;
     }
 
-    // Fenced code block → verbatim.
-    const fence = line.match(/^\s*(```|~~~)/u);
+    // Fenced code block → framed, line-wrapping textbook listing.
+    const fence = line.match(/^\s*(```|~~~)\s*([A-Za-z0-9_+#.-]*)\s*$/u);
     if (fence) {
       const token = fence[1] ?? "```";
+      const language = fence[2] ?? "";
       const body: string[] = [];
       index += 1;
       while (index < lines.length && !(lines[index] ?? "").trimStart().startsWith(token)) {
@@ -373,7 +409,7 @@ export async function markdownToTex(markdown: string, options: TexOptions = {}) 
       }
       index += 1; // closing fence
       if (body.join("").trim()) {
-        out.push(`\\begin{verbatim}\n${body.join("\n").replace(/\\end\{verbatim\}/gu, "")}\n\\end{verbatim}`);
+        out.push(codeBlockToTex(body.join("\n"), language));
       }
       continue;
     }
@@ -498,19 +534,146 @@ function tableToTex(tableLines: string[]) {
   const header = rows[0] ?? [];
   const bodyRows = rows.slice(1).filter((cells) => !isSeparator(cells));
   const columnCount = Math.max(header.length, ...bodyRows.map((cells) => cells.length), 1);
-  const spec = Array.from({ length: columnCount }, () => "l").join("");
-  const renderRow = (cells: string[]) =>
-    Array.from({ length: columnCount }, (_, i) => escapeMarkdownText(cells[i] ?? "")).join(" & ") + " \\\\";
+  const widths = tableColumnWidths(header, bodyRows, columnCount);
+  const spec = `@{}${widths.map((width) => `L{${width.toFixed(4)}}`).join("")}@{}`;
+  const renderRow = (cells: string[], bold = false) =>
+    Array.from({ length: columnCount }, (_, i) => {
+      const content = escapeMarkdownText(cells[i] ?? "");
+      return bold && content ? `\\textbf{${content}}` : content;
+    }).join(" & ") + " \\\\";
+  const fontSize = columnCount >= 5 ? "\\scriptsize" : columnCount >= 4 ? "\\footnotesize" : "\\small";
+  const headerRow = renderRow(header, true);
 
   return [
+    "\\begingroup",
+    fontSize,
+    "\\setlength{\\tabcolsep}{4pt}",
+    "\\renewcommand{\\arraystretch}{1.28}",
+    "\\setlength{\\LTleft}{0pt}",
+    "\\setlength{\\LTright}{0pt}",
     `\\begin{longtable}{${spec}}`,
     "\\toprule",
-    renderRow(header),
+    "\\rowcolor{LearnByAITableHeader}",
+    headerRow,
     "\\midrule",
-    ...bodyRows.map(renderRow),
+    "\\endfirsthead",
+    "\\toprule",
+    "\\rowcolor{LearnByAITableHeader}",
+    headerRow,
+    "\\midrule",
+    "\\endhead",
+    ...bodyRows.map((row) => renderRow(row)),
     "\\bottomrule",
     "\\end{longtable}",
+    "\\endgroup",
   ].join("\n");
+}
+
+function codeBlockToTex(body: string, language: string) {
+  const codeLanguage = normalizeCodeLanguage(language);
+  const options = [
+    "style=learnbyai",
+    codeLanguage.listingsLanguage ? `language=${codeLanguage.listingsLanguage}` : "",
+    codeLanguage.label
+      ? `title={\\footnotesize\\sffamily\\bfseries\\color{LearnByAICodeMeta}${escapeTex(codeLanguage.label)}}`
+      : "",
+  ].filter(Boolean).join(",");
+  const safeBody = body.replace(/\\end\{lstlisting\}/gu, "\\end{listing}");
+  return `\\Needspace{10\\baselineskip}\n\\begin{lstlisting}[${options}]\n${safeBody}\n\\end{lstlisting}`;
+}
+
+function normalizeCodeLanguage(language: string) {
+  const normalized = language.trim().toLowerCase();
+  const languages: Record<string, { label: string; listingsLanguage?: string }> = {
+    bash: { label: "Bash", listingsLanguage: "bash" },
+    c: { label: "C", listingsLanguage: "C" },
+    cpp: { label: "C++", listingsLanguage: "C++" },
+    "c++": { label: "C++", listingsLanguage: "C++" },
+    html: { label: "HTML", listingsLanguage: "HTML" },
+    java: { label: "Java", listingsLanguage: "Java" },
+    latex: { label: "LaTeX", listingsLanguage: "TeX" },
+    matlab: { label: "MATLAB", listingsLanguage: "Matlab" },
+    py: { label: "Python", listingsLanguage: "Python" },
+    python: { label: "Python", listingsLanguage: "Python" },
+    r: { label: "R", listingsLanguage: "R" },
+    sh: { label: "Shell", listingsLanguage: "bash" },
+    shell: { label: "Shell", listingsLanguage: "bash" },
+    sql: { label: "SQL", listingsLanguage: "SQL" },
+    tex: { label: "TeX", listingsLanguage: "TeX" },
+    xml: { label: "XML", listingsLanguage: "XML" },
+  };
+  const labels: Record<string, string> = {
+    javascript: "JavaScript",
+    js: "JavaScript",
+    json: "JSON",
+    jsx: "JSX",
+    pseudocode: "Pseudocode",
+    text: "Text",
+    ts: "TypeScript",
+    tsx: "TSX",
+    typescript: "TypeScript",
+    yaml: "YAML",
+    yml: "YAML",
+  };
+  return languages[normalized] ?? { label: labels[normalized] ?? language.trim() };
+}
+
+function tableColumnWidths(header: string[], bodyRows: string[][], columnCount: number) {
+  const rows = [header, ...bodyRows];
+  const scores = Array.from({ length: columnCount }, (_, columnIndex) => {
+    const cellScores = rows.map((row) => tableCellWidthScore(row[columnIndex] ?? "")).sort((a, b) => b - a);
+    const largest = cellScores[0] ?? 1;
+    const secondLargest = cellScores[1] ?? largest;
+    return Math.max(4, Math.min(42, largest * 0.7 + secondLargest * 0.3));
+  });
+  const minWidth = columnCount >= 6 ? 0.1 : columnCount >= 4 ? 0.12 : 0.16;
+  const maxWidth = columnCount === 2 ? 0.7 : columnCount === 3 ? 0.52 : 0.42;
+  return distributeColumnWidths(scores, minWidth, maxWidth);
+}
+
+function tableCellWidthScore(value: string) {
+  const plain = value
+    .replace(/\$\$?([\s\S]*?)\$\$?/gu, "$1")
+    .replace(/\\\(([\s\S]*?)\\\)/gu, "$1")
+    .replace(/\\[A-Za-z]+/gu, "x")
+    .replace(/[*_`{}]/gu, "");
+  return Array.from(plain).reduce((width, char) => width + (/[\u2e80-\u9fff]/u.test(char) ? 2 : 1), 0);
+}
+
+function distributeColumnWidths(scores: number[], minWidth: number, maxWidth: number) {
+  if (scores.length === 1) return [1];
+  const widths = Array(scores.length).fill(0) as number[];
+  const remaining = new Set(scores.map((_score, index) => index));
+  let remainingWidth = 1;
+
+  while (remaining.size > 0) {
+    const remainingScore = [...remaining].reduce((sum, index) => sum + (scores[index] ?? 1), 0);
+    let constrained = false;
+
+    for (const index of [...remaining]) {
+      const proposed = remainingWidth * (scores[index] ?? 1) / Math.max(remainingScore, 1);
+      if (proposed < minWidth) {
+        widths[index] = minWidth;
+      } else if (proposed > maxWidth) {
+        widths[index] = maxWidth;
+      } else {
+        continue;
+      }
+      remainingWidth -= widths[index] ?? 0;
+      remaining.delete(index);
+      constrained = true;
+    }
+
+    if (!constrained) {
+      for (const index of remaining) {
+        widths[index] = remainingWidth * (scores[index] ?? 1) / Math.max(remainingScore, 1);
+      }
+      break;
+    }
+  }
+
+  const total = widths.reduce((sum, width) => sum + width, 0);
+  return widths.map((width) => width / total);
 }
 
 async function replaceFiguresWithRawBlocks(markdown: string, rawBlocks: string[], options: TexOptions) {

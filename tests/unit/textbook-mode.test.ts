@@ -160,13 +160,14 @@ test("markdownToTex converts pipe tables to booktabs longtable and keeps cell ma
     "| 极值_情形 | 100% |",
   ].join("\n");
   const tex = await markdownToTex(md);
-  assert.ok(tex.includes("\\begin{longtable}{ll}"), tex);
+  assert.match(tex, /\\begin\{longtable\}\{@\{\}L\{0\.\d{4}\}L\{0\.\d{4}\}@\{\}\}/u);
+  assert.ok(tex.includes("\\setlength{\\LTleft}{0pt}") && tex.includes("\\rowcolor{LearnByAITableHeader}"), tex);
   assert.ok(tex.includes("\\toprule") && tex.includes("\\bottomrule"), tex);
   assert.ok(tex.includes("$\\pi(a \\mid s)$"), tex); // math cell untouched
   assert.ok(tex.includes("极值\\_情形") && tex.includes("100\\%"), tex); // text cells escaped
 });
 
-test("markdownToTex converts fenced code to verbatim and lists to itemize/enumerate", async () => {
+test("markdownToTex converts fenced code to framed textbook listings and lists to itemize/enumerate", async () => {
   const md = [
     "```python",
     "V[s] = max(q)",
@@ -179,9 +180,29 @@ test("markdownToTex converts fenced code to verbatim and lists to itemize/enumer
     "2. 乙",
   ].join("\n");
   const tex = await markdownToTex(md);
-  assert.ok(tex.includes("\\begin{verbatim}\nV[s] = max(q)\n\\end{verbatim}"), tex);
+  assert.ok(tex.includes("\\Needspace{10\\baselineskip}"), tex);
+  assert.ok(tex.includes("\\begin{lstlisting}[style=learnbyai,language=Python"), tex);
+  assert.ok(tex.includes("\\color{LearnByAICodeMeta}Python"), tex);
+  assert.ok(tex.includes("V[s] = max(q)\n\\end{lstlisting}"), tex);
   assert.ok(tex.includes("\\begin{itemize}") && tex.includes("\\item 第一点 50\\%"), tex);
   assert.ok(tex.includes("\\begin{enumerate}") && tex.includes("\\item 甲"), tex);
+});
+
+test("markdownToTex wraps wide tables and tightens typography for four columns", async () => {
+  const md = [
+    "| 建模选择 | 常见取法 | 适用场景 | 主要风险 |",
+    "| --- | --- | --- | --- |",
+    "| 状态表示 | 原始观测、手工特征、历史窗口 | 需要预测未来转移和奖励 | 状态信息缺失导致非马尔可夫性 |",
+    "| 动作空间 | 离散动作、状态相关动作集合 | 表格方法和小规模控制 | 动作数量过大 |",
+  ].join("\n");
+  const tex = await markdownToTex(md);
+  const widths = [...tex.matchAll(/L\{(0\.\d{4})\}/gu)].map((match) => Number(match[1]));
+  assert.equal(widths.length, 4, tex);
+  assert.ok(Math.abs(widths.reduce((sum, width) => sum + width, 0) - 1) < 0.001, tex);
+  assert.ok(tex.includes("\\footnotesize"), tex);
+  assert.ok(tex.includes("\\renewcommand{\\arraystretch}{1.28}"), tex);
+  assert.ok(!tex.includes("\\textbf{状态表示}"), tex);
+  assert.ok(!tex.includes("\\textbf{动作空间}"), tex);
 });
 
 test("markdownToTex drops HTML comments and renders figures via \\includegraphics fallback box", async () => {
@@ -273,6 +294,9 @@ test("toTex emits textbook front matter, map page, and chapter-level counters", 
   const tex = await toTex(course);
 
   assert.ok(tex.includes("\\documentclass[UTF8,openany,oneside,12pt]{ctexbook}"), tex);
+  assert.ok(tex.includes("\\usepackage{listings,upquote}"), tex);
+  assert.ok(tex.includes("\\lstdefinestyle{learnbyai}"), tex);
+  assert.ok(tex.includes("\\newcolumntype{L}[1]"), tex);
   assert.ok(tex.includes("\\chapter*{前言}"), tex);
   assert.ok(tex.includes("\\tableofcontents"), tex);
   assert.ok(tex.includes("\\chapter*{全书结构地图}"), tex);
