@@ -146,6 +146,12 @@ test("markdownToTex strips writer numbering from section headings (TeX counters 
   assert.ok(tex.includes("\\subsubsection{收敛性}"), tex);
 });
 
+test("markdownToTex preserves math delimiters inside headings", async () => {
+  const tex = await markdownToTex("## 6.4 动作价值估计：为什么需要估计 $q_\\pi(s,a)$");
+  assert.ok(tex.includes("\\section{动作价值估计：为什么需要估计 $q_\\pi(s,a)$}"), tex);
+  assert.ok(!tex.includes("\\$q\\_\\pi"), tex);
+});
+
 test("markdownToTex converts pipe tables to booktabs longtable and keeps cell math", async () => {
   const md = [
     "| 类型 | 表达式 |",

@@ -407,13 +407,13 @@ export async function markdownToTex(markdown: string, options: TexOptions = {}) 
     // number sections, so strip any leading "N.M" the writer put in the text.
     const h3 = line.match(/^###\s+(.+)$/u);
     if (h3) {
-      out.push(`\\subsubsection{${escapeTex(stripHeadingNumber(h3[1] ?? ""))}}`);
+      out.push(`\\subsubsection{${escapeMarkdownText(stripHeadingNumber(h3[1] ?? ""))}}`);
       index += 1;
       continue;
     }
     const h2 = line.match(/^##\s+(.+)$/u);
     if (h2) {
-      out.push(`\\section{${escapeTex(stripHeadingNumber(h2[1] ?? ""))}}`);
+      out.push(`\\section{${escapeMarkdownText(stripHeadingNumber(h2[1] ?? ""))}}`);
       index += 1;
       continue;
     }
@@ -421,7 +421,7 @@ export async function markdownToTex(markdown: string, options: TexOptions = {}) 
     if (h1) {
       const text = h1[1] ?? "";
       if (!/^第\s*[0-9一二三四五六七八九十百]+\s*章/u.test(text.trim())) {
-        out.push(`\\section*{${escapeTex(stripHeadingNumber(text))}}`);
+        out.push(`\\section*{${escapeMarkdownText(stripHeadingNumber(text))}}`);
       }
       index += 1;
       continue;
