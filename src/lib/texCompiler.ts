@@ -72,7 +72,7 @@ export async function compileLatexProject(mainTexPath: string, options: {
 function preferredEngines(envEngine?: string) {
   const normalized = envEngine?.trim();
   if (normalized) return [normalized];
-  return ["latexmk", "xelatex", "lualatex", "tectonic"];
+  return ["latexmk", "xelatex"];
 }
 
 async function canRun(command: string) {

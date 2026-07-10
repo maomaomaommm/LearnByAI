@@ -198,6 +198,9 @@ async function toTextbookTex(course: Course, options: TexOptions = {}) {
 \\usepackage{fancyhdr}
 \\usepackage{xcolor}
 \\usepackage[hidelinks]{hyperref}
+\\makeatletter
+\\providecommand{\\cmrsideswitch}{}
+\\makeatother
 \\hypersetup{pdftitle={${escapeTex(title)}},pdfauthor={LearnByAI}}
 \\setcounter{tocdepth}{3}
 \\setcounter{secnumdepth}{3}
@@ -606,9 +609,51 @@ function escapeMarkdownText(value: string) {
     return `@@MATH${math.length - 1}@@`;
   });
   const escaped = escapeTex(protectedText)
+    .replace(/[ΑΒΓΔΘΛΞΠΣΦΨΩαβγδεζηθικλμνξπρστυφχψω]/gu, (char) => unicodeGreekTex(char))
     .replace(/\*\*([^*]+)\*\*/gu, "\\textbf{$1}")
     .replace(/`([^`]+)`/gu, "\\texttt{$1}");
   return escaped.replace(/@@MATH(\d+)@@/gu, (_match, index) => math[Number(index)] ?? "");
+}
+
+function unicodeGreekTex(char: string) {
+  const greek: Record<string, string> = {
+    Α: "A",
+    Β: "B",
+    Γ: "\\Gamma",
+    Δ: "\\Delta",
+    Θ: "\\Theta",
+    Λ: "\\Lambda",
+    Ξ: "\\Xi",
+    Π: "\\Pi",
+    Σ: "\\Sigma",
+    Φ: "\\Phi",
+    Ψ: "\\Psi",
+    Ω: "\\Omega",
+    α: "\\alpha",
+    β: "\\beta",
+    γ: "\\gamma",
+    δ: "\\delta",
+    ε: "\\varepsilon",
+    ζ: "\\zeta",
+    η: "\\eta",
+    θ: "\\theta",
+    ι: "\\iota",
+    κ: "\\kappa",
+    λ: "\\lambda",
+    μ: "\\mu",
+    ν: "\\nu",
+    ξ: "\\xi",
+    π: "\\pi",
+    ρ: "\\rho",
+    σ: "\\sigma",
+    τ: "\\tau",
+    υ: "\\upsilon",
+    φ: "\\phi",
+    χ: "\\chi",
+    ψ: "\\psi",
+    ω: "\\omega",
+  };
+  return `$${greek[char] ?? char}$`;
 }
 
 function escapeUrlTex(value: string) {

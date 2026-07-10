@@ -204,6 +204,13 @@ test("markdownToTex protects inline paren math like \\(f(x)\\)", async () => {
   assert.ok(tex.includes("50\\%"), tex);
 });
 
+test("markdownToTex converts bare Greek text symbols to math commands", async () => {
+  const tex = await markdownToTex("ε-soft 策略包含 π 和 θ。");
+  assert.ok(tex.includes("$\\varepsilon$-soft"), tex);
+  assert.ok(tex.includes("$\\pi$"), tex);
+  assert.ok(tex.includes("$\\theta$"), tex);
+});
+
 test("toTex emits textbook front matter, map page, and chapter-level counters", async () => {
   const now = "2026-07-10T00:00:00.000Z";
   const course = {
