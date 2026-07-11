@@ -336,6 +336,38 @@ test("heals cases split where the next row body is trapped between display delim
   assert.equal(postRepairMarkdown(out), out);
 });
 
+test("heals a display formula fractured before its denominator and numeric result", () => {
+  const input = [
+    "$$",
+    String.raw`\bar r`,
+    "=",
+    String.raw`\frac{1+0.6+0.2+0}{4}`,
+    "=",
+    "$$",
+    "",
+    "0.45.",
+    "",
+    "$$",
+    String.raw`s_r`,
+    "=",
+    String.raw`\sqrt{`,
+    String.raw`\frac{`,
+    String.raw`(0.55)^2+(0.15)^2+(-0.25)^2+(-0.45)^2`,
+    "$$",
+    "",
+    String.raw`}{4}`,
+    "}",
+    String.raw`\approx 0.381.`,
+    "",
+    "The next paragraph is prose.",
+  ].join("\n");
+  const out = postRepairMarkdown(input);
+  assert.match(out, /\\frac\{1\+0\.6\+0\.2\+0\}\{4\}\n=\n0\.45\.\n\$\$/u, out);
+  assert.match(out, /\\sqrt\{\n\\frac\{\n\(0\.55\)\^2[\s\S]*\n\}\{4\}\n\}\n\\approx 0\.381\.\n\$\$/u, out);
+  assert.ok(!validateFormat(out).some((issue) => issue.check === "format.unrenderable_math"), JSON.stringify(validateFormat(out)));
+  assert.equal(postRepairMarkdown(out), out, "must stay idempotent");
+});
+
 test("merges a bare relation prefix into the following display formula", () => {
   const input = [
     "若奖励有界，则",

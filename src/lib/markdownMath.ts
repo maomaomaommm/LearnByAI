@@ -116,7 +116,8 @@ function normalizeMathTextWithoutBlockquotes(content: string) {
 
   if (inDisplayMath || inSingleDollarBlock) repaired.push("$$");
 
-  return escapeTextModeUnderscores(normalizeKatexTags(repaired.join("\n").replace(/\n{3,}/g, "\n\n")));
+  const healedFragments = repairFragmentedDisplayMath(repaired.join("\n").replace(/\n{3,}/g, "\n\n"));
+  return escapeTextModeUnderscores(normalizeKatexTags(healedFragments));
 }
 
 /**
@@ -318,6 +319,107 @@ function normalizeDisplayMathDelimiters(content: string) {
   }
 
   return output.join("\n");
+}
+
+/**
+ * Long model outputs occasionally close a display fence before a fraction,
+ * root, or trailing numeric result is complete:
+ *
+ * $$ \sqrt{\frac{... $$  }{4} } \approx 0.381.
+ *
+ * This is neither a syntax typo nor a renderer issue: it is a Markdown fence
+ * fracture. Join only mathematically-shaped continuation lines back into the
+ * preceding display block, stopping as soon as prose resumes.
+ */
+function repairFragmentedDisplayMath(content: string) {
+  const lines = content.split("\n");
+
+  for (let index = 0; index < lines.length; index += 1) {
+    if (lines[index]?.trim() !== "$$") continue;
+
+    let closeIndex = index + 1;
+    while (closeIndex < lines.length && lines[closeIndex]?.trim() !== "$$") closeIndex += 1;
+    if (closeIndex >= lines.length) break;
+
+    const body = lines.slice(index + 1, closeIndex);
+    let braceDepth = mathBraceDepth(body.join("\n"));
+    let expectsContinuation = endsWithMathContinuation(body.join("\n"));
+    if (braceDepth <= 0 && !expectsContinuation) {
+      index = closeIndex;
+      continue;
+    }
+
+    let cursor = closeIndex + 1;
+    const continuation: string[] = [];
+    while (cursor < lines.length) {
+      const candidate = lines[cursor] ?? "";
+      const trimmed = candidate.trim();
+      if (!trimmed) {
+        cursor += 1;
+        continue;
+      }
+      if (trimmed === "$$") break;
+      if (!isDetachedDisplayMathContinuation(trimmed, braceDepth, expectsContinuation)) break;
+
+      continuation.push(cleanMathText(candidate));
+      braceDepth += mathBraceDepth(candidate);
+      expectsContinuation = endsWithMathContinuation([...body, ...continuation].join("\n"));
+      cursor += 1;
+    }
+
+    if (continuation.length === 0) {
+      index = closeIndex;
+      continue;
+    }
+
+    lines.splice(index, cursor - index, "$$", ...body, ...continuation, "$$");
+    index += body.length + continuation.length + 1;
+  }
+
+  return lines.join("\n").replace(/\n{3,}/g, "\n\n");
+}
+
+function mathBraceDepth(value: string) {
+  let depth = 0;
+  let escaped = false;
+  for (const char of value) {
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (char === "\\") {
+      escaped = true;
+      continue;
+    }
+    if (char === "{") depth += 1;
+    if (char === "}") depth -= 1;
+  }
+  return depth;
+}
+
+function endsWithMathContinuation(value: string) {
+  const last = value
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .at(-1) ?? "";
+  return /(?:=|\\(?:approx|sim|le|leq|ge|geq|to|mapsto|Rightarrow|Leftarrow)|[+\-*/])\s*$/u.test(last);
+}
+
+function isDetachedDisplayMathContinuation(value: string, braceDepth: number, expectsContinuation: boolean) {
+  if (hasProseCjk(value)) return false;
+  if (/^(?:#{1,6}\s|[-*+]\s|\d+[.)]\s|>|:::|\|.*\|)$/u.test(value)) return false;
+  if (value.includes("![") || value.includes("](") || value.includes("<!--")) return false;
+
+  const fragmentLike =
+    /^[})\]]/u.test(value) ||
+    /^[=+*/]/u.test(value) ||
+    /^\\(?:approx|sim|le|leq|ge|geq|ne|neq|times|cdot|div|qquad|quad)\b/u.test(value) ||
+    /^[+-]?\d+(?:\.\d+)?[.,]?$/u.test(value) ||
+    /^(?:\d+(?:\.\d+)?|[()\-+*/]).*[=+*/^()\\{}]/u.test(value) ||
+    isLikelyMathLine(value);
+
+  return fragmentLike && (braceDepth > 0 || expectsContinuation || /^[=+*/\\]/u.test(value));
 }
 
 function nextNonEmptyTrimmed(lines: string[], startIndex: number) {
