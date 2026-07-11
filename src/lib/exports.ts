@@ -386,6 +386,7 @@ export async function markdownToTex(markdown: string, options: TexOptions = {}) 
   const lines = figureProtected.split(/\r?\n/u);
   const out: string[] = [];
   let index = 0;
+  let fixedListKind: "exercise" | "reading" | undefined;
 
   while (index < lines.length) {
     const line = lines[index] ?? "";
@@ -447,19 +448,24 @@ export async function markdownToTex(markdown: string, options: TexOptions = {}) 
     // number sections, so strip any leading "N.M" the writer put in the text.
     const h3 = line.match(/^###\s+(.+)$/u);
     if (h3) {
-      out.push(`\\subsubsection{${escapeMarkdownText(stripHeadingNumber(h3[1] ?? ""))}}`);
+      const heading = stripHeadingNumber(h3[1] ?? "");
+      fixedListKind = fixedListKindForHeading(heading);
+      out.push(`\\subsubsection{${escapeMarkdownText(heading)}}`);
       index += 1;
       continue;
     }
     const h2 = line.match(/^##\s+(.+)$/u);
     if (h2) {
-      out.push(`\\section{${escapeMarkdownText(stripHeadingNumber(h2[1] ?? ""))}}`);
+      const heading = stripHeadingNumber(h2[1] ?? "");
+      fixedListKind = fixedListKindForHeading(heading);
+      out.push(`\\section{${escapeMarkdownText(heading)}}`);
       index += 1;
       continue;
     }
     const h1 = line.match(/^#\s+(.+)$/u);
     if (h1) {
       const text = h1[1] ?? "";
+      fixedListKind = fixedListKindForHeading(stripHeadingNumber(text));
       if (!/^第\s*[0-9一二三四五六七八九十百]+\s*章/u.test(text.trim())) {
         out.push(`\\section*{${escapeMarkdownText(stripHeadingNumber(text))}}`);
       }
@@ -478,6 +484,12 @@ export async function markdownToTex(markdown: string, options: TexOptions = {}) 
       continue;
     }
     if (/^\s*\d+[.)]\s+/u.test(line)) {
+      if (fixedListKind) {
+        const parsed = await fixedSectionListToTex(lines, index, fixedListKind, options);
+        out.push(parsed.tex);
+        index = parsed.nextIndex;
+        continue;
+      }
       const items: string[] = [];
       while (index < lines.length && /^\s*\d+[.)]\s+/u.test(lines[index] ?? "")) {
         items.push(escapeMarkdownText((lines[index] ?? "").replace(/^\s*\d+[.)]\s+/u, "")));
@@ -519,6 +531,54 @@ export async function markdownToTex(markdown: string, options: TexOptions = {}) 
   }
 
   return out.join("\n");
+}
+
+function fixedListKindForHeading(heading: string) {
+  const normalized = heading.replace(/\s+/gu, "");
+  if (/^(?:(?:课后)?(?:练习|习题)(?:与思考)?|思考与(?:练习|习题))$/u.test(normalized)) {
+    return "exercise" as const;
+  }
+  if (/^拓展阅读$/u.test(normalized)) return "reading" as const;
+  return undefined;
+}
+
+async function fixedSectionListToTex(
+  lines: string[],
+  startIndex: number,
+  kind: "exercise" | "reading",
+  options: TexOptions,
+) {
+  const items: string[] = [];
+  let current: string[] = [];
+  let index = startIndex;
+
+  while (index < lines.length) {
+    const line = lines[index] ?? "";
+    if (/^#{1,3}\s+/u.test(line)) break;
+
+    const marker = line.match(/^\s*\d+[.)]\s+([\s\S]*)$/u);
+    if (marker) {
+      if (current.length) items.push(current.join("\n").trim());
+      current = [marker[1] ?? ""];
+    } else {
+      current.push(line);
+    }
+    index += 1;
+  }
+  if (current.length) items.push(current.join("\n").trim());
+
+  const convertedItems = await Promise.all(
+    items
+      .filter(Boolean)
+      .map(async (item) => `\\item ${await markdownToTex(item, options)}`),
+  );
+  const settings = kind === "exercise"
+    ? "label=\\arabic*.,leftmargin=2.8em,itemsep=0.9em,topsep=0.6em"
+    : "label=\\arabic*.,leftmargin=2.4em,itemsep=0.75em,topsep=0.55em";
+  return {
+    tex: `\\begin{enumerate}[${settings}]\n${convertedItems.join("\n\n")}\n\\end{enumerate}`,
+    nextIndex: index,
+  };
 }
 
 function stripHeadingNumber(text: string) {

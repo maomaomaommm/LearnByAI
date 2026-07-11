@@ -188,6 +188,40 @@ test("markdownToTex converts fenced code to framed textbook listings and lists t
   assert.ok(tex.includes("\\begin{enumerate}") && tex.includes("\\item 甲"), tex);
 });
 
+test("markdownToTex keeps exercise and further-reading lists continuous across blank lines", async () => {
+  const md = [
+    "## 3.8 课后习题",
+    "",
+    "1. **推导题：** 状态价值与动作价值关系。",
+    "",
+    "从定义",
+    "",
+    "$$",
+    "v_\\pi(s) = \\mathbb{E}_\\pi[G_t \\mid S_t=s]",
+    "$$",
+    "",
+    "推出动作价值的期望形式。",
+    "",
+    "1. **建模题：** 判断马尔可夫性。",
+    "",
+    "说明状态表示是否足够。",
+    "",
+    "## 3.9 拓展阅读",
+    "",
+    "1. Sutton 与 Barto，*Reinforcement Learning*。",
+    "",
+    "1. Ross，*Introduction to Probability Models*。",
+  ].join("\n");
+
+  const tex = await markdownToTex(md);
+  assert.ok(tex.includes("\\section{课后习题}"), tex);
+  assert.ok(tex.includes("\\begin{enumerate}[label=\\arabic*."), tex);
+  assert.equal((tex.match(/\\begin\{enumerate\}\[label=\\arabic\*\./gu) ?? []).length, 2, tex);
+  assert.equal((tex.match(/\\item /gu) ?? []).length, 4, tex);
+  assert.ok(tex.includes("\\textbf{推导题：}"), tex);
+  assert.ok(tex.includes("v_\\pi(s) = \\mathbb{E}_\\pi[G_t \\mid S_t=s]"), tex);
+});
+
 test("markdownToTex wraps wide tables and tightens typography for four columns", async () => {
   const md = [
     "| 建模选择 | 常见取法 | 适用场景 | 主要风险 |",
