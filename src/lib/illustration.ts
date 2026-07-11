@@ -299,7 +299,16 @@ export async function illustrateChapter(input: {
       overrides: input.overrides,
       mock: () => JSON.stringify({ illustrations: [] }),
     });
-    planned = parseIllustrationPlan(planText, maxCount);
+    try {
+      planned = parseIllustrationPlan(planText, maxCount);
+    } catch (error) {
+      return {
+        status: "failed",
+        inserted: 0,
+        illustrations: [],
+        skipped: [{ anchor: "", reason: safeErrorMessage(error, "illustration plan was not valid JSON") }],
+      };
+    }
   }
   const skipped: IllustrationSkip[] = [];
 
