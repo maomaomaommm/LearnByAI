@@ -12,11 +12,14 @@ export function buildIllustrationPlanPrompt(input: {
   chapterTitle: string;
   chapterNumber: number;
   content: string;
-  maxCount: number;
+  maxCount?: number;
 }) {
+  const countRule = input.maxCount === undefined
+    ? "不预设插图数量：只保留彼此独立、确实能显著提升理解的视觉化知识点；没有合适位置则返回空数组。"
+    : `最多选择 ${input.maxCount} 处。`;
   return `# Task: 教材章节插图规划
 
-你是一名顶级大学出版社的教材插图编辑。阅读下面这一章的正文，从中挑选最多 ${input.maxCount} 处「配一幅插图能显著帮助理解」的位置，并为每一处写出插图方案。
+你是一名顶级大学出版社的教材插图编辑。阅读下面这一章的正文，从中挑选「配一幅插图能显著帮助理解」的位置，并为每一处写出插图方案。${countRule}
 
 课程主题：${input.course.topic}
 本章：第 ${input.chapterNumber} 章 ${input.chapterTitle}
@@ -28,6 +31,7 @@ export function buildIllustrationPlanPrompt(input: {
 - caption 是中文图注，不超过 30 字，说明图的内容（不要带「图 N」编号，编号由系统添加）。
 - prompt 用英文撰写，描述一幅扁平矢量教材插图的完整画面：画什么元素、它们的空间布局、箭头/连线关系。图中需要出现的所有文字标签必须在 prompt 里逐一列出，标签用简体中文纯文本；禁止要求图中出现 LaTeX 语法（$、反斜杠命令、_{ } 上下标），数学记号一律改写为纯文本或 Unicode（如 π、γ、s'）。
 - 插图内容必须与 anchor 所在段落的知识点强相关，且与本章符号、术语一致。
+- 正文中若已存在图片，禁止为同一知识点、同一流程或紧邻位置重复配图；优先补足尚未被图示解释的关键结构。
 
 只输出 JSON（不要输出解释或 Markdown 代码围栏）：
 {

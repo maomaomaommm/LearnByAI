@@ -441,7 +441,7 @@ function isLikelyMathLine(trimmed: string) {
     /\\(begin|end)\{(aligned|alignedat|cases|array|matrix|pmatrix|bmatrix|vmatrix|Vmatrix|split|gathered)\}/u.test(
       trimmed,
     ) ||
-    /\\(operatorname|mathrm|mathbf|mathcal|mathbb|frac|dfrac|tfrac|sum|prod|int|lim|log|ln|exp|Pr|P|E|Var|Cov|hat|bar|tilde|sqrt|theta|lambda|alpha|beta|gamma|delta|epsilon|varepsilon|sigma|mu|tau|phi|psi|omega|pi|rho|eta|kappa|ldots|cdots|mapsto|to|Rightarrow|Leftarrow|leftrightarrow|infty)(?=[^A-Za-z]|$)/u.test(
+    /\\(operatorname|mathrm|mathbf|mathcal|mathbb|frac|dfrac|tfrac|sum|prod|int|lim|log|ln|exp|times|cdot|div|pm|mp|Pr|P|E|Var|Cov|hat|bar|tilde|sqrt|theta|lambda|alpha|beta|gamma|delta|epsilon|varepsilon|sigma|mu|tau|phi|psi|omega|pi|rho|eta|kappa|ldots|cdots|mapsto|to|Rightarrow|Leftarrow|leftrightarrow|infty)(?=[^A-Za-z]|$)/u.test(
       trimmed,
     ) ||
     /[A-Za-z0-9)}\]]\s*[_^]\s*\{?[\w\\]/u.test(trimmed) ||
@@ -451,7 +451,7 @@ function isLikelyMathLine(trimmed: string) {
 
 function hasStrongMathSyntax(trimmed: string) {
   return (
-    /\\(operatorname|mathrm|mathbf|mathcal|mathbb|frac|dfrac|tfrac|sum|prod|int|lim|log|ln|exp|Pr|P|E|Var|Cov|hat|bar|tilde|sqrt|vec|sin|cos|tan|left|right|le|leq|ge|geq|ne|neq|approx|sim|theta|lambda|alpha|beta|gamma|delta|epsilon|varepsilon|sigma|mu|tau|phi|psi|omega|pi|rho|eta|kappa|ldots|cdots|mapsto|to|Rightarrow|Leftarrow|leftrightarrow|infty)(?=[^A-Za-z]|$)/u.test(
+    /\\(operatorname|mathrm|mathbf|mathcal|mathbb|frac|dfrac|tfrac|sum|prod|int|lim|log|ln|exp|times|cdot|div|pm|mp|Pr|P|E|Var|Cov|hat|bar|tilde|sqrt|vec|sin|cos|tan|left|right|le|leq|ge|geq|ne|neq|approx|sim|theta|lambda|alpha|beta|gamma|delta|epsilon|varepsilon|sigma|mu|tau|phi|psi|omega|pi|rho|eta|kappa|ldots|cdots|mapsto|to|Rightarrow|Leftarrow|leftrightarrow|infty)(?=[^A-Za-z]|$)/u.test(
       trimmed,
     ) ||
     (/[=<>]/u.test(trimmed) && /[A-Za-z0-9)}\]]\s*[_^]\s*\{?[\w\\]/u.test(trimmed))

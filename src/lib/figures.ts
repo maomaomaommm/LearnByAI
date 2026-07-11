@@ -78,11 +78,12 @@ export async function processChapterFigures(input: {
   const skipped: FigureReplacementResult["skipped"] = [];
   let next = "";
   let last = 0;
-  let figureNumber = 1;
+  let successfulInsertedBefore = 0;
 
   for (const block of blocks) {
     next += content.slice(last, block.start);
     const placeholder = block.placeholder;
+    const figureNumber = countRenderedFigures(content.slice(0, block.start)) + successfulInsertedBefore + 1;
     const label = `图 ${chapterNumber}.${figureNumber}`;
     const now = new Date().toISOString();
     try {
@@ -113,7 +114,7 @@ export async function processChapterFigures(input: {
       };
       assets.push(asset);
       next += buildFigureMarkdown(asset);
-      figureNumber += 1;
+      successfulInsertedBefore += 1;
     } catch (error) {
       const reason = safeErrorMessage(error, `${mode} figure generation failed`);
       skipped.push({ caption: normalizeCaption(placeholder.caption), reason, mode });
@@ -124,6 +125,13 @@ export async function processChapterFigures(input: {
 
   next += content.slice(last);
   return { content: next, assets, skipped };
+}
+
+function countRenderedFigures(content: string) {
+  const re = createFigureMarkdownRe();
+  let count = 0;
+  while (re.exec(content)) count += 1;
+  return count;
 }
 
 export function normalizeFigurePlaceholderSyntax(content: string) {

@@ -3,7 +3,7 @@ import { normalizeMath } from "@/lib/markdownMath";
 import { sanitizeMathDelimiters } from "@/lib/sanitizeMath";
 
 export function preRepairMarkdown(content: string) {
-  return escapePipesInTableMath(wrapBareMathParagraphs(repairMarkdownFences(normalizeMath(content))))
+  return escapePipesInTableMath(wrapBareMathParagraphs(repairMarkdownFences(normalizeMath(normalizeTextbookCallouts(content)))))
     .replace(/(^|\n)\$\s*\n([\s\S]*?)\n\$\s*(?=\n|$)/gu, (_match, prefix = "", body = "") => {
       return `${prefix}$$\n${body.trim()}\n$$`;
     })
@@ -213,6 +213,71 @@ function repairMarkdownFences(content: string) {
   }
 
   return repaired.join("\n").replace(/\n```[ \t]*\n```[ \t]*$/u, "").trim();
+}
+
+/**
+ * Examples and definitions are textbook elements, not quotations. Older
+ * writers emitted them as `>` blocks, which made the reader apply the visual
+ * language of a social-media callout: border, tinted background and italics.
+ * Canonicalize the legacy form to a bold textbook lead-in followed by ordinary
+ * prose so web, PDF and TeX all share the same semantics.
+ */
+function normalizeTextbookCallouts(content: string) {
+  const lines = content.replace(/\r\n/g, "\n").split("\n");
+  const output: string[] = [];
+  let index = 0;
+
+  while (index < lines.length) {
+    if (!/^\s*>\s?/u.test(lines[index] ?? "")) {
+      output.push(lines[index] ?? "");
+      index += 1;
+      continue;
+    }
+
+    const quoted: string[] = [];
+    const original: string[] = [];
+    while (index < lines.length && /^\s*>\s?/u.test(lines[index] ?? "")) {
+      original.push(lines[index] ?? "");
+      quoted.push((lines[index] ?? "").replace(/^\s*>\s?/u, ""));
+      index += 1;
+    }
+
+    const first = quoted.findIndex((line) => line.trim().length > 0);
+    const title = first >= 0 ? textbookCalloutTitle(quoted[first] ?? "") : undefined;
+    if (!title || first < 0) {
+      output.push(...original);
+      continue;
+    }
+
+    output.push(`**${title}**`);
+    const body = quoted.slice(first + 1);
+    while (body[0]?.trim() === "") body.shift();
+    while (body.at(-1)?.trim() === "") body.pop();
+    if (body.length > 0) {
+      const normalizedBody: string[] = [];
+      for (const line of body) {
+        const nestedTitle = textbookCalloutTitle(line);
+        if (nestedTitle) {
+          while (normalizedBody.at(-1)?.trim() === "") normalizedBody.pop();
+          normalizedBody.push("", `**${nestedTitle}**`, "");
+        } else {
+          normalizedBody.push(line);
+        }
+      }
+      while (normalizedBody.at(-1)?.trim() === "") normalizedBody.pop();
+      output.push("", ...normalizedBody, "");
+    }
+  }
+
+  return output.join("\n");
+}
+
+function textbookCalloutTitle(value: string) {
+  const title = value
+    .trim()
+    .replace(/^(?:\*\*|__)([\s\S]*?)(?:\*\*|__)$/u, "$1")
+    .trim();
+  return /^(?:例|定义)(?=\s|[0-9一二三四五六七八九十]|[：:])/u.test(title) ? title : undefined;
 }
 
 function isAccidentallyFencedMathProse(opener: string, body: string) {

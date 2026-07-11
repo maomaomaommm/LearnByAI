@@ -246,10 +246,30 @@ test("wraps raw formulas inside a blockquote example (real KL example case)", ()
     "> 因而对动作 $a$ 的逐令牌差为：",
     ">",
     String.raw`> \log\frac{0.30}{0.32}`,
+    ">",
+    String.raw`> 1.2\times 3`,
   ].join("\n");
   const out = postRepairMarkdown(input);
-  assert.match(out, /> \$\$\n> \\pi_\\theta\(a\\mid x\)=0\.6/u, out);
-  assert.match(out, /> \$\$\n> \\log\\frac\{0\.30\}\{0\.32\}\n> \$\$/u, out);
+  assert.match(out, /\$\$\n\\pi_\\theta\(a\\mid x\)=0\.6/u, out);
+  assert.match(out, /\$\$\n\\log\\frac\{0\.30\}\{0\.32\}\n\$\$/u, out);
+  assert.match(out, /\$\$\n1\.2\\times 3\n\$\$/u, out);
+  assert.equal(postRepairMarkdown(out), out, "must stay idempotent");
+});
+
+test("converts legacy example and definition blockquotes to textbook paragraphs", () => {
+  const input = [
+    "> 例 16-1：从整段回溯到逐令牌 KL 惩罚",
+    ">",
+    "> 给定提示词 $x$，回合由两个令牌组成。",
+    ">",
+    "> 定义 16.2：序列级偏好",
+    ">",
+    "> 序列级偏好比较完整回答的整体质量。",
+  ].join("\n");
+  const out = postRepairMarkdown(input);
+  assert.match(out, /^\*\*例 16-1：从整段回溯到逐令牌 KL 惩罚\*\*/mu);
+  assert.match(out, /^\*\*定义 16\.2：序列级偏好\*\*/mu);
+  assert.doesNotMatch(out, /^>\s*(?:例|定义)/mu);
   assert.equal(postRepairMarkdown(out), out, "must stay idempotent");
 });
 

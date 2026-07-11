@@ -71,6 +71,15 @@ export function validateFormat(content: string): QualityIssue[] {
     });
   }
 
+  if (/(^|\n)\s*>\s*(?:例|定义)(?=\s|[0-9一二三四五六七八九十]|[：:])/u.test(content)) {
+    issues.push({
+      check: "format.textbook_callout",
+      severity: "warning",
+      message: "发现例或定义被写成 Markdown 引用块，阅读页会显示为带竖线的引用样式。",
+      suggestion: "改为 **例 N.M：标题** 或 **定义 N.M：标题** 后接普通正文，不使用 >。",
+    });
+  }
+
   // Authoritative check: ask KaTeX (the actual renderer) to render every formula
   // block. Anything it can't render is a real rendering error, caught precisely
   // rather than guessed at.

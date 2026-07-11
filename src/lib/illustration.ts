@@ -71,12 +71,12 @@ export function getUserImageModelConfig(overrides?: ModelOverrides) {
 
 export type IllustrationPlanItem = { anchor: string; caption: string; prompt: string };
 
-export function parseIllustrationPlan(raw: string, maxCount: number): IllustrationPlanItem[] {
+export function parseIllustrationPlan(raw: string, maxCount?: number): IllustrationPlanItem[] {
   const parsed = parseJson<{ illustrations?: unknown }>(raw);
   return normalizeIllustrationPlanItems(parsed.illustrations, maxCount);
 }
 
-export function normalizeIllustrationPlanItems(list: unknown, maxCount: number): IllustrationPlanItem[] {
+export function normalizeIllustrationPlanItems(list: unknown, maxCount?: number): IllustrationPlanItem[] {
   if (!Array.isArray(list)) return [];
   const items: IllustrationPlanItem[] = [];
   for (const entry of list) {
@@ -87,7 +87,7 @@ export function normalizeIllustrationPlanItems(list: unknown, maxCount: number):
     const prompt = typeof record.prompt === "string" ? record.prompt.trim() : "";
     if (!anchor || !caption || !prompt) continue;
     items.push({ anchor, caption: caption.slice(0, 60), prompt });
-    if (items.length >= maxCount) break;
+    if (maxCount !== undefined && items.length >= maxCount) break;
   }
   return items;
 }
@@ -142,6 +142,13 @@ export function buildIllustrationMarkdown(figureLabel: string, caption: string, 
   // text are safe (the URL is ours and contains none), so "TD(0)" stays intact.
   const safeCaption = caption.replace(/[\[\]\n]/gu, " ").replace(/\s+/gu, " ").trim();
   return `![${figureLabel}　${safeCaption}](${url})\n\n*${figureLabel}　${safeCaption}*`;
+}
+
+function countRenderedIllustrations(content: string) {
+  const figureRe = /!\[图\s*\d+[.\-]\d+[\s　]+[^\]\n]+\]\([^\n)]+\)/gu;
+  let count = 0;
+  while (figureRe.exec(content)) count += 1;
+  return count;
 }
 
 export async function generateIllustrationImage(prompt: string, overrides?: ModelOverrides): Promise<IllustrationImage> {
@@ -254,9 +261,14 @@ export async function illustrateChapter(input: {
   request?: Request;
   /** Internal/ops override: a pre-written plan skips the planning agent (e.g. when the owner's text model is unavailable). */
   plan?: unknown;
+  /** `null` lets the planner choose 0-N figures from genuine visual needs. */
+  maxCount?: number | null;
 }): Promise<IllustrateChapterResult> {
   const config = getIllustrationConfig();
-  if (!config.apiKey) throw new Error("Illustration API is not configured.");
+  if (!config.apiKey && !getUserImageModelConfig(input.overrides)) {
+    throw new Error("Illustration API is not configured.");
+  }
+  const maxCount = input.maxCount === null ? undefined : input.maxCount ?? config.maxPerChapter;
 
   const chapterIndex = input.course.chapters.findIndex((chapter) => chapter.id === input.chapterId);
   if (chapterIndex === -1) throw new Error("Chapter not found.");
@@ -269,7 +281,7 @@ export async function illustrateChapter(input: {
 
   let planned: IllustrationPlanItem[];
   if (input.plan !== undefined) {
-    planned = normalizeIllustrationPlanItems(input.plan, config.maxPerChapter);
+    planned = normalizeIllustrationPlanItems(input.plan, maxCount);
   } else {
     // Plan on the owner's model config; the REVIEWER slot fits (read + judge, JSON out).
     const planText = await dispatchAgentText({
@@ -279,7 +291,7 @@ export async function illustrateChapter(input: {
         chapterTitle: chapter.title,
         chapterNumber: chapterIndex + 1,
         content,
-        maxCount: config.maxPerChapter,
+        maxCount,
       }),
       temperature: 0.2,
       maxTokens: 4096,
@@ -287,7 +299,7 @@ export async function illustrateChapter(input: {
       overrides: input.overrides,
       mock: () => JSON.stringify({ illustrations: [] }),
     });
-    planned = parseIllustrationPlan(planText, config.maxPerChapter);
+    planned = parseIllustrationPlan(planText, maxCount);
   }
   const skipped: IllustrationSkip[] = [];
 
@@ -310,6 +322,7 @@ export async function illustrateChapter(input: {
   }
 
   const prepared: (IllustrationInsert & { caption: string; url: string })[] = [];
+  const existingFigureCount = countRenderedIllustrations(content);
   for (const [index, target] of targets.entries()) {
     try {
       const image = await generateIllustrationImage(target.prompt, input.overrides);
@@ -318,7 +331,7 @@ export async function illustrateChapter(input: {
         chapterId: input.chapterId,
         ...image,
       });
-      const label = `图 ${chapterIndex + 1}-${index + 1}`;
+      const label = `图 ${chapterIndex + 1}.${existingFigureCount + index + 1}`;
       prepared.push({
         anchor: target.anchor,
         markdown: buildIllustrationMarkdown(label, target.caption, stored.url),
