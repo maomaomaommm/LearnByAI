@@ -127,10 +127,50 @@ export async function processChapterFigures(input: {
 }
 
 export function normalizeFigurePlaceholderSyntax(content: string) {
-  return content.replace(/:::learnbyai-figure\\n([\s\S]*?)\s*:::/gu, (_match, body: string) => {
-    const normalizedBody = body.replace(/\\n/gu, "\n").trim();
-    return `:::learnbyai-figure\n${normalizedBody}\n:::`;
-  });
+  return unwrapFencedFigurePayloads(content).replace(
+    /:::learnbyai-figure\\n([\s\S]*?)\s*:::/gu,
+    (_match, body: string) => {
+      const normalizedBody = body.replace(/\\n/gu, "\n").trim();
+      return `:::learnbyai-figure\n${normalizedBody}\n:::`;
+    },
+  );
+}
+
+function unwrapFencedFigurePayloads(content: string) {
+  const lines = content.replace(/\r\n/g, "\n").split("\n");
+  const output: string[] = [];
+  let index = 0;
+
+  while (index < lines.length) {
+    const opener = lines[index] ?? "";
+    const match = opener.match(/^\s*(`{3,}|~{3,})[^\n]*$/u);
+    if (!match) {
+      output.push(opener);
+      index += 1;
+      continue;
+    }
+
+    const marker = match[1]![0]!;
+    let end = index + 1;
+    while (end < lines.length && !new RegExp(`^\\s*${marker}{3,}\\s*$`, "u").test(lines[end] ?? "")) {
+      end += 1;
+    }
+    if (end >= lines.length) {
+      output.push(opener);
+      index += 1;
+      continue;
+    }
+
+    const body = lines.slice(index + 1, end).join("\n").trim();
+    if (parseFigureBlockBody(body)) {
+      output.push(":::learnbyai-figure", body, ":::");
+    } else {
+      output.push(...lines.slice(index, end + 1));
+    }
+    index = end + 1;
+  }
+
+  return output.join("\n");
 }
 
 export async function createTextbookMapFigure(course: Course, overrides?: ModelOverrides): Promise<FigureAsset> {

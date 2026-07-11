@@ -197,6 +197,8 @@ function repairMarkdownFences(content: string) {
     const body = repaired.slice(fenceStart + 1).join("\n").trim();
     if (!body) {
       repaired.splice(fenceStart, repaired.length - fenceStart);
+    } else if (isAccidentallyFencedMathProse(repaired[fenceStart] ?? "", body)) {
+      repaired.splice(fenceStart, repaired.length - fenceStart, ...body.split("\n"));
     } else {
       repaired.push(line);
     }
@@ -211,4 +213,13 @@ function repairMarkdownFences(content: string) {
   }
 
   return repaired.join("\n").replace(/\n```[ \t]*\n```[ \t]*$/u, "").trim();
+}
+
+function isAccidentallyFencedMathProse(opener: string, body: string) {
+  const language = opener.replace(/^\s*(?:`{3,}|~{3,})/u, "").trim().toLowerCase();
+  if (language && !["text", "markdown", "md"].includes(language)) return false;
+  if (!/[\u4e00-\u9fff]/u.test(body) || !/\$[^$\n]{1,200}\$/u.test(body)) return false;
+  if (/^\s*(?:caption|prompt|diagramSpec|textLabelsAllowed)\s*:/imu.test(body)) return false;
+  if (/(?:=>|->|<-|[{};]|\b(?:class|const|def|for|function|if|import|return|while)\b)/iu.test(body)) return false;
+  return true;
 }
