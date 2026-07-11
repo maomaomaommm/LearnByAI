@@ -233,6 +233,26 @@ test("wraps a bare single-line formula starting with an absolute-value bar (real
   assert.equal(postRepairMarkdown(out), out);
 });
 
+test("wraps raw formulas inside a blockquote example (real KL example case)", () => {
+  const input = [
+    "> 例 16-1：从整段回溯到逐令牌 KL 惩罚",
+    ">",
+    "> 给定提示词 $x$，当前策略和参考策略的条件概率为：",
+    ">",
+    String.raw`> \pi_\theta(a\mid x)=0.6,\qquad \pi_\theta(b\mid x)=0.5,`,
+    ">",
+    String.raw`> \pi_{\mathrm{ref}}(a\mid x)=0.4,\qquad \pi_{\mathrm{ref}}(b\mid x)=0.8.`,
+    ">",
+    "> 因而对动作 $a$ 的逐令牌差为：",
+    ">",
+    String.raw`> \log\frac{0.30}{0.32}`,
+  ].join("\n");
+  const out = postRepairMarkdown(input);
+  assert.match(out, /> \$\$\n> \\pi_\\theta\(a\\mid x\)=0\.6/u, out);
+  assert.match(out, /> \$\$\n> \\log\\frac\{0\.30\}\{0\.32\}\n> \$\$/u, out);
+  assert.equal(postRepairMarkdown(out), out, "must stay idempotent");
+});
+
 test("keeps cases row spacing commands inside display math", () => {
   const input = [
     "$$",

@@ -7,6 +7,10 @@ export function normalizeMath(content: string) {
 }
 
 function normalizeMathText(content: string) {
+  return normalizeBlockquoteMath(content);
+}
+
+function normalizeMathTextWithoutBlockquotes(content: string) {
   const repairedArtifacts = mergeBareRelationPrefixIntoDisplay(repairSplitLineSpacingArtifacts(content));
   const normalizedDelimiters = normalizeDisplayEnvironments(repairedArtifacts)
     .replace(/(?<!\\)\\\[/g, () => "\n$$\n")
@@ -113,6 +117,47 @@ function normalizeMathText(content: string) {
   if (inDisplayMath || inSingleDollarBlock) repaired.push("$$");
 
   return escapeTextModeUnderscores(normalizeKatexTags(repaired.join("\n").replace(/\n{3,}/g, "\n\n")));
+}
+
+/**
+ * Examples and definitions are often emitted as Markdown blockquotes. A raw
+ * LaTex line inside one used to bypass every formula heuristic because the
+ * leading `>` made it look like ordinary prose. Normalize the quoted payload
+ * first, then put the quote markers back so remark-math can render its
+ * $$...$$ blocks inside the callout.
+ */
+function normalizeBlockquoteMath(content: string) {
+  const lines = content.split("\n");
+  const output: string[] = [];
+  let normal: string[] = [];
+  let index = 0;
+
+  const flushNormal = () => {
+    if (normal.length === 0) return;
+    output.push(...normalizeMathTextWithoutBlockquotes(normal.join("\n")).split("\n"));
+    normal = [];
+  };
+
+  while (index < lines.length) {
+    if (!/^\s*>\s?/u.test(lines[index] ?? "")) {
+      normal.push(lines[index] ?? "");
+      index += 1;
+      continue;
+    }
+
+    flushNormal();
+    const quoted: string[] = [];
+    while (index < lines.length && /^\s*>\s?/u.test(lines[index] ?? "")) {
+      quoted.push((lines[index] ?? "").replace(/^\s*>\s?/u, ""));
+      index += 1;
+    }
+
+    const normalized = normalizeMathTextWithoutBlockquotes(quoted.join("\n"));
+    output.push(...normalized.split("\n").map((line) => line ? `> ${line}` : ">"));
+  }
+
+  flushNormal();
+  return output.join("\n");
 }
 
 function repairSplitLineSpacingArtifacts(content: string) {
@@ -396,7 +441,7 @@ function isLikelyMathLine(trimmed: string) {
     /\\(begin|end)\{(aligned|alignedat|cases|array|matrix|pmatrix|bmatrix|vmatrix|Vmatrix|split|gathered)\}/u.test(
       trimmed,
     ) ||
-    /\\(operatorname|mathrm|mathbf|mathcal|mathbb|frac|dfrac|tfrac|sum|prod|int|lim|Pr|P|E|Var|Cov|hat|bar|tilde|sqrt|theta|lambda|alpha|beta|gamma|delta|epsilon|varepsilon|sigma|mu|tau|phi|psi|omega|ldots|cdots|mapsto|to|Rightarrow|Leftarrow|leftrightarrow|infty)\b/u.test(
+    /\\(operatorname|mathrm|mathbf|mathcal|mathbb|frac|dfrac|tfrac|sum|prod|int|lim|log|ln|exp|Pr|P|E|Var|Cov|hat|bar|tilde|sqrt|theta|lambda|alpha|beta|gamma|delta|epsilon|varepsilon|sigma|mu|tau|phi|psi|omega|pi|rho|eta|kappa|ldots|cdots|mapsto|to|Rightarrow|Leftarrow|leftrightarrow|infty)(?=[^A-Za-z]|$)/u.test(
       trimmed,
     ) ||
     /[A-Za-z0-9)}\]]\s*[_^]\s*\{?[\w\\]/u.test(trimmed) ||
@@ -406,7 +451,7 @@ function isLikelyMathLine(trimmed: string) {
 
 function hasStrongMathSyntax(trimmed: string) {
   return (
-    /\\(operatorname|mathrm|mathbf|mathcal|mathbb|frac|dfrac|tfrac|sum|prod|int|lim|Pr|P|E|Var|Cov|hat|bar|tilde|sqrt|vec|sin|cos|tan|left|right|le|leq|ge|geq|ne|neq|approx|sim|theta|lambda|alpha|beta|gamma|delta|epsilon|varepsilon|sigma|mu|tau|phi|psi|omega|ldots|cdots|mapsto|to|Rightarrow|Leftarrow|leftrightarrow|infty)\b/u.test(
+    /\\(operatorname|mathrm|mathbf|mathcal|mathbb|frac|dfrac|tfrac|sum|prod|int|lim|log|ln|exp|Pr|P|E|Var|Cov|hat|bar|tilde|sqrt|vec|sin|cos|tan|left|right|le|leq|ge|geq|ne|neq|approx|sim|theta|lambda|alpha|beta|gamma|delta|epsilon|varepsilon|sigma|mu|tau|phi|psi|omega|pi|rho|eta|kappa|ldots|cdots|mapsto|to|Rightarrow|Leftarrow|leftrightarrow|infty)(?=[^A-Za-z]|$)/u.test(
       trimmed,
     ) ||
     (/[=<>]/u.test(trimmed) && /[A-Za-z0-9)}\]]\s*[_^]\s*\{?[\w\\]/u.test(trimmed))
