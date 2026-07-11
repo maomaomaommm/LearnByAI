@@ -490,12 +490,9 @@ export async function markdownToTex(markdown: string, options: TexOptions = {}) 
         index = parsed.nextIndex;
         continue;
       }
-      const items: string[] = [];
-      while (index < lines.length && /^\s*\d+[.)]\s+/u.test(lines[index] ?? "")) {
-        items.push(escapeMarkdownText((lines[index] ?? "").replace(/^\s*\d+[.)]\s+/u, "")));
-        index += 1;
-      }
-      out.push(`\\begin{enumerate}\n${items.map((item) => `\\item ${item}`).join("\n")}\n\\end{enumerate}`);
+      const parsed = await orderedListToTex(lines, index, options);
+      out.push(parsed.tex);
+      index = parsed.nextIndex;
       continue;
     }
 
@@ -531,6 +528,69 @@ export async function markdownToTex(markdown: string, options: TexOptions = {}) 
   }
 
   return out.join("\n");
+}
+
+async function orderedListToTex(lines: string[], startIndex: number, options: TexOptions) {
+  const loose = collectLooseNumberedList(lines, startIndex);
+  if (loose) {
+    const items = await Promise.all(
+      loose.items.map(async (item) => `\\item ${await markdownToTex(item, options)}`),
+    );
+    return {
+      tex: `\\begin{enumerate}\n${items.join("\n\n")}\n\\end{enumerate}`,
+      nextIndex: loose.nextIndex,
+    };
+  }
+
+  const items: string[] = [];
+  let index = startIndex;
+  while (index < lines.length && /^\s*\d+[.)]\s+/u.test(lines[index] ?? "")) {
+    items.push(escapeMarkdownText((lines[index] ?? "").replace(/^\s*\d+[.)]\s+/u, "")));
+    index += 1;
+  }
+  return {
+    tex: `\\begin{enumerate}\n${items.map((item) => `\\item ${item}`).join("\n")}\n\\end{enumerate}`,
+    nextIndex: index,
+  };
+}
+
+/**
+ * Older generated chapters sometimes reset every Markdown list marker to
+ * `1.` and put blank explanatory paragraphs between items. Parse the whole
+ * run as a single ordered list so an export never prints "1." repeatedly.
+ */
+function collectLooseNumberedList(lines: string[], startIndex: number) {
+  const items: string[] = [];
+  let current: string[] | undefined;
+  let index = startIndex;
+  let nonListLines = 0;
+
+  while (index < lines.length) {
+    const line = lines[index] ?? "";
+    if (/^#{1,3}\s+/u.test(line) || /^\s*:::\s*learnbyai-figure/u.test(line)) break;
+    const marker = line.match(/^\s*\d+[.)]\s+([\s\S]*)$/u);
+    if (marker) {
+      if (current) items.push(trimListItem(current));
+      current = [marker[1] ?? ""];
+      nonListLines = 0;
+      index += 1;
+      continue;
+    }
+    if (!current) break;
+    current.push(line);
+    if (line.trim()) nonListLines += 1;
+    if (items.length === 0 && nonListLines > 24) break;
+    index += 1;
+  }
+  if (current) items.push(trimListItem(current));
+  return items.length >= 2 ? { items: items.filter(Boolean), nextIndex: index } : undefined;
+}
+
+function trimListItem(lines: string[]) {
+  const output = [...lines];
+  while (output[0]?.trim() === "") output.shift();
+  while (output.at(-1)?.trim() === "") output.pop();
+  return output.join("\n").trim();
 }
 
 function fixedListKindForHeading(heading: string) {
@@ -604,13 +664,13 @@ function tableToTex(tableLines: string[]) {
       return bold && content ? `\\textbf{${content}}` : content;
     }).join(" & ") + " \\\\";
   const fontSize = landscape
-    ? "\\small"
+    ? "\\footnotesize"
     : columnCount >= 7
       ? "\\scriptsize"
       : columnCount >= 4
         ? "\\footnotesize"
         : "\\small";
-  const tabColumnSeparation = landscape ? "4pt" : columnCount >= 6 ? "2.5pt" : columnCount >= 4 ? "3.5pt" : "4pt";
+  const tabColumnSeparation = landscape ? "5pt" : columnCount >= 6 ? "2.5pt" : columnCount >= 4 ? "3.5pt" : "4pt";
   const headerRow = renderRow(header, true);
 
   const table = [
@@ -636,9 +696,8 @@ function tableToTex(tableLines: string[]) {
     "\\end{longtable}",
     "\\endgroup",
   ].join("\n");
-  const landscapeSpacing = bodyRows.length <= 12 ? "\\vspace*{\\fill}\n" : "";
   return landscape
-    ? `\\clearpage\n\\begin{landscape}\n\\pagestyle{empty}\n${landscapeSpacing}${table}\n${landscapeSpacing}\\end{landscape}\n\\pagestyle{fancy}\n\\clearpage`
+    ? `\\clearpage\n\\begin{landscape}\n\\thispagestyle{empty}\n${table}\n\\end{landscape}\n\\pagestyle{fancy}\n\\clearpage`
     : table;
 }
 

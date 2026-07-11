@@ -170,9 +170,45 @@ test("unescapes \$...\$ when KaTeX can render it (\$i\$ -> $i$)", () => {
   assert.ok(!out.includes(String.raw`\$i\$`), out);
 });
 
+test("repairs one-sided escaped inline math delimiters", () => {
+  const leftEscaped = postRepairMarkdown(String.raw`状态集合是 \$s,a,s',r$。`);
+  const rightEscaped = postRepairMarkdown(String.raw`动作价值为 $q_\pi(s,a)\$。`);
+  assert.ok(leftEscaped.includes("$s,a,s',r$"), leftEscaped);
+  assert.ok(rightEscaped.includes("$q_\\pi(s,a)$"), rightEscaped);
+  assert.equal(postRepairMarkdown(leftEscaped), leftEscaped);
+  assert.equal(postRepairMarkdown(rightEscaped), rightEscaped);
+});
+
 test("keeps literal currency \$5 (not renderable as intended math)", () => {
   const out = postRepairMarkdown(String.raw`成本约 \$5 美元。`);
   assert.ok(out.includes(String.raw`\$5`), out);
+});
+
+test("repairs escaped image markdown before math normalization", () => {
+  const out = postRepairMarkdown(String.raw`!\[动态规划的信息传播\](images/dp-backup.png)`);
+  assert.ok(out.includes(":::learnbyai-figure"), out);
+  assert.ok(out.includes("caption: 动态规划的信息传播"), out);
+  assert.doesNotMatch(out, /!\\\[/u, out);
+  assert.doesNotMatch(out, /images\/dp-backup\.png/u, out);
+});
+
+test("canonicalizes loose ordered lists that reset every marker to one", () => {
+  const input = [
+    "1. 初始化在线网络。",
+    "",
+    "先随机初始化参数。",
+    "",
+    "1. 收集一条转移。",
+    "",
+    "写入回放缓冲区。",
+    "",
+    "1. 执行一次更新。",
+  ].join("\n");
+  const out = postRepairMarkdown(input);
+  assert.match(out, /^1\. 初始化在线网络。/mu);
+  assert.match(out, /^2\. 收集一条转移。/mu);
+  assert.match(out, /^3\. 执行一次更新。/mu);
+  assert.equal(postRepairMarkdown(out), out);
 });
 
 test("validateFormat flags a formula KaTeX cannot render", () => {

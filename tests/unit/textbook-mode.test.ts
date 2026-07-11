@@ -188,6 +188,25 @@ test("markdownToTex converts fenced code to framed textbook listings and lists t
   assert.ok(tex.includes("\\begin{enumerate}") && tex.includes("\\item 甲"), tex);
 });
 
+test("markdownToTex keeps a loose repeated-one list in one enumerate environment", async () => {
+  const md = [
+    "1. 初始化网络。",
+    "",
+    "先设置随机种子。",
+    "",
+    "1. 收集转移。",
+    "",
+    "将转移写入缓冲区。",
+    "",
+    "1. 更新参数。",
+  ].join("\n");
+  const tex = await markdownToTex(md);
+  assert.equal((tex.match(/\\begin\{enumerate\}/gu) ?? []).length, 1, tex);
+  assert.equal((tex.match(/\\item /gu) ?? []).length, 3, tex);
+  assert.ok(tex.includes("先设置随机种子。"), tex);
+  assert.ok(tex.includes("将转移写入缓冲区。"), tex);
+});
+
 test("markdownToTex keeps exercise and further-reading lists continuous across blank lines", async () => {
   const md = [
     "## 3.8 课后习题",
@@ -267,9 +286,9 @@ test("markdownToTex reserves landscape pages for dense seven-column algorithm ma
   ].join("\n");
   const tex = await markdownToTex(md);
   assert.ok(tex.includes("\\begin{landscape}"), tex);
-  assert.ok(tex.includes("\\pagestyle{empty}"), tex);
-  assert.ok(tex.includes("\\vspace*{\\fill}"), tex);
-  assert.ok(tex.includes("\\small"), tex);
+  assert.ok(tex.includes("\\thispagestyle{empty}"), tex);
+  assert.ok(!tex.includes("\\vspace*{\\fill}"), tex);
+  assert.ok(tex.includes("\\footnotesize"), tex);
   assert.ok(tex.includes("\\end{landscape}"), tex);
   assert.ok(tex.includes("\\pagestyle{fancy}"), tex);
 });

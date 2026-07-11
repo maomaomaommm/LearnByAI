@@ -3,7 +3,21 @@ import { normalizeMath } from "@/lib/markdownMath";
 import { sanitizeMathDelimiters } from "@/lib/sanitizeMath";
 
 export function preRepairMarkdown(content: string) {
-  return escapePipesInTableMath(wrapBareMathParagraphs(repairMarkdownFences(normalizeMath(normalizeTextbookCallouts(content)))))
+  const repairedImageSyntax = normalizeEscapedMarkdownImageSyntax(content);
+  const normalized = normalizeLooseOrderedLists(
+    replaceLegacyImageLinksWithFigurePlaceholders(
+      escapePipesInTableMath(
+        wrapBareMathParagraphs(
+          repairMarkdownFences(
+            normalizeMath(
+              normalizeTextbookCallouts(repairedImageSyntax),
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+  return normalized
     .replace(/(^|\n)\$\s*\n([\s\S]*?)\n\$\s*(?=\n|$)/gu, (_match, prefix = "", body = "") => {
       return `${prefix}$$\n${body.trim()}\n$$`;
     })
@@ -12,6 +26,188 @@ export function preRepairMarkdown(content: string) {
     // result is stable under a second pass (the renderer runs this again).
     .replace(/\n{3,}/g, "\n\n")
     .trim();
+}
+
+/**
+ * A model occasionally escapes the brackets in an image token, for example
+ * `!\[图示\](images/example.png)`. The math normalizer correctly treats `\[`
+ * as a display-math delimiter, so this must run before any LaTeX processing.
+ */
+function normalizeEscapedMarkdownImageSyntax(content: string) {
+  return transformOutsideFences(content, (text) =>
+    text
+      .replace(/!\\\[([^\]\r\n]*)\\\]\\\(([^)\r\n]+)\\\)/gu, "![$1]($2)")
+      .replace(/!\\\[([^\]\r\n]*)\\\]\(([^)\r\n]+)\)/gu, "![$1]($2)")
+      .replace(/!\[([^\]\r\n]*)\]\\\(([^)\r\n]+)\\\)/gu, "![$1]($2)"),
+  );
+}
+
+/**
+ * Imported reference documents may contain local image paths such as
+ * `images/dp-backup.png`. They cannot be resolved by the web reader or copied
+ * into TeX, so convert them to the standard figure protocol. Fresh chapters
+ * render the placeholder in the normal figure pipeline; older chapters can be
+ * healed with the same pipeline instead of leaking a literal Markdown token.
+ */
+function replaceLegacyImageLinksWithFigurePlaceholders(content: string) {
+  return transformOutsideFences(content, (text) =>
+    text.replace(/!\[([^\]\r\n]*)\]\(([^)\r\n]+)\)/gu, (whole, alt: string, url: string) => {
+      const source = url.trim();
+      if (source.startsWith("/api/illustrations/")) return whole;
+
+      const caption = normalizeLegacyFigureCaption(alt);
+      if (!caption) return "";
+      return [
+        ":::learnbyai-figure",
+        `caption: ${caption}`,
+        `prompt: 为教材绘制“${caption}”的简洁示意图，突出正文所述的关键对象、关系或流程。`,
+        `diagramSpec: ${caption}`,
+        "textLabelsAllowed: true",
+        ":::",
+      ].join("\n");
+    }),
+  );
+}
+
+function normalizeLegacyFigureCaption(alt: string) {
+  return alt
+    .replace(/^\s*图\s*\d+(?:[.\-]\d+)?\s*[：:、.]?\s*/u, "")
+    .replace(/[*_`[\]]/gu, " ")
+    .replace(/\s+/gu, " ")
+    .trim()
+    .slice(0, 80);
+}
+
+/**
+ * Writers often emit a loose Markdown list as a series of `1.` blocks
+ * separated by blank explanatory paragraphs. CommonMark treats those as many
+ * independent one-item lists, so both the reader and TeX export show repeated
+ * “1.”. Canonicalize them to one ordered list with indented continuations.
+ */
+function normalizeLooseOrderedLists(content: string) {
+  const lines = content.replace(/\r\n/g, "\n").split("\n");
+  const output: string[] = [];
+  let index = 0;
+  let fenceMarker = "";
+  let inDisplayMath = false;
+
+  while (index < lines.length) {
+    const line = lines[index] ?? "";
+    const fence = line.match(/^\s*(`{3,}|~{3,})/u);
+    if (fence) {
+      if (!fenceMarker) fenceMarker = fence[1]![0]!;
+      else if (fence[1]![0] === fenceMarker) fenceMarker = "";
+      output.push(line);
+      index += 1;
+      continue;
+    }
+    if (fenceMarker) {
+      output.push(line);
+      index += 1;
+      continue;
+    }
+    if (line.trim() === "$$") {
+      inDisplayMath = !inDisplayMath;
+      output.push(line);
+      index += 1;
+      continue;
+    }
+    if (inDisplayMath || !/^\s*\d+[.)]\s+/u.test(line)) {
+      output.push(line);
+      index += 1;
+      continue;
+    }
+
+    const parsed = collectLooseOrderedList(lines, index);
+    if (!parsed) {
+      output.push(line);
+      index += 1;
+      continue;
+    }
+
+    parsed.items.forEach((item, itemIndex) => {
+      const clean = trimBlankEdges(item);
+      const first = clean.shift() ?? "";
+      output.push(`${itemIndex + 1}. ${first}`);
+      for (const continuation of clean) {
+        output.push(continuation ? `   ${removeOneListIndent(continuation)}` : "");
+      }
+      if (itemIndex < parsed.items.length - 1 && clean.length > 0) output.push("");
+    });
+    index = parsed.nextIndex;
+  }
+
+  return output.join("\n");
+}
+
+function collectLooseOrderedList(lines: string[], startIndex: number) {
+  const items: string[][] = [];
+  let current: string[] | undefined;
+  let index = startIndex;
+  let nonListLines = 0;
+
+  while (index < lines.length) {
+    const line = lines[index] ?? "";
+    if (/^#{1,6}\s+/u.test(line) || /^\s*:::\s*learnbyai-figure/u.test(line)) break;
+    const marker = line.match(/^\s*\d+[.)]\s+([\s\S]*)$/u);
+    if (marker) {
+      if (current) items.push(current);
+      current = [marker[1] ?? ""];
+      nonListLines = 0;
+      index += 1;
+      continue;
+    }
+    if (!current) break;
+    current.push(line);
+    if (line.trim()) nonListLines += 1;
+    // A normal paragraph after a one-item list should not absorb a whole
+    // chapter while we look for another marker.
+    if (items.length === 0 && nonListLines > 24) break;
+    index += 1;
+  }
+  if (current) items.push(current);
+  return items.length >= 2 ? { items, nextIndex: index } : undefined;
+}
+
+function trimBlankEdges(lines: string[]) {
+  const output = [...lines];
+  while (output[0]?.trim() === "") output.shift();
+  while (output.at(-1)?.trim() === "") output.pop();
+  return output;
+}
+
+function removeOneListIndent(value: string) {
+  return value.replace(/^(?: {3}|\t)/u, "");
+}
+
+function transformOutsideFences(content: string, transform: (text: string) => string) {
+  const lines = content.replace(/\r\n/g, "\n").split("\n");
+  const output: string[] = [];
+  const normal: string[] = [];
+  let fenceMarker = "";
+
+  const flushNormal = () => {
+    if (normal.length) output.push(transform(normal.join("\n")));
+    normal.length = 0;
+  };
+
+  for (const line of lines) {
+    const fence = line.match(/^\s*(`{3,}|~{3,})/u);
+    if (!fenceMarker && fence) {
+      flushNormal();
+      fenceMarker = fence[1]![0]!;
+      output.push(line);
+      continue;
+    }
+    if (fenceMarker) {
+      output.push(line);
+      if (fence?.[1]?.[0] === fenceMarker) fenceMarker = "";
+      continue;
+    }
+    normal.push(line);
+  }
+  flushNormal();
+  return output.join("\n");
 }
 
 /**

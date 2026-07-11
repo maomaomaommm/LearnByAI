@@ -86,13 +86,22 @@ function cleanDisplayMathLine(line: string): string {
 }
 
 function unescapeRenderableDollarMath(text: string): string {
-  return text.replace(/\\\$\s*([^\n$]{1,200}?)\s*\\\$/gu, (match, inner: string) => {
-    const candidate = inner.trim();
-    if (isRenderableInlineMath(candidate)) {
-      return `$${candidate}$`;
-    }
-    return match;
-  });
+  return text
+    .replace(/\\\$\s*([^\n$]{1,200}?)\s*\\\$/gu, (match, inner: string) => {
+      const candidate = inner.trim();
+      return isRenderableInlineMath(candidate) ? `$${candidate}$` : match;
+    })
+    // A common streaming/escaping artifact only escapes one delimiter:
+    // `\$s,a,s',r$` or `$q_\pi(s)\$`. Restore it only after the same KaTeX
+    // validation used for normal math, so currency such as `\$5` stays text.
+    .replace(/\\\$\s*([^\n$]{1,200}?)\s*(?<!\\)\$/gu, (match, inner: string) => {
+      const candidate = inner.trim();
+      return isRenderableInlineMath(candidate) ? `$${candidate}$` : match;
+    })
+    .replace(/(?<!\\)\$\s*([^\n$]{1,200}?)\s*\\\$/gu, (match, inner: string) => {
+      const candidate = inner.trim();
+      return isRenderableInlineMath(candidate) ? `$${candidate}$` : match;
+    });
 }
 
 function splitZones(content: string): Zone[] {
@@ -211,6 +220,7 @@ function looksLikeInlineMath(value: string): boolean {
   if (/\\[a-zA-Z]+/u.test(compact)) return true;
   if (/[_^{}=<>+\-*\/|()\[\]]/u.test(compact)) return true;
   if (/^[A-Za-z](?:\s*,\s*[A-Za-z])+$/u.test(compact)) return true;
+  if (/^[A-Za-z](?:['’]|_[A-Za-z0-9]+)?(?:\s*,\s*[A-Za-z](?:['’]|_[A-Za-z0-9]+)?)+$/u.test(compact)) return true;
   if (isNumericMathLiteral(compact)) return true;
   if (isNumericMathSequence(compact)) return true;
   if (isShortMathIdentifier(compact)) return true;
