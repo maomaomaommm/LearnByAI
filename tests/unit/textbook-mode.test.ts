@@ -274,23 +274,23 @@ test("markdownToTex keeps compact six-column comparison tables in portrait", asy
   assert.ok(tex.includes("\\setlength{\\tabcolsep}{2.5pt}"), tex);
 });
 
-test("markdownToTex reserves landscape pages for dense seven-column algorithm matrices", async () => {
+test("markdownToTex splits text-heavy seven-column comparison tables into readable portrait continuations", async () => {
   const md = [
-    "| 方法 | 学习对象 | 是否需模型 | 更新目标 | 策略关系 | 主要优点 | 主要风险 |",
+    "| 方法 | 主要训练信号 | 是否需要在线采样 | 是否需要价值模型 | 距离控制方式 | 较适合的场景 | 主要风险 |",
     "| --- | --- | --- | --- | --- | --- | --- |",
-    "| DP 策略评估 | $v_\\pi$ 或 $q_\\pi$ | 是 | 期望 Bellman 备份 | 给定策略 | 无采样噪声 | 需要完整模型 |",
-    "| MC 预测 | $v_\\pi$ 或 $q_\\pi$ | 否 | 完整回报 $G_t$ | 通常同策略 | 目标无偏 | 必须等回合结束 |",
-    "| TD(0) 预测 | $v_\\pi$ | 否 | $R_{t+1}+\\gamma v(S_{t+1})$ | 给定策略 | 在线、低方差 | 自举引入偏差 |",
-    "| Sarsa | $q_\\pi$ | 否 | $R_{t+1}+\\gamma q(S_{t+1},A_{t+1})$ | 同策略 | 计入探索后果 | 学到探索策略价值 |",
-    "| Q-learning | $q_*$ | 否 | $R_{t+1}+\\gamma\\max_{a'}q(S_{t+1},a')$ | 离策略 | 可复用探索数据 | 最大化偏差 |",
+    "| TRPO | 回报或奖励模型 | 是 | 通常需要 | 显式平均 KL 约束 | 需严格控制单步策略变化的研究性设置 | 二阶计算、线搜索成本高 |",
+    "| PPO | 回报或奖励模型 | 是 | 通常需要 | 裁剪比率，配合 KL 监控 | 在线可采样，需要稳定策略更新的语言对齐 | 裁剪非硬约束，价值误差与奖励投机 |",
+    "| DPO | 固定成对偏好 | 否 | 否 | 相对参考策略的隐式 KL 结构 | 高质量偏好对充足的离线对齐 | 覆盖外泛化有限，偏好数据偏差直接传递 |",
+    "| GRPO | 同提示多样本的组相对奖励 | 通常是 | 否 | 裁剪与参考策略 KL | 可验证结果、难训练价值模型的任务 | 组奖励稀疏、信用分配粗糙、采样成本随组大小增加 |",
+    "| DLM 奖励线序列决策案例 | 离线轨迹、候选评价与相对优化 | 否或受限 | 视具体实现而定 | 行为策略锚定与保守更新 | 有大量离线多智能体轨迹的研究问题 | 分布外联合动作、评价器外推和因果遗漏 |",
   ].join("\n");
   const tex = await markdownToTex(md);
-  assert.ok(tex.includes("\\begin{landscape}"), tex);
-  assert.ok(tex.includes("\\thispagestyle{empty}"), tex);
-  assert.ok(!tex.includes("\\vspace*{\\fill}"), tex);
+  assert.ok(!tex.includes("\\begin{landscape}"), tex);
+  assert.equal((tex.match(/\\begin\{longtable\}/gu) ?? []).length, 2, tex);
+  assert.ok(tex.includes("\\textit{续表（适用性与风险）}"), tex);
+  assert.equal((tex.match(/\\textbf\{方法\}/gu) ?? []).length, 4, tex);
   assert.ok(tex.includes("\\footnotesize"), tex);
-  assert.ok(tex.includes("\\end{landscape}"), tex);
-  assert.ok(tex.includes("\\pagestyle{fancy}"), tex);
+  assert.ok(tex.includes("较适合的场景") && tex.includes("主要风险"), tex);
 });
 
 test("markdownToTex drops HTML comments and renders figures via \\includegraphics fallback box", async () => {

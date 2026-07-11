@@ -657,6 +657,26 @@ function tableToTex(tableLines: string[]) {
   const columnCount = Math.max(header.length, ...bodyRows.map((cells) => cells.length), 1);
   const widths = tableColumnWidths(header, bodyRows, columnCount);
   const landscape = tableNeedsLandscape(header, bodyRows, widths);
+  if (landscape && shouldSplitWideComparisonTable(header, bodyRows)) {
+    const trainingColumns = [0, 1, 2, 3];
+    const suitabilityColumns = [0, 4, 5, 6];
+    return [
+      tablePartToTex(pickTableColumns(header, trainingColumns), bodyRows.map((row) => pickTableColumns(row, trainingColumns))),
+      "\\par\\medskip",
+      "\\noindent\\textit{续表（适用性与风险）}\\par\\smallskip",
+      tablePartToTex(pickTableColumns(header, suitabilityColumns), bodyRows.map((row) => pickTableColumns(row, suitabilityColumns))),
+    ].join("\n");
+  }
+
+  const table = tablePartToTex(header, bodyRows, landscape);
+  return landscape
+    ? `\\clearpage\n\\begin{landscape}\n\\thispagestyle{empty}\n${table}\n\\end{landscape}\n\\pagestyle{fancy}\n\\clearpage`
+    : table;
+}
+
+function tablePartToTex(header: string[], bodyRows: string[][], landscape = false) {
+  const columnCount = Math.max(header.length, ...bodyRows.map((row) => row.length), 1);
+  const widths = tableColumnWidths(header, bodyRows, columnCount);
   const spec = `@{}${widths.map((width) => `L{${width.toFixed(4)}}`).join("")}@{}`;
   const renderRow = (cells: string[], bold = false) =>
     Array.from({ length: columnCount }, (_, i) => {
@@ -664,20 +684,20 @@ function tableToTex(tableLines: string[]) {
       return bold && content ? `\\textbf{${content}}` : content;
     }).join(" & ") + " \\\\";
   const fontSize = landscape
-    ? "\\footnotesize"
+    ? "\\small"
     : columnCount >= 7
       ? "\\scriptsize"
       : columnCount >= 4
         ? "\\footnotesize"
         : "\\small";
-  const tabColumnSeparation = landscape ? "5pt" : columnCount >= 6 ? "2.5pt" : columnCount >= 4 ? "3.5pt" : "4pt";
+  const tabColumnSeparation = landscape ? "5.5pt" : columnCount >= 6 ? "2.5pt" : columnCount >= 4 ? "3.5pt" : "4pt";
   const headerRow = renderRow(header, true);
 
-  const table = [
+  return [
     "\\begingroup",
     fontSize,
     `\\setlength{\\tabcolsep}{${tabColumnSeparation}}`,
-    "\\renewcommand{\\arraystretch}{1.28}",
+    `\\renewcommand{\\arraystretch}{${landscape ? "1.34" : "1.28"}}`,
     "\\setlength{\\LTleft}{0pt}",
     "\\setlength{\\LTright}{0pt}",
     `\\begin{longtable}{${spec}}`,
@@ -696,9 +716,21 @@ function tableToTex(tableLines: string[]) {
     "\\end{longtable}",
     "\\endgroup",
   ].join("\n");
-  return landscape
-    ? `\\clearpage\n\\begin{landscape}\n\\thispagestyle{empty}\n${table}\n\\end{landscape}\n\\pagestyle{fancy}\n\\clearpage`
-    : table;
+}
+
+function pickTableColumns(row: string[], columns: number[]) {
+  return columns.map((column) => row[column] ?? "");
+}
+
+function shouldSplitWideComparisonTable(header: string[], bodyRows: string[][]) {
+  if (header.length !== 7 || bodyRows.length < 3 || bodyRows.length > 16) return false;
+  const firstColumnIsKey = tableCellWidthScore(header[0] ?? "") <= 12
+    && bodyRows.every((row) => tableCellWidthScore(row[0] ?? "") <= 24);
+  const textHeavyColumns = header.slice(1).filter((cell, index) => {
+    const values = bodyRows.map((row) => row[index + 1] ?? "");
+    return Math.max(tableCellWidthScore(cell), ...values.map(tableCellWidthScore)) >= 18;
+  }).length;
+  return firstColumnIsKey && textHeavyColumns >= 3;
 }
 
 function codeBlockToTex(body: string, language: string) {
