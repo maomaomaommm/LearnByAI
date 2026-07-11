@@ -1,15 +1,15 @@
 "use client";
 
 import { useRouter, useSearchParams } from "next/navigation";
-import { FormEvent, Suspense, useEffect, useState } from "react";
+import { ChangeEvent, FormEvent, Suspense, useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { ArrowRight, BookOpen, Target, User, Clock, GraduationCap, Loader2, Route, Zap, FileCheck, ArrowLeft } from "lucide-react";
+import { ArrowRight, BookOpen, Target, User, Clock, GraduationCap, Loader2, Route, Zap, FileCheck, ArrowLeft, Paperclip, X } from "lucide-react";
 import Link from "next/link";
 import { apiFetch } from "@/lib/clientApi";
 import { publicSafeErrorMessage } from "@/lib/publicSafeError";
 import { isSupabaseAuthEnabled, useUser } from "@/lib/hooks/useUser";
 import { Course, CourseCreateResponse } from "@/lib/types";
-import type { ContentMode } from "@/lib/types";
+import type { ContentMode, CourseMaterialPurpose } from "@/lib/types";
 
 const DRAFT_KEY = "learnbyai_create_draft";
 
@@ -25,6 +25,19 @@ type CreateDraft = {
   generationProfile?: string;
   includeRecentResearch?: boolean;
 };
+
+type PendingMaterial = {
+  id: string;
+  file: File;
+  purpose: CourseMaterialPurpose;
+};
+
+const MATERIAL_PURPOSE_OPTIONS: Array<{ value: CourseMaterialPurpose; label: string }> = [
+  { value: "auto", label: "自动判断" },
+  { value: "requirements", label: "课程要求 / 大纲" },
+  { value: "reference", label: "参考文献 / 教材" },
+  { value: "style", label: "写作风格样例" },
+];
 
 export default function CreateCoursePage() {
   return (
@@ -46,6 +59,8 @@ function CreateCourseContent() {
   const [error, setError] = useState("");
   const [progress, setProgress] = useState(0);
   const [progressStage, setProgressStage] = useState("准备生成");
+  const [materials, setMaterials] = useState<PendingMaterial[]>([]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     setHydrated(true);
@@ -110,23 +125,26 @@ function CreateCourseContent() {
     const chapterCount = Number.isFinite(customCount) && customCount > 0
       ? customCount
       : (Number.isFinite(presetCount) && presetCount > 0 ? presetCount : 8);
-    const input = {
-      contentMode,
-      topic: String(values.topic),
-      goal: String(values.goal),
-      background: String(values.background),
-      styles,
-      learningMode: String(values.learningMode || "standard"),
-      chapterCount,
-      difficulty: String(values.difficulty || "intermediate"),
-      generationProfile: String(values.generationProfile || "fast"),
-      includeRecentResearch: values.includeRecentResearch === "on",
-    };
+    const payload = new FormData();
+    payload.append("contentMode", contentMode);
+    payload.append("topic", String(values.topic));
+    payload.append("goal", String(values.goal));
+    payload.append("background", String(values.background));
+    for (const style of styles) payload.append("styles", style);
+    payload.append("learningMode", String(values.learningMode || "standard"));
+    payload.append("chapterCount", String(chapterCount));
+    payload.append("difficulty", String(values.difficulty || "intermediate"));
+    payload.append("generationProfile", String(values.generationProfile || "fast"));
+    if (values.includeRecentResearch === "on") payload.append("includeRecentResearch", "on");
+    for (const material of materials) {
+      payload.append("materials", material.file);
+      payload.append("materialKinds", material.purpose);
+    }
 
     try {
       const response = await apiFetch("/api/courses", {
         method: "POST",
-        body: JSON.stringify(input),
+        body: payload,
       });
 
       if (!response.ok) {
@@ -152,6 +170,28 @@ function CreateCourseContent() {
       setError(publicSafeErrorMessage(error, "Course creation failed. Please try again."));
       setLoading(false);
     }
+  }
+
+  function addMaterials(event: ChangeEvent<HTMLInputElement>) {
+    const picked = Array.from(event.target.files ?? []);
+    if (!picked.length) return;
+    setMaterials((current) => [
+      ...current,
+      ...picked.map((file) => ({
+        id: createMaterialId(),
+        file,
+        purpose: "auto" as const,
+      })),
+    ]);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  }
+
+  function updateMaterialPurpose(id: string, purpose: CourseMaterialPurpose) {
+    setMaterials((current) => current.map((material) => (material.id === id ? { ...material, purpose } : material)));
+  }
+
+  function removeMaterial(id: string) {
+    setMaterials((current) => current.filter((material) => material.id !== id));
   }
 
   if (authEnabled && user === undefined) {
@@ -231,6 +271,56 @@ function CreateCourseContent() {
                     <h2 className="text-sm font-semibold text-foreground">你目前的基础</h2>
                   </div>
                   <textarea name="background" defaultValue={draft?.background} placeholder="例如：会 Python 编程，学过大学微积分和线性代数，但没有深入接触过当前领域" required rows={2} className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground outline-none placeholder:text-muted-foreground focus:border-foreground resize-none" />
+                </div>
+
+                <div className="rounded-lg border border-border bg-card p-5">
+                  <div className="mb-3 flex items-center gap-2">
+                    <Paperclip size={16} className="text-foreground" />
+                    <h2 className="text-sm font-semibold text-foreground">
+                      上传参考资料 <span className="text-xs font-normal text-muted-foreground">（可选）</span>
+                    </h2>
+                  </div>
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    multiple
+                    accept=".txt,.md,.pdf,.docx,text/plain,text/markdown,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                    onChange={addMaterials}
+                    className="block w-full text-sm text-muted-foreground file:mr-3 file:rounded-md file:border-0 file:bg-foreground file:px-3 file:py-1.5 file:text-xs file:font-medium file:text-background hover:file:bg-foreground/90"
+                  />
+                  {materials.length > 0 && (
+                    <ul className="mt-3 space-y-1.5">
+                      {materials.map((material) => (
+                        <li key={material.id} className="grid gap-2 rounded-md border border-border bg-background px-3 py-2 text-xs text-foreground sm:grid-cols-[minmax(0,1fr)_170px_24px] sm:items-center">
+                          <div className="min-w-0">
+                            <span className="block truncate" title={material.file.name}>{material.file.name}</span>
+                            <span className="mt-0.5 block text-[11px] text-muted-foreground">{formatFileSize(material.file.size)}</span>
+                          </div>
+                          <select
+                            value={material.purpose}
+                            onChange={(event) => updateMaterialPurpose(material.id, event.target.value as CourseMaterialPurpose)}
+                            className="h-8 rounded-md border border-border bg-card px-2 text-xs text-foreground outline-none focus:border-foreground"
+                          >
+                            {MATERIAL_PURPOSE_OPTIONS.map((option) => (
+                              <option key={option.value} value={option.value}>{option.label}</option>
+                            ))}
+                          </select>
+                          <button
+                            type="button"
+                            onClick={() => removeMaterial(material.id)}
+                            className="inline-flex h-6 w-6 shrink-0 items-center justify-center text-muted-foreground hover:text-foreground"
+                            title="移除文件"
+                            aria-label="移除文件"
+                          >
+                            <X size={14} />
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  <p className="mt-2 text-xs text-muted-foreground">
+                    支持 txt / md / pdf / docx，最多 6 个文件，单个不超过 8MB。内容仅提取为本次生成的文本摘要，原文件不会保存。
+                  </p>
                 </div>
 
                 <div className="grid gap-5 md:grid-cols-2">
@@ -425,6 +515,18 @@ function persistDraft(values: Record<string, FormDataEntryValue>, styles: string
   } catch {
     /* storage may be unavailable — non-fatal */
   }
+}
+
+function createMaterialId() {
+  return typeof crypto !== "undefined" && "randomUUID" in crypto
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function formatFileSize(size: number) {
+  if (size < 1024) return `${size} B`;
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
+  return `${(size / 1024 / 1024).toFixed(1)} MB`;
 }
 
 function CenteredNote({ text }: { text: string }) {

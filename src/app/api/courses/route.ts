@@ -10,7 +10,8 @@ import { listServerCourses, saveServerCourse, saveServerGenerationJob } from "@/
 import { resolveModelOverrides } from "@/lib/userModelConfig";
 import { normalizeContentMode, normalizeLearningMode, normalizeStyles } from "@/lib/normalizeCourse";
 import { buildStyleGuidance } from "@/lib/prompts/styleGuidance";
-import { ContentMode, Course, CourseDifficulty, ExplanationStyle, GenerationProfile, LearningMode } from "@/lib/types";
+import { extractCourseMaterials } from "@/lib/courseMaterials";
+import { ContentMode, Course, CourseDifficulty, CourseInputMaterial, CourseMaterialPurpose, ExplanationStyle, GenerationProfile, LearningMode } from "@/lib/types";
 
 type CourseInput = {
   contentMode?: ContentMode;
@@ -24,6 +25,10 @@ type CourseInput = {
   difficulty?: CourseDifficulty;
   generationProfile?: GenerationProfile;
   includeRecentResearch?: boolean;
+  courseRequirements?: string;
+  referenceMaterial?: string;
+  styleSample?: string;
+  inputMaterials?: CourseInputMaterial[];
 };
 
 export async function GET(request: Request) {
@@ -34,10 +39,10 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const input = (await request.json()) as CourseInput;
   const auth = await requireApiUser(request);
   if ("response" in auth) return auth.response;
 
+  const input = await parseCourseInput(request);
   const userId = auth.userId;
   const headerOverrides = parseModelOverridesFromHeaders(request.headers);
   const modelOverrides = await resolveModelOverrides(userId, headerOverrides);
@@ -66,6 +71,50 @@ export async function POST(request: Request) {
     scheduleCoursePlanning(request, persistedJob.id);
   }
   return NextResponse.json({ course: linkedCourse, job: publicGenerationJob(persistedJob) });
+}
+
+async function parseCourseInput(request: Request): Promise<CourseInput> {
+  const contentType = request.headers.get("content-type") ?? "";
+  if (!contentType.includes("multipart/form-data")) {
+    return (await request.json()) as CourseInput;
+  }
+
+  const form = await request.formData();
+  const directCount = Number(form.get("chapterCount"));
+  const customCount = Number(form.get("chapterCountCustom"));
+  const presetCount = Number(form.get("chapterCountPreset"));
+  const chapterCount = Number.isFinite(directCount) && directCount > 0
+    ? directCount
+    : Number.isFinite(customCount) && customCount > 0
+      ? customCount
+      : (Number.isFinite(presetCount) && presetCount > 0 ? presetCount : 8);
+  const files = readFiles(form, "materials");
+  const purposes = form.getAll("materialKinds").map(String);
+  const materials = await extractCourseMaterials(
+    files.map((file, index) => ({
+      file,
+      purpose: purposes[index] as CourseMaterialPurpose | undefined,
+    })),
+  );
+
+  return {
+    contentMode: String(form.get("contentMode") ?? "") === "textbook" ? "textbook" : "lecture",
+    topic: String(form.get("topic") ?? ""),
+    goal: String(form.get("goal") ?? ""),
+    background: String(form.get("background") ?? ""),
+    preference: String(form.get("preference") ?? "") || undefined,
+    styles: form.getAll("styles").map(String) as ExplanationStyle[],
+    learningMode: String(form.get("learningMode") ?? "standard") as LearningMode,
+    chapterCount,
+    difficulty: String(form.get("difficulty") ?? "intermediate") as CourseDifficulty,
+    generationProfile: String(form.get("generationProfile") ?? "fast") as GenerationProfile,
+    includeRecentResearch: form.get("includeRecentResearch") === "on",
+    ...materials,
+  };
+}
+
+function readFiles(form: FormData, key: string): File[] {
+  return form.getAll(key).filter((entry): entry is File => entry instanceof File && entry.size > 0);
 }
 
 function scheduleCoursePlanning(request: Request, jobId: string) {
@@ -99,6 +148,10 @@ function createPendingCourse(input: CourseInput, userId: string): Course {
     difficulty: normalizeDifficulty(input.difficulty),
     generationProfile: normalizeGenerationProfile(input.generationProfile),
     includeRecentResearch: input.includeRecentResearch === true,
+    courseRequirements: input.courseRequirements,
+    referenceMaterial: input.referenceMaterial,
+    styleSample: input.styleSample,
+    inputMaterials: input.inputMaterials,
     profile: "课程规划队列中。",
     courseBible: {
       targetLearner: input.background,

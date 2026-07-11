@@ -98,7 +98,7 @@ async function createApiHeaders(init: RequestInit = {}) {
   if (token) headers.set("authorization", `Bearer ${token}`);
   if (modelConfig) headers.set(MODEL_CONFIG_HEADER, modelConfig);
 
-  if (init.body && !headers.has("content-type")) {
+  if (init.body && !(init.body instanceof FormData) && !headers.has("content-type")) {
     headers.set("content-type", "application/json");
   }
 

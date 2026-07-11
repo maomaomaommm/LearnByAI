@@ -126,6 +126,35 @@ test("chapter prompts preserve frontier evidence and recency constraints", () =>
   assert.match(rubric, /不得虚构论文、方法、录用状态或发布日期/u);
 });
 
+test("uploaded course materials constrain planning and chapter writing without overriding the form", () => {
+  const plannerInput = {
+    topic: "控制理论",
+    goal: "建立完整知识框架",
+    background: "具备微积分基础",
+    styles: ["rigor"] as Course["styles"],
+    learningMode: "standard" as const,
+    chapterCount: 8,
+    difficulty: "intermediate" as const,
+    courseRequirements: "【课程要求：syllabus.md】必须覆盖状态空间方法。",
+    referenceMaterial: "【参考资料：textbook.pdf】Lyapunov 稳定性是核心概念。",
+    styleSample: "【写作风格样例：sample.md】先用问题建立直觉，再形式化推导。",
+  };
+  const plannerPrompt = buildCourseSkeletonPrompt(plannerInput);
+  assert.match(plannerPrompt, /必须覆盖状态空间方法/u);
+  assert.match(plannerPrompt, /Lyapunov 稳定性/u);
+  assert.match(plannerPrompt, /只学习表达风格/u);
+  assert.match(plannerPrompt, /表单中的学习主题.*优先级最高/u);
+
+  const course = makeCourse("normal");
+  course.courseRequirements = plannerInput.courseRequirements;
+  course.referenceMaterial = plannerInput.referenceMaterial;
+  course.styleSample = plannerInput.styleSample;
+  const chapterPrompt = buildChapterWriterPrompt(course, course.chapters[0], { chapterIndex: 0 });
+  assert.match(chapterPrompt, /必须覆盖状态空间方法/u);
+  assert.match(chapterPrompt, /Lyapunov 稳定性/u);
+  assert.match(chapterPrompt, /不得连续复述原文/u);
+});
+
 test("course planning prompts split bible core from per-chapter contracts", () => {
   const skeleton = makeSkeleton();
   const biblePrompt = buildCourseBiblePrompt({

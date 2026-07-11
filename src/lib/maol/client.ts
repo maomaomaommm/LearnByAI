@@ -21,7 +21,7 @@ import type { CourseBibleCore, CourseSkeleton } from "../prompts/coursePlanner";
 import { buildFormatGuardPrompt, postRepairMarkdown, preRepairMarkdown } from "../prompts/formatGuard";
 import { runChapterQualityPipelineWithRepair } from "../quality/pipeline";
 import { safeErrorMessage } from "../safeError";
-import { Chapter, ChapterContract, ChapterGenerateResponse, ContentMode, Course, CourseBible, CourseCreateResponse, CourseDifficulty, ExplanationStyle, GenerationJob, GenerationProfile, LearningMode, QualityIssue, QualityReport, RevisionMode, RevisionScope, Section } from "../types";
+import { Chapter, ChapterContract, ChapterGenerateResponse, ContentMode, Course, CourseBible, CourseCreateResponse, CourseDifficulty, CourseInputMaterial, ExplanationStyle, GenerationJob, GenerationProfile, LearningMode, QualityIssue, QualityReport, RevisionMode, RevisionScope, Section } from "../types";
 import { researchLatestCourseKnowledge } from "../webResearch";
 import { dispatchAgentText } from "./dispatcher";
 import { assertMockFallbackAllowed } from "./fallback";
@@ -39,6 +39,10 @@ export type CourseInput = {
   contentMode?: ContentMode;
   generationProfile?: GenerationProfile;
   includeRecentResearch?: boolean;
+  courseRequirements?: string;
+  referenceMaterial?: string;
+  styleSample?: string;
+  inputMaterials?: CourseInputMaterial[];
 };
 
 export type CourseGeneration = {
