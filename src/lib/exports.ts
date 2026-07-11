@@ -881,11 +881,33 @@ function escapeMarkdownText(value: string) {
     math.push(match);
     return `@@MATH${math.length - 1}@@`;
   });
-  const escaped = escapeTex(protectedText)
+  const bareMathProtected = protectBareLatexMath(protectedText, math);
+  const escaped = escapeTex(bareMathProtected)
     .replace(/[ΑΒΓΔΘΛΞΠΣΦΨΩαβγδεζηθικλμνξπρστυφχψω]/gu, (char) => unicodeGreekTex(char))
     .replace(/\*\*([^*]+)\*\*/gu, "\\textbf{$1}")
     .replace(/`([^`]+)`/gu, "\\texttt{$1}");
   return escaped.replace(/@@MATH(\d+)@@/gu, (_match, index) => math[Number(index)] ?? "");
+}
+
+/**
+ * Course metadata reaches the exporter without the chapter format guard.
+ * Wrap compact, command-bearing TeX tokens so commands such as `\leq` never
+ * leak into ordinary CJK text mode during XeLaTeX compilation.
+ */
+function protectBareLatexMath(value: string, math: string[]) {
+  const command =
+    String.raw`(?:alpha|beta|gamma|delta|epsilon|varepsilon|zeta|eta|theta|lambda|mu|nu|xi|pi|rho|sigma|tau|phi|psi|omega|Gamma|Delta|Theta|Lambda|Xi|Pi|Sigma|Phi|Psi|Omega|le|leq|ge|geq|lt|gt|ne|neq|approx|sim|mid|times|cdot|div|pm|mp|infty|partial|nabla|sum|prod|int|lim|log|ln|exp|max|min|argmax|argmin|frac|dfrac|tfrac|sqrt|hat|bar|tilde|vec|mathcal|mathbb|mathbf|mathrm|operatorname|text|left|right|begin|end|quad|qquad)`;
+  const token = new RegExp(
+    String.raw`(?:[0-9A-Za-z()[\]{}_^.,+\-*/=<>|'|]*\\${command}\b[0-9A-Za-z()[\]{}_^.,+\-*/=<>|'|\\]*)`,
+    "gu",
+  );
+
+  return value.replace(token, (candidate) => {
+    const punctuation = /[.,]$/u.test(candidate) ? candidate.at(-1) ?? "" : "";
+    const formula = punctuation ? candidate.slice(0, -1) : candidate;
+    math.push(`$${formula}$`);
+    return `@@MATH${math.length - 1}@@${punctuation}`;
+  });
 }
 
 function unicodeGreekTex(char: string) {

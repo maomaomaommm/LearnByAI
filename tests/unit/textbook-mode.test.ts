@@ -301,6 +301,37 @@ test("markdownToTex converts bare Greek text symbols to math commands", async ()
   assert.ok(tex.includes("$\\theta$"), tex);
 });
 
+test("toTex wraps raw TeX in notation metadata before compilation", async () => {
+  const course = {
+    id: "course-raw-notation",
+    contentMode: "textbook",
+    topic: "Raw notation",
+    goal: "",
+    background: "",
+    styles: [],
+    learningMode: "standard",
+    chapterCount: 2,
+    difficulty: "beginner",
+    profile: "",
+    createdAt: "2026-07-11T00:00:00.000Z",
+    courseBible: {
+      targetLearner: "",
+      finalOutcomes: [],
+      teachingStyle: "",
+      prerequisites: [],
+      globalNarrative: "",
+      terminology: [],
+      notation: [{ symbol: "\\gamma", meaning: "discount factor: 0\\leq\\gamma\\leq1." }],
+      chapterDependencies: [],
+    },
+    textbookMeta: { title: "Raw notation", subtitle: "", language: "zh-CN", outlineStatus: "confirmed" },
+    chapters: [],
+  } as unknown as Course;
+
+  const tex = await toTex(course);
+  assert.ok(tex.includes("discount factor: $0\\leq\\gamma\\leq1$."), tex);
+});
+
 test("toTex emits textbook front matter, map page, and chapter-level counters", async () => {
   const now = "2026-07-10T00:00:00.000Z";
   const course = {
